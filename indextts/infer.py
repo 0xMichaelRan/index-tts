@@ -300,6 +300,7 @@ class IndexTTS:
 
         # 如果参考音频改变了，才需要重新生成 cond_mel, 提升速度
         if self.cache_cond_mel is None or self.cache_audio_prompt != audio_prompt:
+            print(f">> 声音没有缓存，重新生成 cond_mel for {audio_prompt}")
             audio, sr = torchaudio.load(audio_prompt)
             audio = torch.mean(audio, dim=0, keepdim=True)
             if audio.shape[0] > 1:
@@ -322,6 +323,7 @@ class IndexTTS:
             self.cache_audio_prompt = audio_prompt
             self.cache_cond_mel = cond_mel
         else:
+            print(f">> 找到了缓存的 cond_mel for {audio_prompt}, shape: {self.cache_cond_mel.shape}")
             cond_mel = self.cache_cond_mel
             cond_mel_frame = cond_mel.shape[-1]
             pass
@@ -526,6 +528,7 @@ class IndexTTS:
 
         # 如果参考音频改变了，才需要重新生成 cond_mel, 提升速度
         if self.cache_cond_mel is None or self.cache_audio_prompt != audio_prompt:
+            print(f">> 声音没有缓存，重新生成 cond_mel for {audio_prompt}")
             audio, sr = torchaudio.load(audio_prompt)
             audio = torch.mean(audio, dim=0, keepdim=True)
             if audio.shape[0] > 1:
@@ -539,6 +542,7 @@ class IndexTTS:
             self.cache_audio_prompt = audio_prompt
             self.cache_cond_mel = cond_mel
         else:
+            print(f">> 找到了缓存的 cond_mel for {audio_prompt}, shape: {self.cache_cond_mel.shape}")
             cond_mel = self.cache_cond_mel
             cond_mel_frame = cond_mel.shape[-1]
             pass
