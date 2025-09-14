@@ -1,3 +1,5 @@
+indextts/s2mel/
+
 # Development Tools.
 .mypy_cache/
 .ruff_cache/
