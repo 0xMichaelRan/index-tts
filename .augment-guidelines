@@ -50,8 +50,8 @@ The following parameters are **NOT supported** and will be ignored:
 #### Maximum Text Length Guidelines
 
 **Configuration Limits** (from `config.yaml`):
-- **max_text_tokens**: 402 tokens (hard limit per model)
-- **max_mel_tokens**: 605 tokens (audio generation limit)
+- **max_text_tokens**: 600 tokens (hard limit per model)
+- **max_mel_tokens**: 800 tokens (audio generation limit)
 - **Recommended max_text_tokens_per_sentence**: 80-200 tokens
 
 **Practical Text Length Limits**:
@@ -89,8 +89,8 @@ tts.infer_fast(
     audio_prompt="voice.wav",
     text="Your long text here",
     output_path="output.wav",
-    max_text_tokens_per_sentence=80,  # Smaller sentences
-    sentences_bucket_max_size=2,      # Smaller batches
+    max_text_tokens_per_sentence=80,  # Reduced from default 100
+    sentences_bucket_max_size=2,      # Reduced from default 4
     max_mel_tokens=800,
 )
 ```
@@ -158,7 +158,7 @@ If speed control is required, consider these post-processing approaches:
 ### Fast Inference Optimization
 
 **Key Parameters**:
-- `max_text_tokens_per_sentence`: 80-100 (vs 120 default)
+- `max_text_tokens_per_sentence`: 80-100 (vs 100 default for fast, 120 for regular)
   - Smaller = faster but more sentence splits
   - Larger = slower but fewer splits
 - `sentences_bucket_max_size`: 2-4 (vs 4 default)
@@ -206,13 +206,22 @@ pip install -e . --no-deps --no-build-isolation
 
 ### Code Structure
 - **Core inference**: `indextts/infer.py`
-- **API server**: `main.py`
+- **FastAPI server**: `run-indextts-1-5.py` (main API server)
 - **CLI interface**: `indextts/cli.py`
 - **Web UI**: `webui.py`
 
+### Current API Server
+The main API server is implemented in `run-indextts-1-5.py` with the following features:
+- **FastAPI-based** REST API server
+- **Single endpoint**: `/infer/` (POST)
+- **Port**: 8848 (default)
+- **Uses**: `infer_fast()` method for better performance
+- **File handling**: Automatic upload/output directory management
+- **Response**: Returns generated audio file directly
+
 ### Adding New Features
 1. Implement core functionality in `indextts/infer.py`
-2. Update API endpoints in `main.py` if needed
+2. Update API endpoints in `run-indextts-1-5.py` if needed
 3. Add CLI options in `indextts/cli.py`
 4. Update web UI in `webui.py` for user-facing features
 
