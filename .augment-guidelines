@@ -1,0 +1,278 @@
+# IndexTTS Repository Guidelines
+
+## Overview
+IndexTTS is an industrial-level controllable and efficient zero-shot text-to-speech system based on GPT-style architecture. This document outlines the capabilities, limitations, and best practices for working with the IndexTTS codebase.
+
+## TTS API Capabilities and Limitations
+
+### Supported Parameters
+The IndexTTS API (`/infer/` endpoint) supports the following parameters:
+
+- **audio_prompt** (required): Reference audio file for voice cloning
+  - Supported formats: WAV, MP3, M4A, AAC
+  - Used for zero-shot voice cloning
+
+- **text** (required): Text to be synthesized
+  - Supports Chinese and English text
+  - Supports pinyin for Chinese pronunciation correction
+  - Supports punctuation-based pause control
+
+### Advanced Generation Parameters (Internal)
+The following parameters are available for internal inference methods but not exposed via the API:
+
+- **max_text_tokens_per_sentence**: Controls sentence splitting (default: 120)
+- **sentences_bucket_max_size**: Controls batch processing (default: 4, fast inference only)
+- **generation_kwargs**: GPT sampling parameters
+  - `do_sample`: Enable sampling (default: True)
+  - `top_p`: Nucleus sampling parameter (default: 0.8)
+  - `top_k`: Top-k sampling parameter (default: 30)
+  - `temperature`: Sampling temperature (default: 1.0)
+  - `num_beams`: Beam search size (default: 3)
+  - `repetition_penalty`: Repetition penalty (default: 10.0)
+  - `length_penalty`: Length penalty (default: 0.0)
+  - `max_mel_tokens`: Maximum mel tokens (default: 600)
+
+### **IMPORTANT: Speed Parameter NOT Supported**
+
+⚠️ **The IndexTTS API does NOT support speed/rate parameters for controlling speech speed.**
+
+The following parameters are **NOT supported** and will be ignored:
+- `speed`
+- `rate`
+- `speaking_rate`
+- `speech_rate`
+- Any speed-related multipliers
+
+**Rationale**: IndexTTS is designed as a high-quality zero-shot TTS system that prioritizes naturalness and quality over speed control. The model generates speech at its optimal natural pace based on the reference audio and text content.
+
+### **Text Length Limits and Optimization**
+
+#### Maximum Text Length Guidelines
+
+**Configuration Limits** (from `config.yaml`):
+- **max_text_tokens**: 402 tokens (hard limit per model)
+- **max_mel_tokens**: 605 tokens (audio generation limit)
+- **Recommended max_text_tokens_per_sentence**: 80-200 tokens
+
+**Practical Text Length Limits**:
+- **Single sentence**: ~200-300 characters (Chinese) or ~400-600 characters (English)
+- **Total text per request**: ~2000-3000 characters for optimal quality
+- **Long text**: Use `infer_fast()` with proper sentence splitting
+
+#### Avoiding Truncation Warnings
+
+**Common Warning**:
+```
+RuntimeWarning: WARN: generation stopped due to exceeding `max_mel_tokens` (600).
+Consider reducing `max_text_tokens_per_sentence`(100) or increasing `max_mel_tokens`.
+```
+
+**Solutions**:
+1. **Reduce sentence length**: Lower `max_text_tokens_per_sentence` from 120 to 80-100
+2. **Increase mel tokens**: Set `max_mel_tokens` to 800-1000 (if GPU memory allows)
+3. **Use fast inference**: `infer_fast()` with `sentences_bucket_max_size=2-4`
+4. **Split long texts**: Break into smaller segments at natural boundaries
+
+**Optimal Parameters for No Truncation**:
+```python
+# For regular inference
+tts.infer(
+    audio_prompt="voice.wav",
+    text="Your text here",
+    output_path="output.wav",
+    max_text_tokens_per_sentence=80,  # Reduced from default 120
+    max_mel_tokens=800,               # Increased from default 600
+)
+
+# For fast inference (recommended for long texts)
+tts.infer_fast(
+    audio_prompt="voice.wav",
+    text="Your long text here",
+    output_path="output.wav",
+    max_text_tokens_per_sentence=80,  # Smaller sentences
+    sentences_bucket_max_size=2,      # Smaller batches
+    max_mel_tokens=800,
+)
+```
+
+### Alternative Approaches for Speed Control
+
+If speed control is required, consider these post-processing approaches:
+
+1. **Audio Post-Processing**: Use audio processing libraries (e.g., librosa, pydub) to modify playback speed
+2. **FFmpeg**: Use FFmpeg's `atempo` filter for speed adjustment
+3. **Real-time Processing**: Implement speed control in the audio playback layer
+
+## Model Versions
+
+### IndexTTS-1.5 (Recommended)
+- Improved stability and English performance
+- Better pronunciation accuracy
+- Enhanced audio quality with BigVGAN2
+
+### IndexTTS-1.0 (Legacy)
+- Original release version
+- Stable but less performant than 1.5
+
+## Performance Optimization
+
+### DeepSpeed Integration
+
+**DeepSpeed Status**: IndexTTS automatically detects and uses DeepSpeed for inference optimization when available.
+
+**Startup Messages**:
+```
+[INFO] [TorchCheckpointEngine] Initialized with serialization = False
+[INFO] DeepSpeed info: version=0.17.6+902e78c9, git-hash=902e78c9, git-branch=master
+[WARNING] Config parameter mp_size is deprecated use tensor_parallel.tp_size instead
+```
+
+**What This Means**:
+- ✅ **DeepSpeed is available** and being used for optimized inference
+- ✅ **Automatic optimization** for memory usage and speed
+- ⚠️ **Deprecation warning** is harmless (legacy parameter name)
+
+**Benefits of DeepSpeed**:
+- **Memory optimization**: Reduced GPU memory usage
+- **Faster inference**: Optimized kernel operations
+- **FP16 support**: Automatic mixed precision when `is_fp16=True`
+
+### Inference Mode Selection
+
+**Use `infer_fast()` when**:
+- Text length > 500 characters
+- Multiple sentences (>3 sentences)
+- Batch processing requirements
+- Speed is more important than maximum quality
+
+**Use `infer()` when**:
+- Short texts (< 300 characters)
+- Single sentences
+- Maximum quality is required
+- Real-time applications with low latency needs
+
+**Performance Comparison**:
+- `infer()`: Higher quality, slower (1x baseline)
+- `infer_fast()`: Good quality, 2-10x faster
+
+### Fast Inference Optimization
+
+**Key Parameters**:
+- `max_text_tokens_per_sentence`: 80-100 (vs 120 default)
+  - Smaller = faster but more sentence splits
+  - Larger = slower but fewer splits
+- `sentences_bucket_max_size`: 2-4 (vs 4 default)
+  - Smaller = less memory, more stable
+  - Larger = faster but needs more VRAM
+
+**GPU Memory Optimization**:
+```python
+# For 8GB VRAM
+tts.infer_fast(
+    max_text_tokens_per_sentence=80,
+    sentences_bucket_max_size=2,
+    max_mel_tokens=600
+)
+
+# For 16GB+ VRAM
+tts.infer_fast(
+    max_text_tokens_per_sentence=100,
+    sentences_bucket_max_size=4,
+    max_mel_tokens=800
+)
+```
+
+### Hardware Recommendations
+- **GPU**: CUDA-compatible GPU with 8GB+ VRAM
+- **Memory**: 16GB+ system RAM for model loading
+- **CPU**: Multi-core CPU for preprocessing and fallback
+- **Storage**: SSD recommended for model loading speed
+
+### CUDA Kernel Optimization
+
+**BigVGAN Custom CUDA Kernel**:
+- Automatically enabled when `use_cuda_kernel=True`
+- Requires NVCC and Ninja for compilation
+- Provides faster audio generation
+- Falls back to PyTorch if compilation fails
+
+**Enabling CUDA Kernels**:
+```bash
+# Install with kernel compilation
+pip install -e . --no-deps --no-build-isolation
+```
+
+## Development Guidelines
+
+### Code Structure
+- **Core inference**: `indextts/infer.py`
+- **API server**: `main.py`
+- **CLI interface**: `indextts/cli.py`
+- **Web UI**: `webui.py`
+
+### Adding New Features
+1. Implement core functionality in `indextts/infer.py`
+2. Update API endpoints in `main.py` if needed
+3. Add CLI options in `indextts/cli.py`
+4. Update web UI in `webui.py` for user-facing features
+
+### Testing
+- Use test cases in `tests/` directory
+- Test with various audio formats and text lengths
+- Validate output quality and performance
+
+## Integration Guidelines
+
+### External API Integration
+When integrating IndexTTS with external systems:
+
+1. **Do not attempt to send speed parameters** - they will be ignored
+2. Use only supported parameters (`audio_prompt`, `text`)
+3. Handle API timeouts appropriately (default: 600 seconds)
+4. Implement proper error handling for audio format issues
+
+### Audio Processing Pipeline
+For systems requiring speed control:
+
+1. Generate audio using IndexTTS with standard parameters
+2. Apply speed modifications using post-processing tools
+3. Maintain audio quality during speed adjustments
+4. Test duration changes match expected speed ratios
+
+## Common Issues and Solutions
+
+### Audio Format Issues
+- Ensure audio prompts are in supported formats
+- Use WAV format for best compatibility
+- Check file size and duration limits
+
+### Performance Issues
+- Use fast inference for long texts
+- Adjust batch sizes based on available memory
+- Consider model quantization for resource-constrained environments
+
+### Quality Issues
+- Use high-quality reference audio (clear, noise-free)
+- Ensure text is properly formatted
+- Adjust generation parameters for specific use cases
+
+## Contact and Support
+
+- **Email**: xuanwu@bilibili.com
+- **QQ Group**: 1048202584
+- **Discord**: https://discord.gg/uT32E7KDmy
+- **GitHub Issues**: For bug reports and feature requests
+
+## License and Attribution
+
+IndexTTS is released under the specified license terms. When using IndexTTS:
+
+1. Follow the license requirements
+2. Cite the paper when appropriate
+3. Acknowledge the IndexTeam contributors
+4. Respect the model usage guidelines
+
+---
+
+*Last updated: 2025-09-07*
+*Version: 1.0*
