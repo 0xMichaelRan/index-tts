@@ -1,3 +1,5 @@
+indextts/s2mel/
+
 # Development Tools.
 .mypy_cache/
 .ruff_cache/
@@ -26,6 +28,7 @@ desktop.ini
 
 # IndexTTS.
 /cache/
-/checkpoints/*
-!/checkpoints/*.yaml
+/checkpoints_v*/*
+!/checkpoints_v*/config.yaml
+!/checkpoints_v*/*.vocab
 /outputs/
