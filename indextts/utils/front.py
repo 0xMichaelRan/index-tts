@@ -482,7 +482,7 @@ if __name__ == "__main__":
     ]
     # 测试分词器
     tokenizer = TextTokenizer(
-        vocab_file="checkpoints/bpe.model",
+        vocab_file="checkpoints_v15/bpe.model",
         normalizer=text_normalizer,
     )
 

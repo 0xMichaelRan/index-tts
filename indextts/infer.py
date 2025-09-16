@@ -1,6 +1,7 @@
 import os
 
-os.environ['HF_HUB_CACHE'] = './checkpoints/hf_cache'
+# Set default HF cache path - will be updated in __init__ if different model_dir is used
+os.environ['HF_HUB_CACHE'] = './checkpoints_v15/hf_cache'
 import time
 from subprocess import CalledProcessError
 from typing import Dict, List
@@ -26,7 +27,7 @@ from indextts.utils.front import TextNormalizer, TextTokenizer
 
 class IndexTTS:
     def __init__(
-            self, cfg_path="checkpoints/config.yaml", model_dir="checkpoints", use_fp16=True, device=None,
+            self, cfg_path="checkpoints_v15/config.yaml", model_dir="checkpoints_v15", use_fp16=True, device=None,
             use_cuda_kernel=None,
     ):
         """
@@ -37,6 +38,8 @@ class IndexTTS:
             device (str): device to use (e.g., 'cuda:0', 'cpu'). If None, it will be set automatically based on the availability of CUDA or MPS.
             use_cuda_kernel (None | bool): whether to use BigVGan custom fused activation CUDA kernel, only for CUDA device.
         """
+        # Update HF_HUB_CACHE to use the specified model directory
+        os.environ['HF_HUB_CACHE'] = os.path.join(model_dir, 'hf_cache')
         if device is not None:
             self.device = device
             self.use_fp16 = False if device == "cpu" else use_fp16
@@ -690,5 +693,5 @@ if __name__ == "__main__":
     prompt_wav = "examples/voice_01.wav"
     text = '欢迎大家来体验indextts2，并给予我们意见与反馈，谢谢大家。'
 
-    tts = IndexTTS(cfg_path="checkpoints/config.yaml", model_dir="checkpoints", use_cuda_kernel=False)
+    tts = IndexTTS(cfg_path="checkpoints_v15/config.yaml", model_dir="checkpoints_v15", use_cuda_kernel=False)
     tts.infer(audio_prompt=prompt_wav, text=text, output_path="gen.wav", verbose=True)
