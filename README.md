@@ -50,5 +50,5 @@ tts.infer(voice, text, output_path)
 ### quick start
 
 ```
-cd git/index-tts && git checkout index-tts-1.5 && source .venv/bin/activate && python run-indextts-1-5.py
+cd ~/git/index-tts && git checkout index-tts-1.5 && source .venv/bin/activate && python run-indextts-1-5.py
 ```

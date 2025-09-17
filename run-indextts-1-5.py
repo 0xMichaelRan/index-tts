@@ -7,7 +7,13 @@ from indextts.infer import IndexTTS
 app = FastAPI()
 
 # Initialize the TTS model
-tts = IndexTTS(cfg_path="checkpoints/config.yaml", model_dir="checkpoints", is_fp16=True, use_cuda_kernel=False)
+tts = IndexTTS(
+    cfg_path="checkpoints/config.yaml",
+    model_dir="checkpoints",
+    is_fp16=True,
+    use_cuda_kernel=True,
+)
+
 
 @app.post("/infer/")
 async def infer(audio_prompt: UploadFile = File(...), text: str = Form(...)):
@@ -26,14 +32,23 @@ async def infer(audio_prompt: UploadFile = File(...), text: str = Form(...)):
 
         # Define the output path for the generated audio file, using the input name as base
         timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-        output_filename = f"{timestamp}_{os.path.splitext(original_audio_filename)[0]}.wav"
+        output_filename = (
+            f"{timestamp}_{os.path.splitext(original_audio_filename)[0]}.wav"
+        )
         output_path = os.path.join(output_dir, output_filename)
 
         # Call the infer function
-        tts.infer_fast(audio_prompt=temp_audio_path, text=text, output_path=output_path, verbose=False)
+        tts.infer_fast(
+            audio_prompt=temp_audio_path,
+            text=text,
+            output_path=output_path,
+            verbose=True,
+        )
 
         # Return the generated audio file, with a descriptive download name
-        return FileResponse(output_path, media_type="audio/wav", filename=output_filename)
+        return FileResponse(
+            output_path, media_type="audio/wav", filename=output_filename
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:
@@ -45,5 +60,6 @@ async def infer(audio_prompt: UploadFile = File(...), text: str = Form(...)):
 
 if __name__ == "__main__":
     import uvicorn
+
     print(f"Access the API at http://127.0.0.1:8848/docs#/")
     uvicorn.run(app, host="0.0.0.0", port=8848)
