@@ -14,6 +14,7 @@ tts2 = None
 model_version = "v2.0"  # Default to v2.0
 checkpoint_dir = "checkpoints_v20"  # Default checkpoint directory
 
+
 def initialize_models(version="v2.0"):
     """Initialize TTS models based on version"""
     global tts1, tts2, model_version, checkpoint_dir
@@ -23,14 +24,26 @@ def initialize_models(version="v2.0"):
         checkpoint_dir = "checkpoints_v15"
         config_path = os.path.join(checkpoint_dir, "config.yaml")
         print(f"Initializing IndexTTS v1.5 with checkpoint directory: {checkpoint_dir}")
-        tts1 = IndexTTS(cfg_path=config_path, model_dir=checkpoint_dir, use_fp16=True, use_cuda_kernel=True)
+        tts1 = IndexTTS(
+            cfg_path=config_path,
+            model_dir=checkpoint_dir,
+            use_fp16=True,
+            use_cuda_kernel=True,
+        )
         tts2 = None
     else:  # v2.0 (default)
         checkpoint_dir = "checkpoints_v20"
         config_path = os.path.join(checkpoint_dir, "config.yaml")
         print(f"Initializing IndexTTS v2.0 with checkpoint directory: {checkpoint_dir}")
-        tts2 = IndexTTS2(cfg_path=config_path, model_dir=checkpoint_dir, use_fp16=True, use_cuda_kernel=True, use_deepspeed=True)
+        tts2 = IndexTTS2(
+            cfg_path=config_path,
+            model_dir=checkpoint_dir,
+            use_fp16=True,
+            use_cuda_kernel=True,
+            use_deepspeed=True,
+        )
         tts1 = None
+
 
 @app.post("/infer_v15/")
 async def infer_v15(audio_prompt: UploadFile = File(...), text: str = Form(...)):
@@ -38,7 +51,10 @@ async def infer_v15(audio_prompt: UploadFile = File(...), text: str = Form(...))
     global tts1
 
     if tts1 is None:
-        raise HTTPException(status_code=500, detail="IndexTTS v1.5 model not initialized. Please restart with --version v1.5")
+        raise HTTPException(
+            status_code=500,
+            detail="IndexTTS v1.5 model not initialized. Please restart with --version v1.5",
+        )
 
     try:
         # Save the uploaded audio prompt to a temporary file
@@ -59,10 +75,17 @@ async def infer_v15(audio_prompt: UploadFile = File(...), text: str = Form(...))
         output_path = os.path.join(output_dir, output_filename)
 
         # Call the infer function
-        tts1.infer_fast(audio_prompt=temp_audio_path, text=text, output_path=output_path, verbose=False)
+        tts1.infer_fast(
+            audio_prompt=temp_audio_path,
+            text=text,
+            output_path=output_path,
+            verbose=False,
+        )
 
         # Return the generated audio file, with a descriptive download name
-        return FileResponse(output_path, media_type="audio/wav", filename=output_filename)
+        return FileResponse(
+            output_path, media_type="audio/wav", filename=output_filename
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:
@@ -71,13 +94,17 @@ async def infer_v15(audio_prompt: UploadFile = File(...), text: str = Form(...))
         #     os.remove(temp_audio_path)
         pass
 
+
 @app.post("/infer_v2/")
 async def infer_v2(audio_prompt: UploadFile = File(...), text: str = Form(...)):
     """IndexTTS v2.0 inference endpoint"""
     global tts2
 
     if tts2 is None:
-        raise HTTPException(status_code=500, detail="IndexTTS v2.0 model not initialized. Please restart with --version v2.0")
+        raise HTTPException(
+            status_code=500,
+            detail="IndexTTS v2.0 model not initialized. Please restart with --version v2.0",
+        )
 
     try:
         # Save the uploaded audio prompt to a temporary file
@@ -98,10 +125,17 @@ async def infer_v2(audio_prompt: UploadFile = File(...), text: str = Form(...)):
         output_path = os.path.join(output_dir, output_filename)
 
         # Call the infer function
-        tts2.infer(spk_audio_prompt=temp_audio_path, text=text, output_path=output_path, verbose=True)
+        tts2.infer(
+            spk_audio_prompt=temp_audio_path,
+            text=text,
+            output_path=output_path,
+            verbose=True,
+        )
 
         # Return the generated audio file, with a descriptive download name
-        return FileResponse(output_path, media_type="audio/wav", filename=output_filename)
+        return FileResponse(
+            output_path, media_type="audio/wav", filename=output_filename
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:
@@ -109,6 +143,7 @@ async def infer_v2(audio_prompt: UploadFile = File(...), text: str = Form(...)):
         # if os.path.exists(temp_audio_path):
         #     os.remove(temp_audio_path)
         pass
+
 
 @app.post("/infer/")
 async def infer_auto(audio_prompt: UploadFile = File(...), text: str = Form(...)):
@@ -123,7 +158,9 @@ async def infer_auto(audio_prompt: UploadFile = File(...), text: str = Form(...)
         current_model = "v2.0"
         tts_instance = tts2
     else:
-        raise HTTPException(status_code=500, detail="No IndexTTS model is currently initialized")
+        raise HTTPException(
+            status_code=500, detail="No IndexTTS model is currently initialized"
+        )
 
     try:
         # Save the uploaded audio prompt to a temporary file
@@ -145,12 +182,24 @@ async def infer_auto(audio_prompt: UploadFile = File(...), text: str = Form(...)
 
         # Call the appropriate infer function based on the model version
         if current_model == "v1.5":
-            tts_instance.infer_fast(audio_prompt=temp_audio_path, text=text, output_path=output_path, verbose=False)
+            tts_instance.infer_fast(
+                audio_prompt=temp_audio_path,
+                text=text,
+                output_path=output_path,
+                verbose=False,
+            )
         else:  # v2.0
-            tts_instance.infer(spk_audio_prompt=temp_audio_path, text=text, output_path=output_path, verbose=True)
+            tts_instance.infer(
+                spk_audio_prompt=temp_audio_path,
+                text=text,
+                output_path=output_path,
+                verbose=True,
+            )
 
         # Return the generated audio file, with a descriptive download name
-        return FileResponse(output_path, media_type="audio/wav", filename=output_filename)
+        return FileResponse(
+            output_path, media_type="audio/wav", filename=output_filename
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:
@@ -158,6 +207,7 @@ async def infer_auto(audio_prompt: UploadFile = File(...), text: str = Form(...)
         # if os.path.exists(temp_audio_path):
         #     os.remove(temp_audio_path)
         pass
+
 
 # To run:
 # uv add fastapi uvicorn
@@ -170,10 +220,18 @@ if __name__ == "__main__":
 
     # Parse command line arguments
     parser = argparse.ArgumentParser(description="IndexTTS API Server")
-    parser.add_argument("--version", choices=["v1.5", "v2.0"], default="v2.0",
-                        help="Model version to use (default: v2.0)")
-    parser.add_argument("--host", default="0.0.0.0", help="Host to bind to (default: 0.0.0.0)")
-    parser.add_argument("--port", type=int, default=8848, help="Port to bind to (default: 8848)")
+    parser.add_argument(
+        "--version",
+        choices=["v1.5", "v2.0"],
+        default="v2.0",
+        help="Model version to use (default: v2.0)",
+    )
+    parser.add_argument(
+        "--host", default="0.0.0.0", help="Host to bind to (default: 0.0.0.0)"
+    )
+    parser.add_argument(
+        "--port", type=int, default=8848, help="Port to bind to (default: 8848)"
+    )
     args = parser.parse_args()
 
     # Initialize the selected model
