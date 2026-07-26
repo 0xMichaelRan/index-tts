@@ -1,24 +1,57 @@
 import os
 import sys
 import time
+import platform
 from subprocess import CalledProcessError
 from typing import Dict, List, Tuple
 
-import torch
-import torchaudio
-from torch.nn.utils.rnn import pad_sequence
-from omegaconf import OmegaConf
-from tqdm import tqdm
+# Platform-specific imports
+if platform.system() == "Darwin":
+    # macOS: Use native TTS
+    try:
+        from indextts.macos_tts import MacOSTTS
+        MACOS_TTS_AVAILABLE = True
+    except ImportError:
+        MACOS_TTS_AVAILABLE = False
+        print("Warning: macOS TTS not available. Install with: pip install 'indextts-worker[mac]'")
+    
+    # PyTorch imports are optional on macOS
+    try:
+        import torch
+        import torchaudio
+        from torch.nn.utils.rnn import pad_sequence
+        from omegaconf import OmegaConf
+        from tqdm import tqdm
+        PYTORCH_AVAILABLE = True
+    except ImportError:
+        PYTORCH_AVAILABLE = False
+        torch = None
+        torchaudio = None
+        pad_sequence = None
+        OmegaConf = None
+        tqdm = None
+else:
+    # Windows/Linux: Require PyTorch for GPU inference
+    import torch
+    import torchaudio
+    from torch.nn.utils.rnn import pad_sequence
+    from omegaconf import OmegaConf
+    from tqdm import tqdm
+    PYTORCH_AVAILABLE = True
+    MACOS_TTS_AVAILABLE = False
+    MacOSTTS = None
 
 import warnings
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
 
-from indextts.BigVGAN.models import BigVGAN as Generator
-from indextts.gpt.model import UnifiedVoice
-from indextts.utils.checkpoint import load_checkpoint
-from indextts.utils.feature_extractors import MelSpectrogramFeatures
+# Conditional imports for GPU-based inference
+if PYTORCH_AVAILABLE:
+    from indextts.BigVGAN.models import BigVGAN as Generator
+    from indextts.gpt.model import UnifiedVoice
+    from indextts.utils.checkpoint import load_checkpoint
+    from indextts.utils.feature_extractors import MelSpectrogramFeatures
 
 from indextts.utils.front import TextNormalizer, TextTokenizer
 
@@ -662,6 +695,73 @@ class IndexTTS:
             wav_data = wav.type(torch.int16)
             wav_data = wav_data.numpy().T
             return (sampling_rate, wav_data)
+
+
+def create_tts_engine(
+    use_native_macos: bool = None,
+    voice: str = None,
+    language: str = "en-US",
+    **kwargs
+):
+    """
+    Factory function to create the appropriate TTS engine based on platform.
+    
+    Args:
+        use_native_macos: If True, force macOS native TTS (macOS only).
+                          If False, force IndexTTS GPU inference (requires PyTorch).
+                          If None (default), auto-detect based on platform and availability.
+        voice: For macOS TTS, voice identifier. Ignored for IndexTTS.
+        language: For macOS TTS, language code (e.g., "en-US", "zh-CN").
+        **kwargs: Additional arguments passed to IndexTTS constructor
+                  (cfg_path, model_dir, is_fp16, device, use_cuda_kernel).
+    
+    Returns:
+        TTS engine instance (MacOSTTS or IndexTTS).
+    
+    Examples:
+        # Auto-detect (macOS uses native TTS, Windows/Linux uses IndexTTS)
+        tts = create_tts_engine()
+        
+        # Force macOS native TTS
+        tts = create_tts_engine(use_native_macos=True, language="zh-CN")
+        
+        # Force GPU inference on macOS (if PyTorch is installed)
+        tts = create_tts_engine(use_native_macos=False, cfg_path="checkpoints/config.yaml")
+    """
+    current_platform = platform.system()
+    
+    # Determine which engine to use
+    if use_native_macos is None:
+        # Auto-detect: macOS uses native TTS if available, others use IndexTTS
+        if current_platform == "Darwin" and MACOS_TTS_AVAILABLE:
+            use_native = True
+        else:
+            use_native = False
+    else:
+        use_native = use_native_macos
+    
+    # Create the appropriate engine
+    if use_native:
+        if not MACOS_TTS_AVAILABLE:
+            raise RuntimeError(
+                "macOS native TTS requested but not available. "
+                "Install with: pip install 'indextts-worker[mac]'"
+            )
+        if current_platform != "Darwin":
+            raise RuntimeError("macOS native TTS is only available on macOS systems")
+        
+        print(f">> Creating macOS native TTS engine (language: {language})")
+        return MacOSTTS(voice=voice, language=language)
+    else:
+        if not PYTORCH_AVAILABLE:
+            raise RuntimeError(
+                "IndexTTS GPU inference requested but PyTorch is not available. "
+                "Install with: pip install 'indextts-worker[cuda]' (Windows) "
+                "or compile PyTorch from source (macOS with Metal GPU support)"
+            )
+        
+        print(f">> Creating IndexTTS GPU inference engine (platform: {current_platform})")
+        return IndexTTS(**kwargs)
 
 
 if __name__ == "__main__":

@@ -69,8 +69,8 @@ cuda = [
 
 # macOS native TTS - Lightweight testing without GPU dependencies
 mac = [
-    # Minimal dependencies for macOS native TTS testing
-    # No PyTorch/transformers required - uses macOS system TTS
+    "pyobjc-framework-AVFoundation>=10.0",
+    "pyobjc-framework-Cocoa>=10.0",
 ]
 
 # REST API and RabbitMQ worker
