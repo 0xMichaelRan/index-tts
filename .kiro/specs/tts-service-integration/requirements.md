@@ -1,4 +1,6 @@
-# TTS Service Integration Requirements
+# Requirements Document
+
+## TTS Service Integration Requirements
 
 ## Introduction
 
@@ -9,10 +11,16 @@ This feature spec covers the integration of the IndexTTS text-to-speech engine a
 3. **studio-backend**: FastAPI backend for production TTS jobs with user voice recordings
 
 The feature enables:
-- Anonymous users to test TTS with predefined audio prompts (playground)
-- Authenticated users to generate TTS audio using their own voice recordings (studio-backend)
+- Anonymous users to test TTS with approved community voices using full text up to 200 words (playground)
+- Authenticated users to generate quick TTS audio previews using only the first 2 sentences of their script text (studio-backend)
 - Production TTS synthesis with automatic retry, monitoring, and S3 storage
 - Support for GPU-based IndexTTS inference with optional macOS native TTS in dev/staging
+
+**Key Simplifications:**
+- Removed confusing `preview_text` concept
+- Simplified caching strategy: playground uses full text, studio-backend uses only first 2 sentences
+- Studio-backend TTS jobs are fast and quick by processing only first 2 sentences
+- Full-script-text TTS synthesis is never performed for studio-backend
 
 ---
 
@@ -30,6 +38,8 @@ The feature enables:
 - **S3**: Object storage service used for persisting synthesized audio results
 - **SSE (Server-Sent Events)**: HTTP protocol for streaming real-time updates to clients
 - **Voice Catalog**: Database of voice recordings (user recordings + community voices) in studio-backend
+- **Playground Text**: Full text up to 200 words used for anonymous TTS demonstrations
+- **Studio Processed Text**: First 2 sentences of script text used for quick previews in studio-backend
 
 ---
 
@@ -56,22 +66,22 @@ The feature enables:
 
 ### Requirement 2: Studio TTS Job Submission API (studio-backend)
 
-**User Story:** As a studio backend service, I want to submit TTS jobs using existing TTSJob schema with preview_text caching, so that authenticated users can generate audio from their voice recordings.
+**User Story:** As a studio backend service, I want to submit TTS jobs using existing TTSJob schema with simplified text caching, so that authenticated users can generate audio from their voice recordings with immediate response.
 
 #### Acceptance Criteria
 
 1. THE Studio_Backend SHALL provide a POST `/api/v1/tts` endpoint to create TTS jobs using the existing `TTSJob` table.
 2. WHEN a TTS job is created, THE Studio_Backend SHALL accept: project_id (required), text (required), voice_id (required), and language (required, not optional).
-3. THE Studio_Backend SHALL extract `preview_text` (first 2 sentences) from the full text for caching purposes.
+3. THE Studio_Backend SHALL always process only the first 2 sentences of the script text for studio-backend TTS jobs, regardless of the full script length.
 4. WHEN the request arrives, THE Studio_Backend SHALL validate voice_id exists in the Voice table and user has permission:
    - Private voices (`is_shared=false`): User must be owner
    - Shared voices (`is_shared=true`): Any user can use
    - Approved voices (`is_shared=true AND is_approved=true`): All users (also eligible for playground)
 5. IF voice_id does not exist in the database, THE Studio_Backend SHALL return 404 Not Found.
 6. IF voice_id exists but user lacks permission (private voice not owned by user), THE Studio_Backend SHALL return 403 Forbidden.
-7. THE Studio_Backend SHALL apply content-based caching based on `preview_text`:
-   - IF an identical `(voice_id, preview_text)` pair was successfully synthesized within the last 30 days, return existing audio_path immediately
-   - Cache lookup SHALL use existing `preview_text` field in TTSJob table
+7. THE Studio_Backend SHALL apply content-based caching based on processed text (first 2 sentences):
+   - IF an identical `(voice_id, processed_text)` pair was successfully synthesized within the last 30 days, return existing audio_path immediately
+   - Processed text SHALL be the first 2 sentences extracted from the full script text
 8. IF no cache hit, THE Studio_Backend SHALL create a TTSJob record with:
    - Extended fields: language (required), correlation_id (UUID), full_text_hash (SHA256 of full text)
    - Status: "queued" (matching existing state machine)
@@ -80,6 +90,7 @@ The feature enables:
    - `audio_prompt_path`: Path to voice recording (e.g., "audio-prompts/{voice_id}.wav")
    - `output_path_template`: "tts-output/studio/{job_id}.wav"
    - `job_type`: "studio"
+   - `processed_text`: First 2 sentences of the script text (used for caching)
 10. THE Studio_Backend SHALL return appropriate response:
    - 202 Accepted (new job): job_id, status="queued", stream_url, is_cached=false
    - 200 OK (cached): job_id, status="completed", audio_path, audio_duration_seconds, is_cached=true
@@ -88,6 +99,7 @@ The feature enables:
    - For failed jobs, validate error_message is present
    - Update TTSJob record with status, audio_path, audio_duration, completed_at
 12. THE Studio_Backend SHALL provide SSE endpoint GET `/api/v1/tts/{job_id}/stream` for real-time updates using existing "queued", "processing", "completed", "failed" states.
+13. FOR Studio-Backend TTS Jobs, THE System SHALL NEVER perform full-script-text TTS synthesis - only the first 2 sentences shall be processed to ensure fast and quick response times for logged-in users.
 
 ---
 
@@ -111,18 +123,19 @@ The feature enables:
    - Return 429 Too Many Requests with retry_after: 3600 seconds
 5. WHEN rate limiting is not exceeded, THE Studio_Backend SHALL create PlaygroundTTSJob record with:
    - UUID primary key (different from TTSJob integer IDs)
-   - Full text storage (not preview_text)
+   - Full text storage
    - Status: "queued" (matching TTSJob state machine)
    - Hashed client_ip_address for rate limiting
    - expires_at: created_at + 30 days (automatic cleanup)
 6. THE Studio_Backend SHALL apply content-based caching for playground:
-   - Cache based on `(voice_id, text_hash)` pairs within 30 days
+   - Cache based on `(voice_id, full_text)` pairs within 30 days
    - Use SHA256 hash of full text for cache lookup
-   - Different cache strategy than studio (full text vs preview_text)
+   - Different cache strategy than studio: playground uses full text, studio uses first 2 sentences only
 7. THE Studio_Backend SHALL publish to RabbitMQ tts_jobs queue with:
    - `job_type`: "playground"
    - `output_path_template`: "tts-output/playground/{job_id}.wav"
    - Path-based audio_prompt_path from voice table
+   - `text`: Full text (up to 200 words) for playground synthesis
 8. THE Studio_Backend SHALL return 202 Accepted with:
    - job_id (UUID), status="queued", stream_url, expires_at
    - No user authentication required

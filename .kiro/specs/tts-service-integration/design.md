@@ -2,20 +2,29 @@
 
 ## Overview
 
-This specification defines the integration of IndexTTS text-to-speech engine across three repositories with alignment to existing implementations:
+This specification defines the integration of IndexTTS text-to-speech engine across three repositories with a **simplified text processing approach**:
 
 - **indexTTS-worker**: Core TTS service and RabbitMQ worker
 - **official-landing**: Next.js playground for anonymous TTS demonstrations  
 - **studio-backend**: FastAPI backend for production TTS jobs
 
+**Simplified Text Processing Strategy**:
+1. **Studio-backend (authenticated users)**: Only the **first 2 sentences** of the script text are processed for TTS synthesis
+   - Guarantees **fast and quick response times** for logged-in users
+   - **Never** performs full-script-text TTS synthesis
+   - Caching based on `(voice_id, first_2_sentences)` pairs
+
+2. **Playground (anonymous users)**: **Full text** up to 200 words is processed
+   - Provides **complete demo experience** for evaluation
+   - Caching based on `(voice_id, full_text_hash)` pairs
+
 **Key Design Principles**:
 1. Build upon existing `TTSJob` and `Voice` schemas in studio-backend
-2. Use `preview_text` (first 2 sentences) for studio-backend caching
-3. Use full text (up to 200 words) for playground caching with community voices only
-4. S3 path-based storage (not full URLs) across all repositories
-5. Three voice states: private, shared, approved
-6. Implement circuit breaker and dead-letter queue patterns
-7. Language as mandatory field with simplified Chinese backfill
+2. Simple, clear text processing rules (no confusing `preview_text` concept)
+3. S3 path-based storage (not full URLs) across all repositories
+4. Three voice states: private, shared, approved
+5. Implement circuit breaker and dead-letter queue patterns
+6. Language as mandatory field with simplified Chinese backfill
 
 ## Architecture
 
@@ -102,7 +111,7 @@ class TTSJob(Base):
     script_id: int | None
     voice_id: int | None             # Foreign key to voices
     voice_name: str | None           # Snapshot of voice name
-    preview_text: str | None         # First 2 sentences for caching
+    processed_text: str | None       # First 2 sentences (for studio-backend caching)
     external_job_id: str | None
     
     # Enhanced status (existing + new)
@@ -253,6 +262,7 @@ Dead-Letter Queues (Durable):
   "text": "Hello world",
   "audio_prompt_path": "audio-prompts/123.wav",
   "language": "zh",
+  "text_processing_mode": "first_2_sentences" | "full_text",
   "metadata": {
     "user_id": 456,
     "project_id": 789,
@@ -292,7 +302,7 @@ Dead-Letter Queues (Durable):
 ### 1. Playground TTS Endpoint
 
 #### POST /api/v1/playground/tts
-**Purpose**: Create anonymous TTS job using approved community voices
+**Purpose**: Create anonymous TTS job using approved community voices (complete demo)
 
 **Authentication**: None (public)
 
@@ -301,18 +311,20 @@ Dead-Letter Queues (Durable):
 **Request**:
 ```json
 {
-  "text": "Hello, this is a demonstration of our TTS system.",
+  "text": "Hello, this is a demonstration of our TTS system with the complete text experience up to 200 words.",
   "voice_id": 123,
   "language": "zh"
 }
 ```
+
+**Important**: Playground TTS jobs process the **full text** (up to 200 words) to give anonymous users the complete TTS demo experience.
 
 **Validation**:
 1. `text`: Required, max 200 words (≈1000 chars), non-empty
 2. `voice_id`: Required, must exist and be approved community voice (`is_shared=true AND is_approved=true`)
 3. `language`: Required, must match voice language
 
-**Caching Strategy**: Cache based on `(voice_id, text_hash)` pairs within 30 days
+**Caching Strategy**: Cache based on `(voice_id, full_text_hash)` pairs within 30 days
 
 **Responses**:
 ```http
@@ -335,7 +347,7 @@ Dead-Letter Queues (Durable):
 ### 2. Authenticated Studio TTS Endpoint
 
 #### POST /api/v1/tts
-**Purpose**: Create TTS job using user's voice recordings
+**Purpose**: Create TTS job using user's voice recordings (fast preview only)
 
 **Authentication**: Bearer token (required)
 
@@ -343,21 +355,23 @@ Dead-Letter Queues (Durable):
 ```json
 {
   "project_id": 456,
-  "text": "This is the full script for my video project.",
+  "text": "This is the full script for my video project. It could be very long with many paragraphs. But only the first 2 sentences will be processed for TTS synthesis.",
   "voice_id": 789,
   "language": "zh"
 }
 ```
 
+**Important**: Studio-backend TTS jobs **only process the first 2 sentences** of the script text, regardless of how long the full script is. This ensures fast and quick response times for logged-in users.
+
 **Validation**:
 1. `project_id`: Required, user must own project
-2. `text`: Required (full text for synthesis, `preview_text` extracted for caching)
+2. `text`: Required (full script text - only first 2 sentences are processed for TTS)
 3. `voice_id`: Required, must exist and user must have permission
    - Private voices: User must own (`user_id` matches)
    - Shared voices: Any user can use (`is_shared=true`)
 4. `language`: Required, must match voice language
 
-**Caching Strategy**: Cache based on `(voice_id, preview_text)` pairs within 30 days
+**Caching Strategy**: Cache based on `(voice_id, first_2_sentences)` pairs within 30 days
 
 **Responses**:
 ```http
@@ -469,25 +483,31 @@ class TTSCircuitBreaker:
 
 ## Correctness Properties
 
-### Property 1: Cache Consistency
-**For studio jobs**, identical `(voice_id, preview_text)` pairs within 30 days SHALL return the same `audio_path`.
+### Property 1: Cache Consistency - Studio Jobs
+**For studio jobs**, identical `(voice_id, first_2_sentences)` pairs within 30 days SHALL return the same `audio_path`.
 
-### Property 2: State Machine Validity
+### Property 2: Cache Consistency - Playground Jobs  
+**For playground jobs**, identical `(voice_id, full_text_hash)` pairs within 30 days SHALL return the same `audio_path`.
+
+### Property 3: Text Processing Guarantee
+**Studio-backend jobs SHALL ONLY process** the first 2 sentences of the script text, regardless of total script length.
+
+### Property 4: State Machine Validity
 **Jobs SHALL only transition**: 
 - `queued → processing → completed/failed/rate_limited`
 - `queued → failed` (immediate validation failure)
 - Invalid: `completed → processing`, `failed → completed`
 
-### Property 3: Rate Limiting Enforcement
+### Property 5: Rate Limiting Enforcement
 **Any hashed IP SHALL NOT exceed** 5 playground requests per 1-hour window.
 
-### Property 4: Voice Permission Hierarchy
+### Property 6: Voice Permission Hierarchy
 **Access rules SHALL follow**:
 1. Private voices: Owner only
 2. Shared voices: Owner + collaborators
 3. Approved voices: All users (playground eligible)
 
-### Property 5: Language Consistency
+### Property 7: Language Consistency
 **Voice language SHALL match** job language for all TTS requests.
 
 ## Testing Strategy
