@@ -1,111 +1,108 @@
-# IndexTTS Production Service
+# IndexTTS-Worker: Personal TTS Microservice
 
-## 🎯 Repository Purpose
+## 🎯 Overview
 
-This repository provides a **production-ready Text-to-Speech (TTS) service** based on the IndexTTS model. Unlike the demo web interface (`webui.py`), this service is designed for:
+This is a **personal production-ready Text-to-Speech (TTS) microservice** built on top of IndexTTS-1.5, enhanced with:
+- FastAPI REST API for synchronous inference
+- RabbitMQ message queue integration for asynchronous tasks
+- Standalone worker architecture (microservice design)
+- Cloud-ready deployment support
 
-1. **Scalable TTS processing** with FastAPI and message queue integration
-2. **Asynchronous task handling** via RabbitMQ (planned)
-3. **Cloud storage integration** with S3 for audio file management
-4. **Industrial-grade TTS inference** with IndexTTS-1.5 model
+**Note:** This is a fork of [IndexTTS](https://github.com/index-tts/index-tts) optimized for microservice deployment. It is not affiliated with or maintained by the original Index team.
 
-## 🚀 Quick Start for Production
+## 🚀 Quick Start
 
-### Current Production Features
-- ✅ FastAPI REST API (`run-indextts-1-5.py`)
+### Current Features
+- ✅ FastAPI REST API for instant TTS inference
+- ✅ RabbitMQ task queue worker (production-ready)
 - ✅ High-performance TTS inference (`indextts/infer.py`)
 - ✅ Command-line interface (`indextts/cli.py`)
-- ✅ Batch processing and fast inference modes
 - ✅ Multi-language support (Chinese/English)
 - ✅ GPU/CPU/MPS device support
+- ✅ Horizontal scaling ready
 
-### Planned Production Features
-- 🔄 RabbitMQ task queue integration
-- 🔄 S3 cloud storage for audio files
-- 🔄 Task status tracking and monitoring
-- 🔄 Horizontal scaling support
-- 🔄 Comprehensive logging and metrics
-
-## 📋 Service Overview
-
-This is a production TTS service that can be deployed as:
-1. **Standalone REST API** (current implementation)
-2. **Message queue worker** (planned - consumes from RabbitMQ)
-3. **Cloud-native microservice** (planned - Kubernetes deployment)
+### Service Architecture
+```
+Client Applications
+    ↓
+┌─────────────────┐
+│  FastAPI REST   │  ← Synchronous requests
+│  API (Port 8848)│
+└─────────────────┘
+    ↓
+┌─────────────────┐     ┌──────────────┐
+│   RabbitMQ      │────→│  TTS Worker  │  ← Async processing
+│    Queue        │     └──────────────┘
+└─────────────────┘
+```
 
 ## Core Components
 
 ### 1. FastAPI Service (`run-indextts-1-5.py`)
 - **Purpose**: REST API endpoint for synchronous TTS inference
+- **Status**: Production-ready
 - **Endpoint**: `POST /infer/`
-- **Input**: Audio prompt file + text
-- **Output**: Generated audio file
-- **Features**:
-  - Handles file uploads and processing
-  - Timestamped output file naming
-  - Error handling with HTTP status codes
-  - Local file storage for processed audio
-  - Uses fast inference mode for better performance
+- **Use case**: Direct API calls, web browser integration, low-latency applications
 
-### 2. IndexTTS Inference Engine (`indextts/infer.py`)
-- **Purpose**: Core TTS model with fast inference capabilities
+### 2. RabbitMQ Worker (Planned)
+- **Purpose**: Asynchronous TTS processing via message queue
+- **Use case**: High-throughput batch processing, decoupled systems
+
+### 3. IndexTTS Inference Engine (`indextts/infer.py`)
+- **Purpose**: Core TTS model with zero-shot voice cloning
 - **Features**:
-  - Zero-shot voice cloning
   - Fast batch inference mode (2-10x speedup)
   - Multi-language support (Chinese, English)
-  - GPU/CPU/MPS device support
+  - GPU/CPU/MPS acceleration
   - FP16 optimization for faster inference
-  - Automatic device detection (CUDA → MPS → CPU)
 
-### 3. Command Line Interface (`indextts/cli.py`)
-- **Purpose**: Direct command-line access to TTS functionality
+### 4. Command Line Interface (`indextts/cli.py`)
+- **Purpose**: Direct command-line TTS access
 - **Usage**: `indextts "text" --voice reference.wav --output output.wav`
-- **Features**:
-  - Simple text-to-speech conversion
-  - Device auto-detection
-  - Configurable model paths
-  - Overwrite protection with `--force` flag
 
 ## Production Architecture (Planned)
 
-### Target Architecture
+### Current Architecture (REST API)
 ```
-┌─────────────┐     ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│  Client     │────▶│ RabbitMQ    │────▶│ IndexTTS    │────▶│ S3 Bucket   │
-│  Services   │     │  Queue      │     │  Worker     │     │  Storage    │
-└─────────────┘     └─────────────┘     └─────────────┘     └─────────────┘
-                          │                      │
-                          └──────────────────────┘
-                                 Status Updates
+Client Request
+    ↓
+[FastAPI Server] → TTS Inference → Audio Response
+    ↓
+Local File Storage
 ```
 
-### Components to Build
-
-1. **RabbitMQ Consumer Service**
-   - Consume TTS tasks from RabbitMQ queues
-   - Parse task payloads (audio URL/text)
-   - Handle retry logic and error queuing
-
-2. **S3 Storage Integration**
-   - Upload generated audio files to S3
-   - Generate presigned URLs for access
-   - Manage file lifecycle and cleanup
-
-3. **Task Status Management**
-   - Update task status (pending, processing, completed, failed)
-   - Store metadata in database (PostgreSQL/Redis)
-   - Provide status query endpoints
-
-4. **Monitoring & Metrics**
-   - Prometheus metrics for inference latency
-   - Health check endpoints
-   - Log aggregation (ELK stack)
+### Planned Architecture (With RabbitMQ)
+```
+┌──────────────────┐
+│  Client Services │
+└────────┬─────────┘
+         │
+    ┌────▼─────┐
+    │ FastAPI  │  ← Sync API for immediate results
+    │ (8848)   │
+    └──────────┘
+         │
+    ┌────▼──────────┐
+    │ RabbitMQ      │  ← Async task queue
+    │ Message Queue │
+    └────┬──────────┘
+         │
+    ┌────▼──────────┐
+    │ TTS Workers   │  ← Scalable worker pool
+    │ (Multiple)    │
+    └────┬──────────┘
+         │
+    ┌────▼──────────┐
+    │ S3 Storage    │  ← Cloud file storage
+    │ (Optional)    │
+    └───────────────┘
+```
 
 ## Current Implementation
 
-### Available Tools
+## Available Tools
 
-#### 1. Command Line Interface (CLI)
+### 1. Command Line Interface (CLI)
 ```bash
 # Install the package
 pip install -e .
@@ -126,11 +123,12 @@ indextts "Hello world" \
 indextts --help
 ```
 
-#### 2. FastAPI Service (Production Ready)
+### 2. REST API Server
 ```bash
 # Start the API service
 python run-indextts-1-5.py
 # Server starts at http://0.0.0.0:8848
+# Interactive docs: http://localhost:8848/docs
 
 # API Request Example
 curl -X POST "http://localhost:8848/infer/" \
@@ -150,7 +148,7 @@ with open("output.wav", "wb") as f:
     f.write(response.content)
 ```
 
-#### 3. Python Library
+### 3. Python Library
 ```python
 from indextts.infer import IndexTTS
 
@@ -196,13 +194,18 @@ tts.infer_fast(
 
 ### Environment Setup
 
+**Note:** This project now uses `pyproject.toml` for dependency management. The old `requirements.txt` is deprecated.
+
 ```bash
 # 0. Create conda environment with Python 3.10 or 3.11
 conda create -n index-tts python=3.10  # or python=3.11
 conda activate index-tts
 
-# 1. Install with all dependencies
-pip install -e ".[webui]"  # includes gradio for web interface
+# 1. Install with dependencies (choose one based on your needs)
+pip install -e .                    # Base dependencies only
+pip install -e ".[webui]"          # Include Gradio web interface
+pip install -e ".[api]"            # Include FastAPI server
+pip install -e ".[all]"            # Install everything (webui + api + dev tools)
 
 # 2. Download models (IndexTTS-1.5 recommended for production)
 huggingface-cli download IndexTeam/IndexTTS-1.5 \
@@ -226,12 +229,13 @@ python run-indextts-1-5.py
 
 ## Development Roadmap
 
-### Phase 1: Basic Service (Current)
+### Phase 1: REST API (✅ Current)
 - [x] FastAPI endpoint for synchronous inference
 - [x] Local file storage
-- [x] Error handling
+- [x] Error handling and validation
+- [x] Comprehensive documentation
 
-### Phase 2: Message Queue Integration
+### Phase 2: RabbitMQ Integration (🔄 In Progress)
 - [ ] RabbitMQ consumer implementation
 - [ ] Task serialization/deserialization (JSON schema)
 - [ ] Worker pool management
@@ -239,14 +243,16 @@ python run-indextts-1-5.py
 - [ ] Dead letter queue for failed tasks
 - [ ] Message acknowledgment and retry logic
 
-### Phase 3: Cloud Storage
-- [ ] S3 client integration
-- [ ] File upload with metadata
-- [ ] CDN integration for delivery
-- [ ] File lifecycle management
-- [ ] Access control with presigned URLs
+### Phase 3: Monitoring & Ops
+- [ ] Health check endpoints
+- [ ] Prometheus metrics
+- [ ] Structured logging
+- [ ] Graceful shutdown
 
-### Task Schema (for RabbitMQ integration)
+### Phase 4: Optional Cloud Integration
+- [ ] S3 file storage support
+- [ ] Presigned URLs for file access
+- [ ] Database backend for task tracking
 
 ```json
 {
@@ -276,8 +282,6 @@ python run-indextts-1-5.py
     "error_message": null
   }
 }
-```
-
 ### Phase 4: Scalability
 - [ ] Horizontal scaling support
 - [ ] Load balancing
@@ -287,6 +291,8 @@ python run-indextts-1-5.py
 - [ ] Comprehensive logging
 - [ ] Performance metrics
 - [ ] Alerting system
+
+## Task Schema (for RabbitMQ integration)
 
 ## Configuration
 
@@ -429,12 +435,11 @@ RUN python3.10 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
 # Copy requirements
-COPY requirements.txt .
+COPY pyproject.toml MANIFEST.in ./
 
 # Install Python dependencies
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt && \
-    pip install --no-cache-dir "fastapi[standard]" uvicorn[standard]
+    pip install --no-cache-dir -e ".[api]"
 
 # Install IndexTTS package
 COPY . .
@@ -542,28 +547,24 @@ spec:
 
 ## Contributing
 
-### Development Setup
-1. Fork the repository
-2. Create feature branch
-3. Implement changes with tests
-4. Submit pull request
+This is a personal project. While it's open source, contributions are welcome via GitHub issues and discussions.
 
-### Testing
-- Unit tests for core functions
-- Integration tests with mock services
-- Performance benchmarks
-- Load testing for scalability
+## Author
 
-## Support
+**Michael Ran** - [@0xmichaelran](https://github.com/0xmichaelran)
 
-- **Issues**: GitHub issue tracker
-- **Documentation**: This file and inline code comments
-- **Community**: Discord server (link in README.md)
+**Acknowledgments:**
+- Original IndexTTS-1.5 model: [Index team](https://github.com/index-tts/index-tts)
+- This project extends their work for microservice deployment
 
 ## License
 
-See [LICENSE](LICENSE) file for details. Model usage may be subject to additional terms in [INDEX_MODEL_LICENSE](INDEX_MODEL_LICENSE).
+Apache-2.0 - See [LICENSE](LICENSE) file for details.
+
+Model usage may be subject to additional terms in [INDEX_MODEL_LICENSE](INDEX_MODEL_LICENSE).
 
 ---
 
-*This document describes the production service architecture. For model details and demo usage, see [README.md](README.md).*
+**Repository:** [indexTTS-worker](https://github.com/0xmichaelran/indexTTS-worker)
+
+*A personal TTS microservice with FastAPI and RabbitMQ integration, built on IndexTTS-1.5.*

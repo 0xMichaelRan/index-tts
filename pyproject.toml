@@ -3,24 +3,25 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "indextts"
-version = "0.1.4"
-description = "An Industrial-Level Controllable and Efficient Zero-Shot Text-To-Speech System"
+name = "indextts-worker"
+version = "1.0.0"
+description = "Personal TTS Worker: FastAPI + RabbitMQ integration for IndexTTS-1.5 zero-shot text-to-speech"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "Apache-2.0"}
 authors = [
-    {name = "Index SpeechTeam", email = "xuanwu@bilibili.com"}
+    {name = "0xmichaelran", email = "michaelran16@gmail.com"}
 ]
-keywords = ["TTS", "text-to-speech", "zero-shot", "voice-cloning", "speech-synthesis"]
+keywords = ["TTS", "text-to-speech", "zero-shot", "voice-cloning", "fastapi", "rabbitmq", "worker", "microservice"]
 classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Operating System :: OS Independent",
-    "Intended Audience :: Science/Research",
-    "Topic :: Scientific/Engineering",
-    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Multimedia :: Sound/Audio",
     "License :: OSI Approved :: Apache Software License",
+    "Development Status :: 4 - Beta",
 ]
 
 dependencies = [
@@ -65,14 +66,15 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-webui = [
-    "gradio",
-]
-
-api = [
+worker = [
     "fastapi[standard]",
     "uvicorn[standard]",
+    "pika",
     "python-multipart",
+]
+
+webui = [
+    "gradio",
 ]
 
 dev = [
@@ -83,14 +85,15 @@ dev = [
 ]
 
 all = [
-    "indextts[webui,api,dev]",
+    "indextts-worker[worker,webui,dev]",
 ]
 
 [project.urls]
-Homepage = "https://github.com/index-tts/index-tts"
-Repository = "https://github.com/index-tts/index-tts"
-Documentation = "https://github.com/index-tts/index-tts/blob/main/README.md"
-Issues = "https://github.com/index-tts/index-tts/issues"
+Homepage = "https://github.com/0xmichaelran/indexTTS-worker"
+Repository = "https://github.com/0xmichaelran/indexTTS-worker"
+Documentation = "https://github.com/0xmichaelran/indexTTS-worker/blob/main/README.md"
+Issues = "https://github.com/0xmichaelran/indexTTS-worker/issues"
+"Source (Original IndexTTS)" = "https://github.com/index-tts/index-tts"
 
 [project.scripts]
 indextts = "indextts.cli:main"
