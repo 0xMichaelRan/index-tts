@@ -66,7 +66,7 @@ The feature enables:
 4. IF voice_id does not exist in the database, THE Studio_Backend SHALL return 404 Not Found instead of creating a job.
 5. IF voice_id exists but is private (owned by another user), THE Studio_Backend SHALL return 403 Forbidden instead of creating a job.
 6. IF voice_id is valid and accessible, THE Studio_Backend SHALL retrieve its S3 URL from the voice catalog.
-7. THE Studio_Backend SHALL create a TTS_Job database record with status "pending" and store job_id, user_id, project_id, text, voice_id, language, created_timestamp.
+7. THE Studio_Backend SHALL create a TTS_Job database record with status "pending" and store job_id, user_id, project_id, text, voice_id, language, created_at.
 8. THE Studio_Backend SHALL publish a message to RabbitMQ tts_jobs queue containing: job_id, text, audio_prompt_url (from voice catalog), language, and user_metadata (user_id, project_id).
 9. THE Studio_Backend SHALL return a 202 Accepted response with job_id and polling/SSE URL.
 10. WHEN requesting job status via GET `/api/v1/tts/{job_id}`, THE Studio_Backend SHALL return current status, progress (if processing), and S3 audio URL (if completed).
@@ -90,7 +90,7 @@ The feature enables:
 4. IF text length exceeds 500 characters, THE Studio_Backend SHALL return 400 Bad Request with error message.
 5. THE Studio_Backend SHALL apply rate limiting: maximum 5 TTS requests per IP address per hour to prevent abuse.
 6. IF rate limit is exceeded, THE Studio_Backend SHALL return 429 Too Many Requests.
-7. WHEN a rate limit is exceeded, THE Studio_Backend SHALL create a temporary TTS job record with status "pending" for analytics tracking even though the request is rejected.
+7. WHEN a rate limit is exceeded, THE Studio_Backend SHALL create a temporary TTS job record with status "rate_limited" for tracking and metrics purposes, though the request is directly rejected with 429 response.
 8. WHEN rate limiting is not exceeded and the request is valid, THE Studio_Backend SHALL create a temporary TTS job record with status "pending", user_id = NULL (anonymous), and store client_ip_address for analytics and rate limiting.
 9. THE Studio_Backend SHALL publish to RabbitMQ tts_jobs queue with: job_id, text, audio_prompt_url, language, and is_playground=true flag.
 10. THE Studio_Backend SHALL return 202 Accepted with job_id and SSE URL.
@@ -105,7 +105,7 @@ The feature enables:
 #### Acceptance Criteria
 
 1. THE Studio_Backend SHALL provide GET `/api/v1/tts/{job_id}/stream` endpoint that accepts application/event-stream content type.
-2. WHEN the job is still processing, THE SSE_Stream SHALL send progress events with status "processing", progress percentage (0-100), and estimated_time_remaining_seconds.
+2. WHEN the job is still processing, THE SSE_Stream SHALL send status events with current job status ("pending" or "processing").
 3. WHEN the job completes successfully, THE SSE_Stream SHALL send a "completed" event with: status, s3_url, audio_duration_seconds, and audio_format (determined by IndexTTS output).
 4. WHEN the job fails, THE SSE_Stream SHALL NOT send a "completed" event.
 5. WHEN the job fails, THE SSE_Stream SHALL send a "failed" event with: status, error_message, and retry_count.
@@ -195,12 +195,14 @@ The feature enables:
 
 #### Acceptance Criteria
 
-1. THE IndexTTS_Worker SHALL log: job_id, operation (start, progress, complete, fail), timestamp, duration_seconds, language, status_code.
+1. THE IndexTTS_Worker SHALL log: job_id, operation (start, complete, fail), timestamp, duration_seconds, language, status_code.
 2. THE IndexTTS_Worker SHALL log synthesis errors with: error_type, error_message, stack_trace, retry_count, attempt_number.
-3. THE Studio_Backend SHALL log TTS requests with: job_id, user_id, project_id, text_length, voice_id, language, creation_timestamp.
-4. THE Studio_Backend SHALL log rate limit violations with: ip_address, request_count, window_timestamp.
-5. WHEN a job completes, THE Studio_Backend AND IndexTTS_Worker SHALL both log: job_id, duration_seconds, audio_duration_seconds, status, s3_url.
-6. ALL logs SHALL include timestamps in ISO 8601 format and correlation IDs for tracing request flow.
+3. THE IndexTTS_Worker SHALL integrate with a structured logging system (ELK, Loki, or Prometheus) for centralized log aggregation and monitoring.
+4. THE Studio_Backend SHALL log TTS requests with: job_id, user_id, project_id, text_length, voice_id, language, created_at.
+5. THE Studio_Backend SHALL log rate limit violations with: ip_address, request_count, window_timestamp.
+6. WHEN a job completes, THE Studio_Backend AND IndexTTS_Worker SHALL both log: job_id, duration_seconds, audio_duration_seconds, status, s3_url.
+7. ALL logs SHALL include timestamps in ISO 8601 format and correlation IDs for tracing request flow.
+8. ALL logs from IndexTTS_Worker SHALL include worker_instance_id for distributed system debugging.
 
 ---
 

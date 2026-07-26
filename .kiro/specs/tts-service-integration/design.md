@@ -82,8 +82,7 @@ class PlaygroundTTSJob(Base):
     language: str                    # Language code (e.g., "en", "zh")
     
     # Processing
-    status: str                      # pending, processing, completed, failed
-    progress: int                    # 0-100 (percentage)
+    status: str                      # pending, processing, completed, failed, rate_limited
     retry_count: int                 # Number of retries attempted
     
     # Results
@@ -121,7 +120,6 @@ class UserTTSJob(Base):
     
     # Processing
     status: str                      # pending, processing, completed, failed
-    progress: int                    # 0-100 (percentage)
     retry_count: int                 # Number of retries attempted
     
     # Results
@@ -183,51 +181,35 @@ class RateLimitCounter(Base):
     created_at: datetime
 ```
 
-### 5. TTSWorkerJob (indexTTS-worker - new)
+## Infrastructure Configuration
 
-```python
-class TTSWorkerJob(Base):
-    __tablename__ = "tts_worker_jobs"
-    
-    # Identifiers
-    id: str                          # UUID primary key (matches job_id from queue)
-    
-    # Job source metadata
-    user_id: Optional[str]           # From user_metadata
-    project_id: Optional[str]        # From user_metadata
-    is_playground: bool              # From job message
-    correlation_id: str              # From user_metadata
-    
-    # Input
-    text: str                        # Original request text
-    audio_prompt_url: str            # S3 URL of audio prompt
-    language: str                    # Language code
-    
-    # Processing state
-    status: str                      # received, synthesizing, uploading, completed, failed
-    current_attempt: int             # Current retry attempt (1-3)
-    last_attempt_at: Optional[datetime]  # Timestamp of last attempt
-    
-    # Results
-    output_s3_path: Optional[str]    # S3 path of synthesized audio
-    audio_duration_seconds: Optional[float]  # Duration of output
-    synthesis_duration_seconds: Optional[float]  # Time to synthesize
-    
-    # Error tracking
-    error_code: Optional[str]        # Error code (AUDIO_PROMPT_DOWNLOAD_FAILED, etc)
-    error_message: Optional[str]     # Detailed error message
-    retry_reason: Optional[str]      # Reason for retry (if applicable)
-    
-    # Lifecycle
-    received_at: datetime            # When message received
-    started_at: Optional[datetime]   # When synthesis started
-    completed_at: Optional[datetime] # When job completed/failed
-    
-    # Worker metadata
-    worker_instance_id: str          # Hostname/ID of worker processing job
-    platform: str                    # "Darwin" or "Linux" or "Windows"
-    engine_type: str                 # "macos_native" or "indextts_gpu"
-```
+### S3 Bucket Strategy
+- **Single S3 bucket** shared across all repositories
+- **Path structure**: 
+  - Playground audio: `s3://bucket/tts-output/playground/{job_id}/{timestamp}.{format}`
+  - User audio: `s3://bucket/tts-output/users/{job_id}/{timestamp}.{format}`
+  - Audio prompts: `s3://bucket/audio-prompts/{prompt_id}.{format}`
+- **Expiration policies**:
+  - Playground audio: 24 hours (lifecycle rule)
+  - User audio: indefinite
+- **CORS configuration**: Allow GET from official-landing domain for playground audio playback
+
+### RabbitMQ Configuration
+- **Connection**: Both indexTTS-worker and studio-backend read `RABBITMQ_URL` from environment variables
+- **Queues**: 
+  - `tts_jobs` (durable, TTL=24h)
+  - `tts_results` (durable, TTL=7d)
+
+### Audio Format
+- **Default format**: Use IndexTTS default output format (typically WAV)
+- No custom format specifications required
+- Worker outputs whatever IndexTTS produces natively
+
+### Logging Infrastructure (indexTTS-worker)
+- **Strategy**: Structured logging to stdout/stderr
+- **Integration**: Compatible with ELK Stack, Grafana Loki, or Prometheus exporters
+- **Required fields**: timestamp, log_level, job_id, correlation_id, worker_instance_id, operation, duration_ms
+- **No database**: Worker is stateless; all job state tracking happens in studio-backend
 
 ---
 
@@ -375,8 +357,6 @@ class TTSWorkerJob(Base):
 {
   "job_id": "uuid-1234",
   "status": "processing",
-  "progress": 45,
-  "estimated_time_remaining_seconds": 20,
   "created_at": "2024-12-25T10:00:00Z"
 }
 ```
@@ -386,7 +366,6 @@ class TTSWorkerJob(Base):
 {
   "job_id": "uuid-1234",
   "status": "completed",
-  "progress": 100,
   "audio_duration_seconds": 30.5,
   "s3_url": "https://bucket.s3.amazonaws.com/tts-output/uuid-1234/audio.wav",
   "created_at": "2024-12-25T10:00:00Z",
@@ -429,13 +408,13 @@ class TTSWorkerJob(Base):
 # Heartbeat (no action needed)
 : heartbeat
 
-# Processing update
-event: progress
-data: {"status":"processing","progress":25,"estimated_time_remaining_seconds":30}
+# Status update
+event: status
+data: {"status":"processing"}
 
-# Processing update
-event: progress
-data: {"status":"processing","progress":50,"estimated_time_remaining_seconds":15}
+# Status update
+event: status
+data: {"status":"processing"}
 
 # Completion
 event: completed
@@ -588,7 +567,9 @@ data: {"status":"failed","error_message":"Synthesis timeout","error_code":"SYNTH
 ### 4. S3 Upload
 
 ```
-1. Generate S3 key: tts-output/{job_id}/{timestamp}.wav
+1. Generate S3 key: 
+   - Playground: tts-output/playground/{job_id}/{timestamp}.{format}
+   - User: tts-output/users/{job_id}/{timestamp}.{format}
 2. Upload to S3 with metadata tags:
    - job_id, user_id, project_id, language, created_timestamp
 3. Set expiration policy:
@@ -739,17 +720,12 @@ data: {"status":"failed","error_message":"Synthesis timeout","error_code":"SYNTH
 - Invalid: completed → processing (illegal transition)
 - Invalid: failed → completed (illegal transition)
 
-### Property 4: Metamorphic - Text Length Constraint
-**Longer text SHALL NOT result in shorter audio duration (monotonic property).**
-- Given: text1, text2 where len(text1) < len(text2)
-- Then: audio_duration(text1) <= audio_duration(text2) (with reasonable variance)
-
-### Property 5: Error Handling - Retry Exhaustion
+### Property 4: Error Handling - Retry Exhaustion
 **Jobs that exhaust retries SHALL be marked as failed with proper error documentation.**
 - Given: retryable_error
 - Then: retry_count == 3 AND status == failed AND error_message != NULL
 
-### Property 6: Rate Limiting - IP-based Enforcement
+### Property 5: Rate Limiting - IP-based Enforcement
 **Any IP SHALL NOT exceed 5 TTS requests per hour window.**
 - Given: requests from same IP in 1 hour
 - Then: count(successful_requests + rejected_requests) >= 5
