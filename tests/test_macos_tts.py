@@ -16,7 +16,7 @@ class TestMacOSTTS:
         """Create and return a macOS TTS engine instance."""
         try:
             from indextts.infer import create_tts_engine
-            
+
             engine = create_tts_engine(use_native_macos=True, language="en-US")
             yield engine
             # Cleanup if needed
@@ -37,11 +37,12 @@ class TestMacOSTTS:
     def test_list_voices(self, tts_engine):
         """Test listing available English voices."""
         voices = tts_engine.list_voices(language="en")
-        
+
         assert len(voices) > 0, "No English voices found"
-        assert all("name" in v and "identifier" in v for v in voices), \
+        assert all("name" in v and "identifier" in v for v in voices), (
             "Voice entries missing required fields"
-        
+        )
+
         print(f"\nAvailable voices (English): {len(voices)} voices")
         for i, voice in enumerate(voices[:5], 1):
             print(f"   {i}. {voice['name']} ({voice['identifier']})")
@@ -53,7 +54,7 @@ class TestMacOSTTS:
         test_text = (
             "Hello! This is the IndexTTS worker running on macOS using AVFoundation."
         )
-        
+
         # Should not raise any exceptions
         tts_engine.infer_to_system_audio(test_text, rate=0.5, pitch=1.0, volume=1.0)
         print("✓ Speech synthesis to system audio completed")
@@ -61,14 +62,14 @@ class TestMacOSTTS:
     def test_file_output(self, tts_engine, tmp_path):
         """Test speech synthesis to file output."""
         output_path = tmp_path / "macos_test.wav"
-        
+
         tts_engine.infer(
             audio_prompt=None,
             text="This is a test of file output.",
             output_path=str(output_path),
             rate=0.5,
         )
-        
+
         assert output_path.exists(), f"Output file not created at {output_path}"
         print(f"✓ Output written to: {output_path}")
 

@@ -32,10 +32,11 @@ class TestMacOSTTSPlatform:
         """Create MacOSTTS instance if available."""
         pytest.importorskip(
             "AVFoundation",
-            reason="macOS TTS dependencies not installed. Install with: pip install 'indextts-worker[mac]'"
+            reason="macOS TTS dependencies not installed. Install with: pip install 'indextts-worker[mac]'",
         )
-        
+
         from indextts.macos_tts import MacOSTTS
+
         tts = MacOSTTS(language="en-US")
         yield tts
         del tts
@@ -48,10 +49,10 @@ class TestMacOSTTSPlatform:
     def test_list_voices_macos(self, macos_tts):
         """Test listing available voices."""
         voices = macos_tts.list_voices(language="en")
-        
+
         assert len(voices) > 0, "No English voices found"
         print(f"✓ Found {len(voices)} English voices")
-        
+
         if voices:
             print(f"  Example: {voices[0]['name']}")
 
@@ -60,7 +61,7 @@ class TestMacOSTTSPlatform:
         test_text = "This is a test of the macOS native text to speech system."
         print(f"\n  Speaking: '{test_text}'")
         print("  (You should hear audio from your Mac speakers)")
-        
+
         macos_tts.infer_to_system_audio(test_text, rate=0.5)
         print("✓ Speech synthesis completed")
 
@@ -71,17 +72,18 @@ class TestFactory:
     def test_factory_function_exists(self):
         """Test that create_tts_engine function exists."""
         from indextts import create_tts_engine
+
         assert callable(create_tts_engine)
 
     def test_factory_creates_engine(self):
         """Test factory function creates appropriate engine."""
         from indextts import create_tts_engine
-        
+
         try:
             tts = create_tts_engine()
             assert tts is not None
             print(f"✓ Factory created TTS engine: {type(tts).__name__}")
-            
+
         except RuntimeError as e:
             # Expected if dependencies aren't installed
             if "PyTorch" in str(e):
@@ -106,13 +108,14 @@ class TestGPUInference:
         """Test CUDA availability and IndexTTS imports."""
         torch = pytest.importorskip(
             "torch",
-            reason="PyTorch not installed. Install with: pip install 'indextts-worker[cuda]'"
+            reason="PyTorch not installed. Install with: pip install 'indextts-worker[cuda]'",
         )
-        
+
         if torch.cuda.is_available():
             print(f"✓ CUDA available: {torch.cuda.get_device_name(0)}")
-            
+
             from indextts import IndexTTS
+
             assert IndexTTS is not None
             print("✓ IndexTTS imports successful")
             print("  (Skipping model loading for quick test)")
