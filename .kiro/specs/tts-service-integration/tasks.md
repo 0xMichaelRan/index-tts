@@ -1,292 +1,422 @@
 # TTS Service Integration - Implementation Tasks
 
-## Phase 1: Core Infrastructure (Week 1-2)
+## Implementation Plan
 
-### 1.1 Create Database Models (studio-backend)
-- [ ] Create UserTTSJob ORM model with fields: user_id, project_id, text, voice_id, language, status, retry_count, output_s3_url, audio_duration_seconds, error_message, correlation_id, is_cached, created_at, completed_at
-- [ ] Create PlaygroundTTSJob ORM model with fields: text, audio_prompt_id, language, status, retry_count, output_s3_url, audio_duration_seconds, error_message, client_ip_address, user_agent, referrer, correlation_id, created_at, completed_at, expires_at
-- [ ] Create PlaygroundAudioPrompt model with fields: prompt_id, language, s3_url, description, created_at
-- [ ] Create RateLimitCounter model with fields: ip_address, request_count, window_start, window_end, created_at
-- [ ] Add models to alembic/env.py for migration detection
-- [ ] Generate database migration file with `alembic revision --autogenerate -m "Add TTS job tables"`
+This plan implements the TTS service integration across three repositories with focus on:
+1. Building upon existing `TTSJob` and `Voice` schemas
+2. Implementing dead-letter queues and circuit breaker patterns
+3. Using path-based S3 storage (not full URLs)
+4. Different caching strategies: preview_text (studio) vs full text (playground)
+5. Three-state voice system: private, shared, approved
+
+## Phase 1: Database Migration & Core Infrastructure (Week 1-2)
+
+### 1.1 Extend Existing TTSJob Schema (studio-backend)
+- [ ] Add new columns to existing `TTSJob` table:
+  - `language`: VARCHAR(10) NOT NULL (default: 'zh')
+  - `correlation_id`: VARCHAR(255) NOT NULL (UUID)
+  - `full_text_hash`: VARCHAR(64) NULL (SHA256 of full text)
+- [ ] Add `rate_limited` to status check constraint
+- [ ] Create migration: `alembic revision --autogenerate -m "Extend TTSJob schema"`
 - [ ] Apply migration: `alembic upgrade head`
-- [ ] Write test: verify all models can be created, queried, and have proper constraints
+- [ ] Write test: verify new columns accept expected data types
 
-### 1.2 Setup Logging Infrastructure (indexTTS-worker)
-- [ ] Configure structured logging to stdout/stderr with JSON format
-- [ ] Include required fields in all logs: timestamp, log_level, job_id, correlation_id, worker_instance_id, operation, duration_ms
-- [ ] Add platform detection: log "Darwin" for macOS, "Linux" for Linux
-- [ ] Add engine type detection: log "macos_native" or "indextts_gpu"
-- [ ] Document logging configuration for ELK Stack, Grafana Loki, or Prometheus integration
-- [ ] Write test: verify log output contains all required fields
+### 1.2 Create PlaygroundTTSJob Table (studio-backend)
+- [ ] Create `PlaygroundTTSJob` ORM model with fields:
+  - `id`: UUID primary key (different from TTSJob integer IDs)
+  - `text`: TEXT (max 1000 chars, full text storage)
+  - `voice_id`: INTEGER NOT NULL (approved community voices only)
+  - `language`: VARCHAR(10) NOT NULL
+  - `status`: VARCHAR(50) (queued, processing, completed, failed, rate_limited)
+  - `audio_path`: VARCHAR(512) NULL (path-based: "tts-output/playground/{id}.wav")
+  - `audio_duration`: FLOAT NULL
+  - `client_ip_hash`: VARCHAR(64) NOT NULL (SHA256 of IP for privacy)
+  - `correlation_id`: VARCHAR(255) NOT NULL
+  - `expires_at`: DATETIME NOT NULL (created_at + 30 days)
+  - Standard timestamps: created_at, started_at, completed_at
+- [ ] Create migration: `alembic revision --autogenerate -m "Add PlaygroundTTSJob table"`
+- [ ] Apply migration: `alembic upgrade head`
+- [ ] Write test: verify playground jobs auto-expire after 30 days
 
-### 1.3 Populate Playground Audio Prompts
-- [ ] Add 3-5 playground audio prompt files to official-landing/public/audio/prompts/ (e.g., en_neutral.wav, en_upbeat.wav, zh_neutral.wav)
-- [ ] Upload audio prompt files to S3 bucket under path: audio-prompts/{prompt_id}.{format}
-- [ ] Create PlaygroundAudioPrompt database records for each prompt with S3 URLs
-- [ ] Write test: verify playgrounds can load prompt list and prompts have correct S3 URLs
+### 1.3 Backfill Voice Language Data (studio-backend)
+- [ ] Create migration to add `language` column to `Voice` table (NOT NULL)
+- [ ] Create data migration script to backfill existing voices:
+  ```python
+  # scripts/backfill_voice_language.py
+  UPDATE voices SET language = 'zh' WHERE language IS NULL;
+  ```
+- [ ] Apply migration: `alembic upgrade head`
+- [ ] Run backfill script: `uv run python scripts/backfill_voice_language.py`
+- [ ] Write test: verify all voices have non-null language
 
-### 1.4 Setup RabbitMQ Configuration and S3 Bucket
-- [ ] Verify RabbitMQ connection in studio-backend (RABBITMQ_URL env var)
-- [ ] Verify RabbitMQ connection in indexTTS-worker (RABBITMQ_URL env var)
-- [ ] Create queue declarations for tts_jobs and tts_results (durable=true, TTL=24h for jobs, 7d for results)
-- [ ] Configure S3 bucket with paths: tts-output/playground/, tts-output/users/, audio-prompts/
-- [ ] Set S3 lifecycle rule: delete playground audio after 24 hours
-- [ ] Configure CORS on S3 bucket to allow GET from official-landing domain
-- [ ] Test RabbitMQ connection from both indexTTS-worker and studio-backend
-- [ ] Write test: verify queues exist and can publish/consume messages
-- [ ] Write test: verify S3 upload and download from both repos
+### 1.4 Configure RabbitMQ with Dead-Letter Queues
+- [ ] Update RabbitMQ configuration in studio-backend:
+  ```python
+  # app/services/rabbitmq.py
+  QUEUE_CONFIG = {
+      'tts_jobs': {
+          'durable': True,
+          'arguments': {
+              'x-dead-letter-exchange': '',
+              'x-dead-letter-routing-key': 'tts_jobs_dlq',
+              'x-message-ttl': 86400000,  # 24h
+              'x-max-length': 10000,
+          }
+      },
+      'tts_jobs_dlq': {'durable': True, 'arguments': {'x-message-ttl': 604800000}},  # 7d
+      'tts_results': {'durable': True, 'arguments': {'x-dead-letter-exchange': '', 'x-dead-letter-routing-key': 'tts_results_dlq'}},
+      'tts_results_dlq': {'durable': True, 'arguments': {'x-message-ttl': 604800000}},
+  }
+  ```
+- [ ] Test queue declaration and DLQ routing
+- [ ] Write test: verify failed messages route to DLQ after 3 retries
 
----
-
-## Phase 2: Backend TTS Endpoints (Week 2-3)
-
-### 2.1 Implement Playground TTS Endpoint
-- [ ] Create POST /api/v1/playground/tts endpoint in studio-backend/app/routers/
-- [ ] Validate request: text (max 500 chars), audio_prompt_id (required), language (required)
-- [ ] Implement rate limiting: 5 requests per IP per hour using RateLimitCounter table
-- [ ] Extract client IP address (handle proxies: X-Forwarded-For, X-Real-IP)
-- [ ] Create PlaygroundTTSJob record with: text, audio_prompt_id, language, status="pending", client_ip_address, correlation_id (UUID)
-- [ ] Look up PlaygroundAudioPrompt by prompt_id, get s3_url
-- [ ] Publish message to tts_jobs queue with: job_id, text, audio_prompt_url, language, is_playground=true, user_metadata (correlation_id)
-- [ ] Return 202 Accepted with: job_id, status, stream_url
-- [ ] Write test: verify endpoint accepts valid requests and returns 202
-- [ ] Write test: verify rate limiting returns 429 after 5 requests
-- [ ] Write test: verify text length validation returns 400 if >500 chars
-
-### 2.2 Implement Authenticated TTS Endpoint
-- [ ] Create POST /api/v1/tts endpoint in studio-backend/app/routers/
-- [ ] Require authentication (bearer token)
-- [ ] Validate request: project_id (required), text (max 5000 chars), voice_id (required), language (required)
-- [ ] Query Voice table by voice_id, verify it exists
-- [ ] Check voice permissions: if voice is private (is_public=false), verify user owns it or return 403
-- [ ] Implement cache check: query UserTTSJob where voice_id, text match and created_at > now()-30days and status="completed"
-- [ ] If cache hit: return existing job with is_cached=true and s3_url
-- [ ] If cache miss: create new UserTTSJob record with: user_id (from token), project_id, text, voice_id, language, status="pending", correlation_id
-- [ ] Get voice s3_url, publish to tts_jobs queue with: job_id, text, audio_prompt_url (voice s3_url), language, user_metadata (user_id, project_id, voice_id, correlation_id)
-- [ ] Return 202 Accepted (or 200 OK for cached) with: job_id, status, stream_url, is_cached
-- [ ] Write test: verify authenticated requests return 202
-- [ ] Write test: verify cache returns existing s3_url for same voice+text
-- [ ] Write test: verify permission check returns 403 for private voices not owned by user
-- [ ] Write test: verify 404 for non-existent voice_id
-
-### 2.3 Implement TTS Status Endpoint
-- [ ] Create GET /api/v1/tts/{job_id} endpoint
-- [ ] Query UserTTSJob or PlaygroundTTSJob by job_id
-- [ ] Handle permission: if UserTTSJob, verify user owns project
-- [ ] Return job status with: job_id, status, created_at
-- [ ] If completed: include audio_duration_seconds, s3_url, completed_at
-- [ ] If failed: include error_message, error_code, retry_count, completed_at
-- [ ] Write test: verify status endpoint returns current job status
-
-### 2.4 Implement TTS SSE Streaming Endpoint
-- [ ] Create GET /api/v1/tts/{job_id}/stream endpoint (application/event-stream)
-- [ ] Query job by job_id, verify permission (if UserTTSJob)
-- [ ] Start SSE connection with 30-second heartbeat
-- [ ] Poll job status every 2 seconds (or use database notifications if supported)
-- [ ] Send "status" events while status="pending" or "processing"
-- [ ] Send "completed" event when status="completed" with: s3_url, audio_duration_seconds, audio_format
-- [ ] Send "failed" event when status="failed" with: error_message, error_code, retry_count
-- [ ] Close connection after terminal event
-- [ ] Write test: verify SSE sends status events
-- [ ] Write test: verify SSE sends completed event with correct data
-- [ ] Write test: verify SSE sends failed event with error details
+### 1.5 Configure S3 Path-Based Storage
+- [ ] Create S3 bucket structure documentation:
+  ```
+  s3://{bucket}/
+  ├── audio-prompts/           # Voice recordings
+  │   └── {voice_id}.{format}  # Path-based storage
+  ├── tts-output/
+  │   ├── studio/              # Studio job outputs
+  │   │   └── {job_id}.{format}
+  │   └── playground/          # Playground outputs (24h retention)
+  │       └── {job_id}.{format}
+  └── logs/                    # Application logs
+  ```
+- [ ] Configure S3 lifecycle rules:
+  - Delete `tts-output/playground/` objects after 24 hours
+  - Keep `tts-output/studio/` objects indefinitely
+- [ ] Configure CORS for official-landing domain access
+- [ ] Test S3 upload/download from all three repositories
 
 ---
 
-## Phase 3: Backend TTS Consumer (Week 3)
+## Phase 2: Studio Backend Implementation (Week 2-3)
 
-### 3.1 Implement TTS Results Consumer
-- [ ] Create app/services/tts_consumer.py or integrate into background_worker.py
-- [ ] Subscribe to tts_results RabbitMQ queue
-- [ ] Consume messages with: job_id, status, output_s3_path (if completed), audio_duration_seconds, error_code, error_message (if failed)
-- [ ] Query UserTTSJob or PlaygroundTTSJob by job_id
-- [ ] For completed jobs: update status="completed", output_s3_url, audio_duration_seconds, completed_at
-- [ ] For failed jobs: update status="failed", error_message, error_code, completed_at
-- [ ] For playground jobs: set expires_at = now() + 30 days
-- [ ] Log job completion with: job_id, duration, status, s3_url, correlation_id
-- [ ] Write test: verify consumer updates job records correctly on completion
-- [ ] Write test: verify consumer updates job records with error details on failure
+### 2.1 Implement Studio TTS Endpoint (preview_text caching)
+- [ ] Create/update `POST /api/v1/tts` endpoint in `app/routers/tts.py`
+- [ ] Extract `preview_text` (first 2 sentences) from full text
+- [ ] Implement permission checking for three-state voice system:
+  - Private voices: `user_id` must match voice owner
+  - Shared voices: Any authenticated user
+  - Approved voices: All users (including playground)
+- [ ] Implement cache lookup using existing `preview_text` field:
+  ```python
+  cached_job = await find_cached_tts_job(
+      db, voice_id, preview_text, days=30
+  )
+  ```
+- [ ] Create new TTSJob records with extended fields:
+  - `language` (required), `correlation_id` (UUID), `full_text_hash` (SHA256)
+- [ ] Publish to `tts_jobs` queue with path-based storage:
+  - `audio_prompt_path`: "audio-prompts/{voice_id}.wav"
+  - `output_path_template`: "tts-output/studio/{job_id}.wav"
+  - `job_type`: "studio"
+- [ ] Write tests: authentication, permission checks, cache hits/misses
 
----
+### 2.2 Implement Playground TTS Endpoint (full text caching)
+- [ ] Create `POST /api/v1/playground/tts` endpoint in `app/routers/playground.py`
+- [ ] Validate input:
+  - `text`: max 200 words (≈1000 chars)
+  - `voice_id`: must be approved community voice (`is_shared=true AND is_approved=true`)
+  - `language`: must match voice language
+- [ ] Implement IP-based rate limiting (5/hour):
+  - Hash IP with SHA256 for privacy
+  - Store in `RateLimitCounter` table
+  - Return 429 with `retry_after: 3600` when exceeded
+- [ ] Create `PlaygroundTTSJob` records (UUID primary key)
+- [ ] Implement cache lookup using full text hash:
+  ```python
+  text_hash = sha256(text.encode()).hexdigest()
+  cached = await find_cached_playground_job(voice_id, text_hash, days=30)
+  ```
+- [ ] Publish to `tts_jobs` queue with:
+  - `job_type`: "playground"
+  - `output_path_template`: "tts-output/playground/{job_id}.wav"
+- [ ] Write tests: rate limiting, voice validation, cache behavior
 
-## Phase 4: TTS Worker Service (Week 4)
+### 2.3 Implement SSE Streaming Endpoint
+- [ ] Create `GET /api/v1/tts/{job_id}/stream` endpoint
+- [ ] Handle both TTSJob (integer ID) and PlaygroundTTSJob (UUID)
+- [ ] Implement Server-Sent Events with:
+  - 30-second heartbeat to detect connection drops
+  - Status events: "queued", "processing", "completed", "failed"
+  - Progress updates for "processing" state (0-100%)
+  - Terminal events: "completed" with audio_path, "failed" with error
+- [ ] Implement permission checking:
+  - Studio jobs: user must own project
+  - Playground jobs: no authentication required
+- [ ] Write tests: SSE connection, event streaming, permission checks
 
-### 4.1 Implement TTS Worker Core
-- [ ] Implement RabbitMQ connection (pika or aio-pika) with connection pooling using RABBITMQ_URL env var
-- [ ] Consume from tts_jobs queue with prefetch_count=1
-- [ ] Implement job validation: check job_id, text, audio_prompt_url, language present
-- [ ] Log job intake with job_id, correlation_id, worker_instance_id
-- [ ] Write test: verify worker can connect to RabbitMQ and consume messages
-
-### 4.2 Implement Audio Prompt Download
-- [ ] Create _download_audio_prompt method
-- [ ] Implement S3 download with boto3 (with retry logic: 3 attempts, exponential backoff 5s, 15s)
-- [ ] Save to /tmp/tts-{job_id}/prompt.{format}
-- [ ] Validate audio format (must be WAV, MP3, or FLAC)
-- [ ] Validate audio duration (must be >500ms and <60s)
-- [ ] On download failure: log error with job_id, error_code="AUDIO_PROMPT_DOWNLOAD_FAILED", attempt count
-- [ ] On download success: log success with job_id
-- [ ] Write test: verify download succeeds for valid S3 URLs
-- [ ] Write test: verify retry logic retries on timeout
-- [ ] Write test: verify validation rejects invalid audio files
-
-### 4.3 Implement Audio Synthesis
-- [ ] Create _synthesize_audio method
-- [ ] Detect platform: use macOS TTS if Darwin, else use IndexTTS GPU inference
-- [ ] Load audio prompt into TTS engine
-- [ ] Call IndexTTS synthesis with audio_prompt, text, language
-- [ ] Capture output_path, audio_duration_seconds, synthesis_duration_seconds
-- [ ] Handle synthesis errors: distinguish retryable vs non-retryable
-- [ ] Retryable errors: increment attempt, retry up to 3 times with exponential backoff
-- [ ] Non-retryable errors: fail immediately with error_code and error_message
-- [ ] On synthesis success: log completion with job_id, duration
-- [ ] Write test: verify synthesis produces output file
-- [ ] Write test: verify synthesis captures audio duration
-- [ ] Write test: verify GPU OOM error is marked retryable
-
-### 4.4 Implement S3 Upload
-- [ ] Create _upload_to_s3 method
-- [ ] Generate S3 key based on job type:
-  - Playground: tts-output/playground/{job_id}/{timestamp}.{format}
-  - User: tts-output/users/{job_id}/{timestamp}.{format}
-- [ ] Upload with metadata tags: job_id, user_id, project_id, language, created_timestamp
-- [ ] Implement retry logic: 3 attempts with exponential backoff
-- [ ] On upload failure: log error with error_code="S3_UPLOAD_FAILED"
-- [ ] On upload success: capture output_s3_path (full S3 URL)
-- [ ] Write test: verify upload creates S3 object with correct path
-- [ ] Write test: verify metadata tags are set correctly
-
-### 4.5 Implement Result Publication
-- [ ] Create _publish_result method
-- [ ] Publish message to tts_results queue with: job_id, status, output_s3_path (if successful), audio_duration_seconds, synthesis_duration_seconds, timestamp, user_metadata
-- [ ] For failures: include error_code, error_message, retry_count
-- [ ] Implement retry logic for ACK: 3 attempts with exponential backoff
-- [ ] On ACK failure: log failure with job_id and mark locally as ack_failed
-- [ ] On ACK success: proceed to cleanup
-- [ ] Write test: verify result message is published correctly
-- [ ] Write test: verify ACK retry logic retries on failure
-
-### 4.6 Implement Cleanup
-- [ ] Create _cleanup method
-- [ ] Delete /tmp/tts-{job_id}/ directory
-- [ ] Log cleanup with job_id
-- [ ] If cleanup fails: log warning (non-blocking)
-- [ ] Write test: verify cleanup removes temp files
-
-### 4.7 Implement Error Handling & Logging
-- [ ] Add comprehensive structured logging throughout worker lifecycle
-- [ ] Log with required fields: job_id, operation, timestamp, duration_ms, language, status, error details, correlation_id, worker_instance_id
-- [ ] Implement graceful shutdown: handle SIGTERM, complete in-flight jobs before exit
-- [ ] Add worker instance tracking: include hostname/worker_id in all logs
-- [ ] Add platform detection: log "Darwin" for macOS, "Linux" for Linux
-- [ ] Add engine type tracking: log "macos_native" or "indextts_gpu"
-- [ ] Document integration with ELK Stack, Grafana Loki, or Prometheus
-- [ ] Write test: verify error logging includes all required fields
-- [ ] Write test: verify graceful shutdown completes in-flight jobs
+### 2.4 Enhance TTS Results Consumer
+- [ ] Update existing `background_worker.py` or create `tts_consumer.py`
+- [ ] Consume from `tts_results` queue with DLQ support
+- [ ] Route messages based on `job_type`:
+  - "studio": Update `TTSJob` records
+  - "playground": Update `PlaygroundTTSJob` records
+- [ ] Validate `audio_path` exists in S3 before updating database
+- [ ] Handle partial failures (S3 success, RabbitMQ failure)
+- [ ] Implement circuit breaker for database updates
+- [ ] Write tests: message routing, validation, error handling
 
 ---
 
-## Phase 5: Landing Page Integration (Week 4-5)
+## Phase 3: IndexTTS Worker Implementation (Week 3-4)
 
-### 5.1 Create Playground UI Component (official-landing)
-- [ ] Create src/components/TTSPlayground.tsx component
-- [ ] Implement form with: text input (max 500 chars counter), audio_prompt selector dropdown, language selector dropdown
-- [ ] Language options: en, zh, es, fr, de, ja (from i18n config)
-- [ ] Audio prompt options: load from hardcoded list or API call
-- [ ] Implement form validation: text non-empty, prompt selected, language selected
-- [ ] Submit button triggers POST /api/v1/playground/tts with request body
-- [ ] Handle response: capture job_id and stream_url
-- [ ] Write test: verify form validation works
-- [ ] Write test: verify form submission sends correct request
+### 3.1 Implement Circuit Breaker Pattern
+- [ ] Create `CircuitBreaker` class in `indextts/worker/circuit_breaker.py`:
+  ```python
+  class TTSCircuitBreaker:
+      def __init__(self, failure_threshold=5, reset_timeout=60):
+          self.state = "CLOSED"  # CLOSED, OPEN, HALF_OPEN
+          self.failure_count = 0
+          # ...
+      
+      async def execute(self, operation):
+          if self.state == "OPEN":
+              raise CircuitBreakerOpenError("Service unavailable")
+          # ...
+  ```
+- [ ] Implement circuit breakers for:
+  - S3 downloads (threshold: 5 failures in 60s)
+  - IndexTTS synthesis (threshold: 3 failures in 30s)
+  - RabbitMQ publishing (threshold: 3 failures in 30s)
+- [ ] Add metrics and logging for circuit state changes
+- [ ] Write tests: circuit opening/closing, failure thresholds
 
-### 5.2 Implement SSE Streaming in Playground
-- [ ] Create hooks/useTTSStream.ts for SSE subscription
-- [ ] Subscribe to GET /api/v1/tts/{job_id}/stream after job creation
-- [ ] Handle status events: update UI to show "pending" or "processing" state
-- [ ] Handle completed event: display audio player with s3_url
-- [ ] Handle failed event: display error message with retry button
-- [ ] Implement connection timeout: if no heartbeat for 60 seconds, show error and allow retry
-- [ ] Write test: verify SSE connection established
-- [ ] Write test: verify status updates are displayed
+### 3.2 Implement Dead-Letter Queue Consumption
+- [ ] Create DLQ monitoring in worker:
+  ```python
+  async def monitor_dlq():
+      while True:
+          # Check tts_jobs_dlq depth
+          # Alert if >100 messages or >24h old
+          await asyncio.sleep(300)  # 5 minutes
+  ```
+- [ ] Implement DLQ message processing (manual intervention required)
+- [ ] Add alerting for DLQ conditions:
+  - `tts_jobs_dlq` > 100 messages
+  - `tts_results_dlq` > 50 messages
+  - Any message >24 hours in DLQ
+- [ ] Write tests: DLQ monitoring, alert triggering
 
-### 5.3 Implement Audio Playback
-- [ ] Create components/TTSAudioPlayer.tsx
-- [ ] Accept s3_url as prop
-- [ ] Render HTML5 audio element with controls
-- [ ] Implement stream loading from S3 URL (with CORS headers)
-- [ ] Handle playback errors gracefully
-- [ ] Write test: verify audio player renders with controls
-- [ ] Write test: verify audio loads from S3 URL
+### 3.3 Implement Idempotent S3 Upload
+- [ ] Create `S3Uploader` class with idempotent retry:
+  ```python
+  class IdempotentS3Uploader:
+      async def upload(self, job_id, file_path, s3_key):
+          # Check if object already exists with job_id tag
+          existing = await s3.get_object_tagging(job_id)
+          if existing and existing.get('status') == 'uploaded':
+              return existing['key']  # Skip upload
+          
+          # Upload with tags: job_id, status=uploaded
+          await s3.upload_file(file_path, s3_key, tags={'job_id': job_id, 'status': 'uploaded'})
+          return s3_key
+  ```
+- [ ] Handle partial failure scenario:
+  - S3 upload succeeds, RabbitMQ ack fails
+  - On retry, detect existing S3 object via tags
+  - Skip upload, proceed to RabbitMQ publishing
+- [ ] Maximum 3 retry attempts with exponential backoff
+- [ ] Write tests: idempotent upload, partial failure recovery
 
-### 5.4 Implement Graceful Degradation
+### 3.4 Implement TTS Worker Core
+- [ ] Create main worker entry point: `indextts/worker/main.py`
+- [ ] Consume from `tts_jobs` queue with prefetch_count optimized for scaling
+- [ ] Platform detection for synthesis engine:
+  - macOS: Use native AVFoundation TTS
+  - Linux/Windows: Use IndexTTS GPU inference
+- [ ] Download audio prompts from S3 using path-based storage
+- [ ] Execute synthesis with progress tracking
+- [ ] Upload results to S3 with path-based keys
+- [ ] Publish to `tts_results` queue
+- [ ] Handle graceful shutdown (SIGTERM)
+- [ ] Write tests: job processing, platform detection, error handling
+
+### 3.5 Implement Structured Logging & Metrics
+- [ ] Configure JSON-structured logging with fields:
+  - timestamp, log_level, job_id, correlation_id
+  - operation, duration_ms, platform, engine_type
+  - error_code, error_message, retry_count
+- [ ] Add Prometheus metrics:
+  - `tts_jobs_processed_total` (counter)
+  - `tts_job_duration_seconds` (histogram)
+  - `tts_synthesis_errors_total` (counter)
+  - `circuit_breaker_state` (gauge)
+  - `dlq_depth` (gauge)
+- [ ] Document integration with ELK Stack/Grafana
+- [ ] Write tests: log format, metric collection
+
+---
+
+## Phase 4: Official Landing Integration (Week 4-5)
+
+### 4.1 Create Playground UI Component
+- [ ] Create `src/components/TTSPlayground.tsx` in official-landing
+- [ ] Implement form with:
+  - Text input (max 200 words, character counter)
+  - Voice selector (approved community voices only)
+  - Language selector (mandatory, matches voice language)
+  - Generate button with loading state
+- [ ] Fetch approved community voices from API:
+  ```typescript
+  const fetchCommunityVoices = async () => {
+    const response = await fetch('/api/v1/voices?state=approved');
+    return response.json();
+  };
+  ```
+- [ ] Handle form validation and error display
+- [ ] Write tests: form validation, voice fetching, error handling
+
+### 4.2 Implement SSE Client Streaming
+- [ ] Create `hooks/useTTSStream.ts` for SSE subscription:
+  ```typescript
+  const useTTSStream = (jobId: string) => {
+    const [status, setStatus] = useState<'queued' | 'processing' | 'completed' | 'failed'>('queued');
+    const [progress, setProgress] = useState(0);
+    const [audioPath, setAudioPath] = useState<string | null>(null);
+    
+    useEffect(() => {
+      const eventSource = new EventSource(`/api/v1/tts/${jobId}/stream`);
+      // Handle events: status, progress, completed, failed
+    }, [jobId]);
+  };
+  ```
+- [ ] Handle connection timeout (60 seconds)
+- [ ] Implement retry logic for failed connections
+- [ ] Display real-time progress updates
+- [ ] Write tests: SSE connection, event handling, timeout recovery
+
+### 4.3 Implement Audio Playback Component
+- [ ] Create `src/components/TTSAudioPlayer.tsx`:
+  ```typescript
+  interface TTSAudioPlayerProps {
+    audioPath: string;  // Path-based: "tts-output/playground/{id}.wav"
+    duration?: number;
+  }
+  ```
+- [ ] Generate S3 presigned URL for audio playback:
+  ```typescript
+  const getAudioUrl = async (audioPath: string) => {
+    const response = await fetch(`/api/v1/audio/url?path=${encodeURIComponent(audioPath)}`);
+    const { url } = await response.json();
+    return url;
+  };
+  ```
+- [ ] Implement HTML5 audio element with controls
+- [ ] Handle playback errors and retry
+- [ ] Write tests: URL generation, audio playback, error handling
+
+### 4.4 Implement Graceful Degradation
 - [ ] Wrap playground component in error boundary
-- [ ] If TTS API is unreachable: catch error, display message "TTS service temporarily unavailable"
-- [ ] Page should remain functional, other sections should load normally
-- [ ] If SSE times out: display retry button instead of crashing
-- [ ] Write test: verify error boundary catches API errors
-- [ ] Write test: verify page loads without TTS component if API unreachable
+- [ ] Handle API unreachable scenarios:
+  ```typescript
+  try {
+    await submitTTSJob(data);
+  } catch (error) {
+    if (error instanceof NetworkError) {
+      showErrorMessage('TTS service temporarily unavailable. Please try again later.');
+    }
+  }
+  ```
+- [ ] Implement offline fallback mode
+- [ ] Cache community voices locally for offline use
+- [ ] Write tests: error boundary, network failure handling, offline mode
 
-### 5.5 Implement i18n for Playground
-- [ ] Add language translations in src/locales/
-- [ ] Translate labels: "Text", "Audio Prompt", "Language", "Generate", "Processing", "Error"
-- [ ] Translate error messages: "Text too long", "TTS service unavailable", "Please try again"
-- [ ] Use next-intl for locale switching
-- [ ] Write test: verify translations load correctly
-- [ ] Write test: verify UI responds to locale changes
-
----
-
-## Phase 6: Testing & Quality (Week 5-6)
-
-### 6.1 Write Property-Based Tests (PBT)
-- [ ] **Idempotence Test**: Same (voice_id, text) within 30 days returns same S3 URL
-- [ ] **Round-trip Test**: Audio encoding/decoding preserves content (decode(encode(x)) == x)
-- [ ] **State Machine Test**: Job status transitions are valid (pending → processing → completed/failed only)
-- [ ] **Rate Limiting**: 5 requests per IP per hour maximum enforced
-- [ ] **Retry Exhaustion**: Failed jobs after 3 retries marked as failed with error details
-
-### 6.2 Write Integration Tests
-- [ ] Test full pipeline: playground endpoint → RabbitMQ → worker → S3 → results queue → database
-- [ ] Test authenticated endpoint: submit job → worker processes → SSE updates → completion
-- [ ] Test error scenarios: invalid audio prompt, synthesis failure, S3 upload failure
-- [ ] Test race conditions: multiple workers processing same queue
-- [ ] Test graceful degradation: landing page works if TTS service down
-
-### 6.3 Performance Testing
-- [ ] Measure synthesis latency for different text lengths (100 words, 1000 words, 5000 words)
-- [ ] Measure end-to-end latency: API request → worker picks up → results back (target <5 min for typical text)
-- [ ] Load test: 10 concurrent jobs to verify system scales
-- [ ] Measure S3 upload speed and storage costs
-
-### 6.4 Documentation
-- [ ] Create docs/TTS_INTEGRATION_GUIDE.md with architecture, setup, usage examples
-- [ ] Document RabbitMQ message format and error codes
-- [ ] Document database schema changes (migration guide)
-- [ ] Document S3 bucket structure and CORS configuration
-- [ ] Document logging infrastructure integration (ELK, Loki, Prometheus)
-- [ ] Create troubleshooting guide for common issues
-- [ ] Document rate limiting and cache behavior
+### 4.5 Implement i18n for Playground
+- [ ] Add translations in `src/locales/`:
+  - English (`en.json`), Chinese (`zh.json`)
+  - Translate UI labels: "Text", "Voice", "Language", "Generate"
+  - Translate error messages: "Text too long", "Service unavailable"
+- [ ] Use `next-intl` for locale switching
+- [ ] Implement language detection from browser
+- [ ] Write tests: translation loading, locale switching
 
 ---
 
-## Phase 7: Deployment & Production Launch (Week 6)
+## Phase 5: Testing & Quality (Week 5-6)
 
-### 7.1 Production Preparation
-- [ ] Create deployment documentation for all three repos
-- [ ] Test database migrations on production-like environment
-- [ ] Set up environment variables for all repos (.env.example files)
-- [ ] Verify RabbitMQ queue configuration in production
+### 5.1 Write Property-Based Tests (PBT)
+- [ ] **Idempotence Test**: Same `(voice_id, preview_text)` within 30 days returns same `audio_path`
+- [ ] **State Machine Test**: Job transitions follow valid sequences
+- [ ] **Rate Limiting Test**: Hashed IP cannot exceed 5 requests/hour
+- [ ] **Permission Hierarchy Test**: Voice access follows private→shared→approved rules
+- [ ] **Language Consistency Test**: Voice language matches job language
+- [ ] Use Hypothesis library for Python, fast-check for TypeScript
 
-### 7.2 Production Deployment
-- [ ] Deploy studio-backend with new TTS endpoints and models
-- [ ] Deploy indexTTS-worker service
-- [ ] Deploy official-landing with playground component
-- [ ] Test full pipeline end-to-end in production
+### 5.2 Write Integration Tests
+- [ ] **Full Pipeline Test**: API → RabbitMQ → Worker → S3 → Database
+- [ ] **Circuit Breaker Test**: Verify opening/closing behavior
+- [ ] **DLQ Test**: Failed messages route to dead-letter queues
+- [ ] **Partial Failure Test**: S3 success + RabbitMQ failure recovery
+- [ ] **Cache Consistency Test**: Studio vs playground caching strategies
+- [ ] **Performance Test**: Measure latency with different text lengths
 
-### 7.3 Launch & Monitoring
-- [ ] Enable playground feature for production users
-- [ ] Monitor error logs, job success rates, and API latency
-- [ ] Verify RabbitMQ queues processing jobs correctly
-- [ ] Check S3 upload and storage patterns
+### 5.3 Security & Compliance Testing
+- [ ] **Input Validation Test**: SQL injection, path traversal prevention
+- [ ] **Authentication Test**: JWT validation, token refresh
+- [ ] **Permission Test**: Voice access control validation
+- [ ] **Privacy Test**: IP hashing, data retention compliance
+- [ ] **CORS Test**: Cross-origin access restrictions
+- [ ] **Rate Limit Test**: Abuse prevention effectiveness
 
+### 5.4 Performance & Load Testing
+- [ ] **Synthesis Latency**: Measure for 100, 1000, 5000 word texts
+- [ ] **End-to-End Latency**: API request → audio available (target <5 min)
+- [ ] **Load Test**: 10 concurrent jobs, measure system stability
+- [ ] **Queue Performance**: Message throughput, DLQ handling
+- [ ] **S3 Performance**: Upload/download speed, concurrent access
+- [ ] **Database Performance**: Cache lookup speed, concurrent updates
+
+### 5.5 Documentation
+- [ ] **API Documentation**: OpenAPI/Swagger specification
+- [ ] **Architecture Guide**: System diagrams, component interactions
+- [ ] **Deployment Guide**: Environment setup, configuration
+- [ ] **Troubleshooting Guide**: Common issues and solutions
+- [ ] **Monitoring Guide**: Metrics, logs, alerting configuration
+- [ ] **Security Guide**: Authentication, authorization, compliance
+
+---
+
+## Phase 6: Deployment & Production Launch (Week 6)
+
+### 6.1 Production Preparation
+- [ ] **Environment Configuration**: .env.example files for all repos
+- [ ] **Database Migration**: Production schema validation
+- [ ] **RabbitMQ Configuration**: Production queue setup with DLQ
+- [ ] **S3 Configuration**: Bucket policies, lifecycle rules, CORS
+- [ ] **Monitoring Setup**: Prometheus, Grafana, alerting rules
+- [ ] **Backup Strategy**: Database backups, S3 versioning
+
+### 6.2 Gradual Rollout Strategy
+- [ ] **Feature Flags**: Enable/disable new endpoints
+- [ ] **Canary Deployment**: Roll out to small user group first
+- [ ] **A/B Testing**: Compare old vs new TTS performance
+- [ ] **Rollback Plan**: Quick revert if issues detected
+- [ ] **Performance Baseline**: Establish before/after metrics
+
+### 6.3 Production Deployment
+- [ ] **Studio Backend**: Deploy with extended TTSJob schema
+- [ ] **IndexTTS Worker**: Deploy with circuit breaker and DLQ
+- [ ] **Official Landing**: Deploy playground component
+- [ ] **Database Migration**: Apply production migrations
+- [ ] **Queue Migration**: Transition to new message formats
+- [ ] **Cache Warmup**: Pre-load common voice/text combinations
+
+### 6.4 Post-Launch Monitoring
+- [ ] **Error Rate Monitoring**: Track synthesis failures
+- [ ] **Performance Monitoring**: Latency percentiles, queue depths
+- [ ] **Usage Analytics**: Playground adoption, cache hit rates
+- [ ] **Cost Monitoring**: S3 storage costs, compute usage
+- [ ] **Security Monitoring**: Unusual access patterns, rate limit violations
+- [ ] **User Feedback**: Collect and analyze playground feedback
+
+### 6.5 Maintenance & Operations
+- [ ] **DLQ Monitoring**: Regular review of dead-letter messages
+- [ ] **Cache Management**: Periodic cache cleanup and optimization
+- [ ] **Voice Management**: Admin tools for voice approval/management
+- [ ] **Performance Optimization**: Continuous latency improvement
+- [ ] **Security Updates**: Regular vulnerability scanning and patching
+- [ ] **Capacity Planning**: Scale prediction and resource allocation

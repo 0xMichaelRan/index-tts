@@ -1,16 +1,33 @@
 # TTS Service Integration Design
 
-## Architecture Overview
+## Overview
 
-The TTS service integration uses an asynchronous, message-driven architecture across three repositories:
+This specification defines the integration of IndexTTS text-to-speech engine across three repositories with alignment to existing implementations:
+
+- **indexTTS-worker**: Core TTS service and RabbitMQ worker
+- **official-landing**: Next.js playground for anonymous TTS demonstrations  
+- **studio-backend**: FastAPI backend for production TTS jobs
+
+**Key Design Principles**:
+1. Build upon existing `TTSJob` and `Voice` schemas in studio-backend
+2. Use `preview_text` (first 2 sentences) for studio-backend caching
+3. Use full text (up to 200 words) for playground caching with community voices only
+4. S3 path-based storage (not full URLs) across all repositories
+5. Three voice states: private, shared, approved
+6. Implement circuit breaker and dead-letter queue patterns
+7. Language as mandatory field with simplified Chinese backfill
+
+## Architecture
+
+### High-Level Architecture Diagram
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                       official-landing (Next.js)                        │
 │  ┌──────────────────────────────────────────────────────────────────┐  │
 │  │ Playground Component                                             │  │
-│  │  - Text input (max 500 chars)                                    │  │
-│  │  - Audio prompt selector                                         │  │
+│  │  - Text input (max 200 words)                                    │  │
+│  │  - Voice selector (approved community voices only)               │  │
 │  │  - Language selector (mandatory)                                 │  │
 │  │  - SSE stream subscription for real-time updates                 │  │
 │  └──────────────────────────────────────────────────────────────────┘  │
@@ -22,712 +39,534 @@ The TTS service integration uses an asynchronous, message-driven architecture ac
 │                    studio-backend (FastAPI)                             │
 │  ┌──────────────────────────────────────────────────────────────────┐  │
 │  │ TTS API Layer                                                    │  │
-│  │  - POST /api/v1/tts (authenticated, voice catalog)               │  │
-│  │  - POST /api/v1/playground/tts (anonymous, rate-limited)         │  │
-│  │  - GET /api/v1/tts/{job_id} (status check)                       │  │
-│  │  - GET /api/v1/tts/{job_id}/stream (SSE updates)                 │  │
+│  │  - POST /api/v1/tts (authenticated)                              │  │
+│  │  - POST /api/v1/playground/tts (anonymous)                       │  │
+│  │  - GET /api/v1/tts/{job_id}                                      │  │
+│  │  - GET /api/v1/tts/{job_id}/stream (SSE)                         │  │
 │  └──────────────────────────────────────────────────────────────────┘  │
 │  ┌──────────────────────────────────────────────────────────────────┐  │
 │  │ Database Layer                                                   │  │
-│  │  - TTS_Job (job_id, user_id, voice_id, text, status, etc.)       │  │
-│  │  - Voice Catalog (voice_id, s3_url, language, owner, etc.)       │  │
-│  │  - Rate Limit Counter (ip_address, request_count, window)        │  │
+│  │  - TTSJob (extended existing schema)                             │  │
+│  │  - Voice (existing three-state system)                           │  │
+│  │  - PlaygroundTTSJob (new table)                                  │  │
+│  │  - RateLimitCounter (new table)                                  │  │
 │  └──────────────────────────────────────────────────────────────────┘  │
 │  ┌──────────────────────────────────────────────────────────────────┐  │
-│  │ Consumer (RabbitMQ Results)                                      │  │
-│  │  - Subscribes to tts_results queue                               │  │
-│  │  - Updates TTS_Job records with: status, s3_url, duration, etc.  │  │
+│  │ RabbitMQ Consumer                                               │  │
+│  │  - Subscribes to tts_results queue                              │  │
+│  │  - Updates job records with circuit breaker                     │  │
+│  │  - Dead-letter queue integration                                │  │
 │  └──────────────────────────────────────────────────────────────────┘  │
 └────────────────────────────┬──────────────────────────────────────────┘
                              │ RabbitMQ
-                             │ tts_jobs & tts_results
+                             │ tts_jobs + tts_jobs_dlq
+                             │ tts_results + tts_results_dlq
                              ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                  indexTTS-worker (Python Service)                       │
 │  ┌──────────────────────────────────────────────────────────────────┐  │
 │  │ TTS Worker                                                       │  │
-│  │  - Consumes tts_jobs queue (prefetch_count=1)                    │  │
-│  │  - Validates job (required fields, audio_prompt_url)             │  │
-│  │  - Downloads audio prompt from S3 (with retry)                   │  │
-│  │  - Synthesizes audio using IndexTTS or macOS TTS                 │  │
-│  │  - Uploads result to S3                                          │  │
-│  │  - Publishes to tts_results queue                                │  │
-│  │  - Acknowledges message to RabbitMQ                              │  │
+│  │  - Circuit breaker for S3/IndexTTS                              │  │
+│  │  - Dead-letter queue consumption                                │  │
+│  │  - Downloads audio prompt from S3                                │  │
+│  │  - Platform-specific synthesis (GPU/macOS)                      │  │
+│  │  - Idempotent S3 upload with retry                              │  │
+│  │  - Partial failure recovery                                      │  │
+│  │  - Publishes to tts_results queue                               │  │
 │  └──────────────────────────────────────────────────────────────────┘  │
 └────────────────────────────┬──────────────────────────────────────────┘
-                             │ S3 (audio storage)
+                             │ AWS S3 Bucket
+                             │ (shared across repositories)
                              ▼
-                    ┌──────────────────┐
-                    │   AWS S3 Bucket  │
-                    │  tts-output/     │
-                    └──────────────────┘
+                    ┌─────────────────────────┐
+                    │   Path-Based Storage    │
+                    │  - audio-prompts/       │
+                    │  - tts-output/studio/   │
+                    │  - tts-output/playground/│
+                    └─────────────────────────┘
 ```
 
----
+## Components and Interfaces
 
-## Data Models
+### 1. Database Models
 
-### 1. PlaygroundTTSJob (studio-backend - new)
+#### TTSJob (existing schema - extended)
+```python
+# Extended from existing app/models/tts_job.py
+class TTSJob(Base):
+    __tablename__ = "tts_jobs"
+    
+    # Existing fields (maintained for backward compatibility)
+    id: int                          # BigInteger auto-increment
+    project_id: int                  # Foreign key to projects
+    script_id: int | None
+    voice_id: int | None             # Foreign key to voices
+    voice_name: str | None           # Snapshot of voice name
+    preview_text: str | None         # First 2 sentences for caching
+    external_job_id: str | None
+    
+    # Enhanced status (existing + new)
+    status: str                      # queued, processing, completed, failed, rate_limited
+    progress: int                    # 0-100
+    
+    # Path-based storage (not full URLs)
+    audio_path: str | None           # e.g., "tts-output/studio/{job_id}.wav"
+    audio_duration: float | None     # seconds
+    
+    # New required fields
+    language: str                    # Language code (e.g., "zh", "en") - NOT NULL
+    correlation_id: str              # For distributed tracing
+    full_text_hash: str | None       # SHA256 hash of full text for deduplication
+    
+    # Existing timestamps
+    error_message: str | None
+    started_at: datetime | None
+    completed_at: datetime | None
+    created_at: datetime
+```
 
+#### PlaygroundTTSJob (new table)
 ```python
 class PlaygroundTTSJob(Base):
     __tablename__ = "playground_tts_jobs"
     
     # Identifiers
-    id: str                          # UUID primary key
+    id: str                          # UUID primary key (different from TTSJob)
     
-    # Input
-    text: str                        # Text to synthesize (max 500 chars)
-    audio_prompt_id: str             # Foreign key to PlaygroundAudioPrompt
-    language: str                    # Language code (e.g., "en", "zh")
+    # Input - restricted to approved community voices only
+    text: str                        # Full text (max 200 words ≈ 1000 chars)
+    voice_id: int                    # Foreign key to approved community voices
+    language: str                    # Language code (required, NOT NULL)
     
-    # Processing
-    status: str                      # pending, processing, completed, failed, rate_limited
+    # Processing states aligned with TTSJob
+    status: str                      # queued, processing, completed, failed, rate_limited
     retry_count: int                 # Number of retries attempted
     
-    # Results
-    output_s3_url: Optional[str]     # S3 path to generated audio
-    audio_duration_seconds: Optional[float]  # Duration of generated audio
-    error_message: Optional[str]     # Error message if failed
+    # Results - path-based storage
+    audio_path: str | None           # e.g., "tts-output/playground/{job_id}.wav"
+    audio_duration: float | None     # seconds
+    error_message: str | None
     
-    # Metadata (for platform abuse analysis)
-    client_ip_address: str           # IP address (required for all playground jobs)
-    user_agent: Optional[str]        # User-Agent header for analytics
-    referrer: Optional[str]          # Referrer URL
-    correlation_id: str              # For tracing request flow
+    # Metadata for abuse prevention
+    client_ip_address: str           # Required for rate limiting (hashed)
+    user_agent: str | None
+    correlation_id: str              # For distributed tracing
     
-    # Timestamps
-    created_at: datetime             # Job creation time (UTC)
-    completed_at: Optional[datetime] # Job completion time (UTC)
-    expires_at: datetime             # Fixed expiration (created_at + 30 days)
+    # Timestamps with automatic cleanup
+    created_at: datetime
+    started_at: datetime | None
+    completed_at: datetime | None
+    expires_at: datetime             # Created_at + 30 days (automatic cleanup)
 ```
 
-### 1b. UserTTSJob (studio-backend - new)
-
-```python
-class UserTTSJob(Base):
-    __tablename__ = "user_tts_jobs"
-    
-    # Identifiers
-    id: str                          # UUID primary key
-    user_id: str                     # Foreign key to User table
-    project_id: str                  # Foreign key to Project table
-    
-    # Input
-    text: str                        # Text to synthesize (max 5000 chars)
-    voice_id: str                    # Foreign key to Voice table
-    language: str                    # Language code (e.g., "en", "zh")
-    
-    # Processing
-    status: str                      # pending, processing, completed, failed
-    retry_count: int                 # Number of retries attempted
-    
-    # Results
-    output_s3_url: Optional[str]     # S3 path to generated audio
-    audio_duration_seconds: Optional[float]  # Duration of generated audio
-    error_message: Optional[str]     # Error message if failed
-    
-    # Metadata
-    is_cached: bool                  # True if result from cache
-    correlation_id: str              # For tracing request flow
-    
-    # Timestamps
-    created_at: datetime             # Job creation time (UTC)
-    completed_at: Optional[datetime] # Job completion time (UTC)
-```
-
-### 2. Voice (studio-backend - existing)
-
+#### Voice (existing implementation - enhanced)
 ```python
 class Voice(Base):
     __tablename__ = "voices"
     
-    id: str                          # UUID primary key
-    name: str                        # Voice name
-    language: str                    # Language code
-    created_by_user_id: str          # Owner (NULL for community voices)
-    s3_url: str                      # S3 URL to voice recording
-    is_public: bool                  # True for community voices
-    is_deleted: bool                 # Soft delete flag
+    # Existing fields
+    id: int                          # BigInteger auto-increment
+    user_id: int                     # NOT NULL - every voice belongs to user
+    name: str
+    audio_path: str                  # Path-based (e.g., "audio-prompts/{voice_id}.wav")
+    mime_type: str
+    
+    # Enhanced language support
+    language: str                    # NOT NULL after backfill (default: "zh")
+    
+    # Three-state voice system (existing)
+    is_shared: bool                  # User-controlled: private vs shared
+    is_approved: bool                # Admin-controlled: approved for community use
+    
+    # Metadata
+    duration_seconds: float | None
     created_at: datetime
     updated_at: datetime
-```
-
-### 3. Playground_AudioPrompt (studio-backend - new)
-
-```python
-class PlaygroundAudioPrompt(Base):
-    __tablename__ = "playground_audio_prompts"
     
-    id: str                          # UUID primary key
-    prompt_id: str                   # Unique identifier (e.g., "en_neutral")
-    language: str                    # Language code
-    s3_url: str                      # S3 URL to prompt audio file
-    description: str                 # Description (e.g., "English Neutral")
-    created_at: datetime
+    # State helper properties
+    @property
+    def state(self) -> str:
+        """Returns: 'private', 'shared', or 'approved'"""
+        if not self.is_shared:
+            return "private"
+        return "approved" if self.is_approved else "shared"
+    
+    @property
+    def is_community_eligible(self) -> bool:
+        """Can be used in playground (approved + shared)"""
+        return self.is_shared and self.is_approved
 ```
 
-### 4. RateLimitCounter (studio-backend - new)
-
+#### RateLimitCounter (new table)
 ```python
 class RateLimitCounter(Base):
     __tablename__ = "rate_limit_counters"
     
-    id: str                          # UUID primary key
-    ip_address: str                  # Client IP
-    request_count: int               # Number of requests in window
+    id: int                          # Auto-increment
+    ip_address_hash: str             # SHA256 hash of client IP (for privacy)
+    request_count: int               # Count in current window
     window_start: datetime           # Start of 1-hour window
     window_end: datetime             # End of 1-hour window
     created_at: datetime
+    
+    # Composite index on (ip_address_hash, window_end) for fast lookups
 ```
 
-## Infrastructure Configuration
+### 2. RabbitMQ Configuration
 
-### S3 Bucket Strategy
-- **Single S3 bucket** shared across all repositories
-- **Path structure**: 
-  - Playground audio: `s3://bucket/tts-output/playground/{job_id}/{timestamp}.{format}`
-  - User audio: `s3://bucket/tts-output/users/{job_id}/{timestamp}.{format}`
-  - Audio prompts: `s3://bucket/audio-prompts/{prompt_id}.{format}`
-- **Expiration policies**:
-  - Playground audio: 24 hours (lifecycle rule)
-  - User audio: indefinite
-- **CORS configuration**: Allow GET from official-landing domain for playground audio playback
+#### Queue Architecture with Dead-Letter Queues
+```
+Main Queues (Durable):
+├── tts_jobs (TTL: 24h) → Dead-letter: tts_jobs_dlq
+└── tts_results (TTL: 7d) → Dead-letter: tts_results_dlq
 
-### RabbitMQ Configuration
-- **Connection**: Both indexTTS-worker and studio-backend read `RABBITMQ_URL` from environment variables
-- **Queues**: 
-  - `tts_jobs` (durable, TTL=24h)
-  - `tts_results` (durable, TTL=7d)
+Dead-Letter Queues (Durable):
+├── tts_jobs_dlq (TTL: 7 days) - Messages rejected after 3 retries
+└── tts_results_dlq (TTL: 7 days) - Failed result processing
+```
 
-### Audio Format
-- **Default format**: Use IndexTTS default output format (typically WAV)
-- No custom format specifications required
-- Worker outputs whatever IndexTTS produces natively
+#### Queue Arguments
+```python
+# tts_jobs queue
+{
+    'x-dead-letter-exchange': '',
+    'x-dead-letter-routing-key': 'tts_jobs_dlq',
+    'x-message-ttl': 86400000,        # 24 hours in milliseconds
+    'x-max-length': 10000,            # Prevent unlimited queue buildup
+    'x-overflow': 'reject-publish',   # Reject new messages when full
+}
 
-### Logging Infrastructure (indexTTS-worker)
-- **Strategy**: Structured logging to stdout/stderr
-- **Integration**: Compatible with ELK Stack, Grafana Loki, or Prometheus exporters
-- **Required fields**: timestamp, log_level, job_id, correlation_id, worker_instance_id, operation, duration_ms
-- **No database**: Worker is stateless; all job state tracking happens in studio-backend
+# Dead-letter queues
+{
+    'x-message-ttl': 604800000,       # 7 days in milliseconds
+    'x-max-length': 5000,
+}
+```
 
----
+### 3. Message Formats
+
+#### TTS Job Message (tts_jobs queue)
+```json
+{
+  "job_type": "studio" | "playground",
+  "job_id": "uuid-1234",
+  "text": "Hello world",
+  "audio_prompt_path": "audio-prompts/123.wav",
+  "language": "zh",
+  "metadata": {
+    "user_id": 456,
+    "project_id": 789,
+    "voice_id": 101,
+    "correlation_id": "corr-xyz",
+    "full_text_hash": "sha256-hash"
+  },
+  "output_path_template": "tts-output/{type}/{job_id}.wav",
+  "created_at": "2024-12-25T10:00:00Z"
+}
+```
+
+#### TTS Result Message (tts_results queue)
+```json
+{
+  "job_type": "studio" | "playground",
+  "job_id": "uuid-1234",
+  "status": "completed" | "failed",
+  "audio_path": "tts-output/studio/uuid-1234.wav",  # or playground path
+  "audio_duration_seconds": 30.5,
+  "synthesis_duration_seconds": 45,
+  "error_code": null | "SYNTHESIS_TIMEOUT",
+  "error_message": null | "Synthesis timeout after 3 retries",
+  "retry_count": 0,
+  "timestamp": "2024-12-25T10:02:30Z",
+  "metadata": {
+    "user_id": 456,
+    "project_id": 789,
+    "voice_id": 101,
+    "correlation_id": "corr-xyz"
+  }
+}
+```
 
 ## API Specifications
 
 ### 1. Playground TTS Endpoint
 
 #### POST /api/v1/playground/tts
+**Purpose**: Create anonymous TTS job using approved community voices
 
-**Purpose:** Create anonymous TTS job for playground demonstration
+**Authentication**: None (public)
 
-**Authentication:** None (public)
+**Rate Limit**: 5 requests per hashed IP per hour
 
-**Rate Limit:** 5 requests per IP per hour
-
-**Request:**
+**Request**:
 ```json
 {
-  "text": "Hello, this is a test of the TTS system.",
-  "audio_prompt_id": "en_neutral",
-  "language": "en"
+  "text": "Hello, this is a demonstration of our TTS system.",
+  "voice_id": 123,
+  "language": "zh"
 }
 ```
 
-**Validation:**
-- `text`: Required, max 500 chars, non-empty
-- `audio_prompt_id`: Required, must exist in PlaygroundAudioPrompt table
-- `language`: Required, must match prompt language and be in supported_languages config
+**Validation**:
+1. `text`: Required, max 200 words (≈1000 chars), non-empty
+2. `voice_id`: Required, must exist and be approved community voice (`is_shared=true AND is_approved=true`)
+3. `language`: Required, must match voice language
 
-**Responses:**
+**Caching Strategy**: Cache based on `(voice_id, text_hash)` pairs within 30 days
 
-```
+**Responses**:
+```http
 202 Accepted
 {
   "job_id": "uuid-1234",
-  "status": "pending",
+  "status": "queued",
   "stream_url": "/api/v1/tts/{job_id}/stream",
   "expires_at": "2024-12-25T12:00:00Z"
 }
-```
 
-```
-400 Bad Request
-{
-  "error": "text_too_long",
-  "message": "Text must be 500 characters or less"
-}
-```
-
-```
 429 Too Many Requests
 {
   "error": "rate_limit_exceeded",
-  "message": "Maximum 5 requests per hour from your IP",
+  "message": "Maximum 5 requests per hour",
   "retry_after": 3600
 }
 ```
 
----
-
-### 2. Authenticated TTS Endpoint
+### 2. Authenticated Studio TTS Endpoint
 
 #### POST /api/v1/tts
+**Purpose**: Create TTS job using user's voice recordings
 
-**Purpose:** Create TTS job with authenticated user's voice recording
+**Authentication**: Bearer token (required)
 
-**Authentication:** Bearer token (required)
-
-**Request:**
+**Request**:
 ```json
 {
-  "project_id": "proj-456",
+  "project_id": 456,
   "text": "This is the full script for my video project.",
-  "voice_id": "voice-789",
-  "language": "en"
+  "voice_id": 789,
+  "language": "zh"
 }
 ```
 
-**Validation:**
-- `project_id`: Required, user must own project or be a collaborator
-- `text`: Required, max 5000 chars
-- `voice_id`: Required, must exist in Voice table
-  - If voice is private (not owned by user) → 403 Forbidden
-  - If voice doesn't exist → 404 Not Found
-- `language`: Required, must match voice language and be supported
+**Validation**:
+1. `project_id`: Required, user must own project
+2. `text`: Required (full text for synthesis, `preview_text` extracted for caching)
+3. `voice_id`: Required, must exist and user must have permission
+   - Private voices: User must own (`user_id` matches)
+   - Shared voices: Any user can use (`is_shared=true`)
+4. `language`: Required, must match voice language
 
-**Cache Check:**
-- If (voice_id, text) pair exists with successful job from last 30 days → return existing S3 URL immediately
+**Caching Strategy**: Cache based on `(voice_id, preview_text)` pairs within 30 days
 
-**Responses:**
-
-```
+**Responses**:
+```http
 202 Accepted
 {
-  "job_id": "uuid-2345",
-  "status": "pending",
+  "job_id": 12345,
+  "status": "queued",
   "stream_url": "/api/v1/tts/{job_id}/stream",
-  "is_cached": false,
-  "created_at": "2024-12-25T10:00:00Z"
+  "is_cached": false
 }
-```
 
-```
-200 OK (from cache)
+200 OK (cached)
 {
-  "job_id": "uuid-cached",
+  "job_id": 12345,
   "status": "completed",
-  "stream_url": "/api/v1/tts/{job_id}/stream",
+  "audio_path": "tts-output/studio/12345.wav",
   "audio_duration_seconds": 45.5,
   "is_cached": true,
   "cached_from_date": "2024-12-10T08:00:00Z"
 }
 ```
 
-```
-404 Not Found
-{
-  "error": "voice_not_found",
-  "message": "Voice with ID 'voice-789' not found"
-}
-```
-
-```
-403 Forbidden
-{
-  "error": "voice_permission_denied",
-  "message": "You do not have permission to use this voice"
-}
-```
-
----
-
-### 3. TTS Job Status Endpoint
+### 3. TTS Job Status Endpoints
 
 #### GET /api/v1/tts/{job_id}
+**Purpose**: Get current status of TTS job
 
-**Purpose:** Get current status of TTS job
+**Authentication**: Required for studio jobs, optional for playground
 
-**Authentication:** Bearer token (required for non-playground jobs)
-
-**Responses:**
-
-```
+**Responses**:
+```http
 200 OK
 {
   "job_id": "uuid-1234",
   "status": "processing",
   "created_at": "2024-12-25T10:00:00Z"
 }
-```
 
-```
 200 OK (completed)
 {
   "job_id": "uuid-1234",
   "status": "completed",
   "audio_duration_seconds": 30.5,
-  "s3_url": "https://bucket.s3.amazonaws.com/tts-output/uuid-1234/audio.wav",
+  "audio_path": "tts-output/playground/uuid-1234.wav",
   "created_at": "2024-12-25T10:00:00Z",
   "completed_at": "2024-12-25T10:02:00Z"
 }
 ```
 
-```
-200 OK (failed)
-{
-  "job_id": "uuid-1234",
-  "status": "failed",
-  "error_message": "Audio prompt download failed after 3 retries",
-  "error_code": "AUDIO_PROMPT_DOWNLOAD_FAILED",
-  "retry_count": 3,
-  "created_at": "2024-12-25T10:00:00Z",
-  "completed_at": "2024-12-25T10:05:00Z"
-}
-```
-
----
-
-### 4. TTS SSE Streaming Endpoint
-
 #### GET /api/v1/tts/{job_id}/stream
+**Purpose**: Server-Sent Events stream for real-time job updates
 
-**Purpose:** Stream real-time TTS job updates
+**Content-Type**: `text/event-stream`
 
-**Authentication:** Bearer token (required for non-playground jobs)
-
-**Content-Type:** text/event-stream
-
-**Connection:** Persistent (60 second timeout)
-
-**Heartbeat:** Sent every 30 seconds to detect connection drops
-
-**Event Examples:**
-
-```
-# Heartbeat (no action needed)
-: heartbeat
-
-# Status update
+**Events**:
+```text
 event: status
-data: {"status":"processing"}
+data: {"status":"processing","progress":50}
 
-# Status update
-event: status
-data: {"status":"processing"}
-
-# Completion
 event: completed
-data: {"status":"completed","s3_url":"https://...","audio_duration_seconds":30.5,"audio_format":"wav"}
+data: {"status":"completed","audio_path":"tts-output/studio/12345.wav","audio_duration_seconds":30.5}
 
-# Or failure
 event: failed
-data: {"status":"failed","error_message":"Synthesis timeout","error_code":"SYNTHESIS_TIMEOUT","retry_count":3}
-
-# Connection closes after terminal event
+data: {"status":"failed","error_message":"Synthesis timeout","retry_count":3}
 ```
 
----
+## Error Handling
 
-## RabbitMQ Message Formats
+### Circuit Breaker Pattern
+**Purpose**: Prevent cascading failures during S3/IndexTTS outages
 
-### 1. TTS Job Message (tts_jobs queue)
-
-```json
-{
-  "job_id": "uuid-1234",
-  "text": "Hello world",
-  "audio_prompt_url": "https://bucket.s3.amazonaws.com/voice-recording.wav",
-  "language": "en",
-  "is_playground": false,
-  "user_metadata": {
-    "user_id": "user-456",
-    "project_id": "proj-789",
-    "voice_id": "voice-101",
-    "correlation_id": "corr-xyz"
-  },
-  "created_at": "2024-12-25T10:00:00Z"
-}
+**Implementation**:
+```python
+class TTSCircuitBreaker:
+    def __init__(self, failure_threshold=5, reset_timeout=60):
+        self.failure_count = 0
+        self.failure_threshold = failure_threshold
+        self.reset_timeout = reset_timeout
+        self.state = "CLOSED"  # CLOSED, OPEN, HALF_OPEN
+    
+    async def execute(self, operation):
+        if self.state == "OPEN":
+            raise CircuitBreakerOpenError("Service unavailable")
+        
+        try:
+            result = await operation()
+            self._on_success()
+            return result
+        except (S3Error, IndexTTSError) as e:
+            self._on_failure()
+            raise
 ```
 
-**Queue Configuration:**
-- Name: `tts_jobs`
-- Durable: true
-- Message TTL: 24 hours
-- Max length: unlimited
+### Dead-Letter Queue Strategy
+**Process**:
+1. Message fails processing 3 times (with exponential backoff)
+2. Message routed to dead-letter queue
+3. Dead-letter processor logs error and alerts
+4. Manual intervention required for DLQ messages
 
----
+### Partial Failure Recovery
+**Scenario**: S3 upload succeeds but RabbitMQ ack fails
 
-### 2. TTS Result Message (tts_results queue)
+**Solution**: Idempotent retry with S3 metadata tagging
+1. Tag S3 object with `job_id` and `status=uploaded`
+2. On retry, check if object exists with same tags
+3. Skip upload if already exists, proceed to RabbitMQ publishing
+4. Implement at-least-once delivery guarantee
 
-#### Success Message:
-```json
-{
-  "job_id": "uuid-1234",
-  "status": "completed",
-  "output_s3_path": "s3://bucket/tts-output/uuid-1234/2024-12-25-10-02-30.wav",
-  "audio_duration_seconds": 30.5,
-  "synthesis_duration_seconds": 45,
-  "timestamp": "2024-12-25T10:02:30Z",
-  "user_metadata": {
-    "user_id": "user-456",
-    "project_id": "proj-789",
-    "is_playground": false,
-    "correlation_id": "corr-xyz"
-  }
-}
+## Correctness Properties
+
+### Property 1: Cache Consistency
+**For studio jobs**, identical `(voice_id, preview_text)` pairs within 30 days SHALL return the same `audio_path`.
+
+### Property 2: State Machine Validity
+**Jobs SHALL only transition**: 
+- `queued → processing → completed/failed/rate_limited`
+- `queued → failed` (immediate validation failure)
+- Invalid: `completed → processing`, `failed → completed`
+
+### Property 3: Rate Limiting Enforcement
+**Any hashed IP SHALL NOT exceed** 5 playground requests per 1-hour window.
+
+### Property 4: Voice Permission Hierarchy
+**Access rules SHALL follow**:
+1. Private voices: Owner only
+2. Shared voices: Owner + collaborators
+3. Approved voices: All users (playground eligible)
+
+### Property 5: Language Consistency
+**Voice language SHALL match** job language for all TTS requests.
+
+## Testing Strategy
+
+### Unit Tests
+- Database model validation
+- Message format serialization
+- Cache lookup logic
+- Permission checking
+
+### Integration Tests
+- Full pipeline: API → RabbitMQ → Worker → S3 → Results
+- Circuit breaker behavior
+- Dead-letter queue routing
+- Partial failure scenarios
+
+### Property-Based Tests
+- Generate random job parameters
+- Verify state machine transitions
+- Test cache consistency properties
+- Validate rate limiting bounds
+
+### Performance Tests
+- Measure synthesis latency (100, 1000, 5000 words)
+- End-to-end latency targets (<5 min for typical text)
+- Load testing: 10 concurrent jobs
+- S3 upload/download speed benchmarks
+
+## Infrastructure Configuration
+
+### S3 Bucket Structure
+```
+s3://{bucket-name}/
+├── audio-prompts/
+│   ├── {voice_id}.wav      # Voice recordings (path-based)
+│   └── {voice_id}.json     # Voice metadata
+├── tts-output/
+│   ├── studio/
+│   │   ├── {job_id}.wav    # Studio job outputs (indefinite retention)
+│   │   └── {job_id}.json   # Job metadata
+│   └── playground/
+│       ├── {job_id}.wav    # Playground outputs (24h retention)
+│       └── {job_id}.json   # Job metadata
+└── logs/
+    ├── worker/
+    └── backend/
 ```
 
-#### Failure Message:
-```json
-{
-  "job_id": "uuid-1234",
-  "status": "failed",
-  "error_code": "AUDIO_PROMPT_DOWNLOAD_FAILED",
-  "error_message": "S3 download timeout after 3 retries",
-  "retry_count": 3,
-  "timestamp": "2024-12-25T10:05:30Z",
-  "user_metadata": {
-    "user_id": "user-456",
-    "project_id": "proj-789",
-    "is_playground": false,
-    "correlation_id": "corr-xyz"
-  }
-}
-```
+### S3 Lifecycle Rules
+- `tts-output/playground/`: Delete after 24 hours
+- `tts-output/studio/`: Never expire (manual cleanup)
+- `logs/`: Transition to Glacier after 30 days, delete after 365 days
 
-**Queue Configuration:**
-- Name: `tts_results`
-- Durable: true
-- Message TTL: 7 days (for debugging)
+### CORS Configuration
+- Allow `GET` from official-landing domain for playground audio playback
+- Allow `PUT` from indexTTS-worker for audio uploads
+- Allow `GET` from studio-backend for audio verification
 
----
+## Security Considerations
 
-## TTS Worker Processing Flow
+### Input Validation
+- SQL injection protection for text parameters
+- S3 path traversal prevention
+- Voice ID enumeration prevention
+- Language code whitelisting
 
-### 1. Job Intake & Validation
+### API Security
+- Playground endpoint: CSRF protection, rate limiting
+- SSE endpoints: Connection limiting, CORS restrictions
+- Authentication: JWT validation, token refresh
 
-```
-1. Worker starts consuming from tts_jobs queue (prefetch_count=1)
-2. Receives job message
-3. Validates required fields:
-   - job_id exists
-   - text non-empty
-   - audio_prompt_url is HTTP/HTTPS URL
-   - language in supported list
-4. If validation fails:
-   - Log error with job_id
-   - Publish failure message to tts_results
-   - Acknowledge message (basic_ack)
-   - Skip to next job
-5. If validation succeeds:
-   - Proceed to audio prompt download
-```
+### Data Privacy
+- IP address hashing (SHA256) for rate limiting
+- Audio file encryption at rest
+- Access logs anonymization
+- GDPR compliance for playground data retention
 
-### 2. Audio Prompt Download
-
-```
-1. Create temp directory: /tmp/tts-{job_id}/
-2. Attempt to download audio_prompt_url from S3
-3. Retry logic:
-   - 1st attempt: immediate
-   - 2nd attempt: after 5 seconds
-   - 3rd attempt: after 15 seconds
-4. If all attempts fail:
-   - Log error with job_id, error_type, error_message
-   - Publish failure message to tts_results
-   - Acknowledge message (basic_ack)
-   - Skip to next job
-5. If download succeeds:
-   - Validate audio file (format, duration, etc.)
-   - If invalid → fail (non-retryable error)
-   - If valid → proceed to synthesis
-```
-
-### 3. Audio Synthesis
-
-```
-1. Select synthesis engine:
-   - If platform == "Darwin" → Use macOS TTS
-   - Else → Use IndexTTS GPU inference
-2. Load audio prompt into engine
-3. Execute synthesis:
-   - Pass: audio_prompt, text, language, output_path
-   - Capture output_path, audio_duration_seconds, synthesis_duration_seconds
-4. If synthesis fails:
-   - Distinguish error type:
-     - Retryable (GPU OOM, temp file issue): increment attempt, continue
-     - Non-retryable (invalid prompt, language not supported): fail
-   - After 3 retries → fail with error details
-5. If synthesis succeeds:
-   - Verify output file exists and non-empty
-   - Proceed to S3 upload
-```
-
-### 4. S3 Upload
-
-```
-1. Generate S3 key: 
-   - Playground: tts-output/playground/{job_id}/{timestamp}.{format}
-   - User: tts-output/users/{job_id}/{timestamp}.{format}
-2. Upload to S3 with metadata tags:
-   - job_id, user_id, project_id, language, created_timestamp
-3. Set expiration policy:
-   - Playground audio (is_playground=true): 24 hours
-   - User audio (is_playground=false): never (indefinite)
-4. If upload fails:
-   - Retry up to 3 times with exponential backoff
-   - If all retries fail → fail with S3 error
-5. If upload succeeds:
-   - Capture output_s3_path (full S3 URL)
-   - Proceed to result publication
-```
-
-### 5. Result Publication & Cleanup
-
-```
-1. Publish completion message to tts_results queue:
-   - Include: job_id, status, output_s3_path, audio_duration_seconds, timestamp
-2. Attempt to acknowledge message (basic_ack):
-   - If ack succeeds → proceed to cleanup
-   - If ack fails:
-     - Retry up to 3 times with backoff
-     - If all retries fail → log failure, mark job as failed in local tracking
-3. Cleanup:
-   - Delete temp audio_prompt file
-   - Delete output audio file
-   - Remove temp directory: /tmp/tts-{job_id}/
-4. If cleanup fails:
-   - Log warning (non-blocking, job is already processed)
-```
-
-### 6. Error Handling Flowchart
-
-```
-┌─────────────────────┐
-│  Receive Job        │
-└──────────┬──────────┘
-           │
-           ▼
-     ┌─────────────┐
-     │ Validate    │─── Fail ──► Log + Publish Failure + Ack ──► Next Job
-     │ Job Fields  │
-     └──────┬──────┘
-            │ Pass
-            ▼
-     ┌─────────────────────┐
-     │ Download Audio      │─── Fail (3 retries) ──► Publish Failure + Ack ──► Next Job
-     │ Prompt              │
-     └──────┬──────────────┘
-            │ Success
-            ▼
-     ┌──────────────────┐
-     │ Synthesize Audio │─── Non-retryable ──► Publish Failure + Ack ──► Next Job
-     │                  │─── Retryable (3x) ──┤
-     └──────┬───────────┘                      └─► Retry exponential backoff
-            │ Success
-            ▼
-     ┌─────────────┐
-     │ Upload to   │─── Fail (3 retries) ──► Publish Failure + Ack ──► Next Job
-     │ S3          │
-     └──────┬──────┘
-            │ Success
-            ▼
-     ┌─────────────────────┐
-     │ Publish Result +    │─── Ack Success ──► Cleanup ──► Next Job
-     │ Retry Ack (3x)      │─── Ack Fail ──► Log Fail + Mark Failed
-     └─────────────────────┘
-```
-
----
-
-## Integration Points
-
-### indexTTS-worker ↔ studio-backend
-
-1. **Job Submission**: studio-backend publishes to `tts_jobs` queue
-2. **Result Consumption**: studio-backend consumes from `tts_results` queue
-3. **S3 Storage**: Both read/write to same S3 bucket (different paths)
-4. **Audio Prompt**: studio-backend stores voice S3 URLs; worker downloads them
-
-### official-landing ↔ studio-backend
-
-1. **Playground API**: official-landing calls POST `/api/v1/playground/tts`
-2. **SSE Streaming**: official-landing subscribes to GET `/api/v1/tts/{job_id}/stream`
-3. **Graceful Degradation**: if API unreachable → display error, don't crash page
-
-### studio-backend ↔ indexTTS-worker (RabbitMQ)
-
-1. **Queue Publisher**: studio-backend publishes TTS jobs
-2. **Queue Consumer**: studio-backend consumes TTS results
-3. **Connection Pool**: studio-backend maintains async RabbitMQ connections
-4. **Error Handling**: If queue unreachable → 503 Service Unavailable
-
----
-
-## Error Codes
-
-### Worker-Generated Errors (non-retryable)
-
-| Error Code | Cause | Action |
-|---|---|---|
-| `INVALID_JOB_FORMAT` | Missing required fields | Fail, don't retry |
-| `INVALID_AUDIO_PROMPT` | Prompt file corrupted/invalid format | Fail, don't retry |
-| `LANGUAGE_NOT_SUPPORTED` | Language not in model config | Fail, don't retry |
-| `GPU_OUT_OF_MEMORY` | CUDA/GPU memory exceeded | Retry (retryable) |
-| `SYNTHESIS_TIMEOUT` | Model inference exceeds timeout | Retry (retryable) |
-
-### Worker-Generated Errors (retryable)
-
-| Error Code | Cause | Retry Strategy |
-|---|---|---|
-| `AUDIO_PROMPT_DOWNLOAD_FAILED` | Network timeout, S3 error | Exponential backoff, max 3 |
-| `S3_UPLOAD_FAILED` | Network timeout, S3 error | Exponential backoff, max 3 |
-| `RABBITMQ_ACK_FAILED` | Message broker connection issue | Exponential backoff, max 3 |
-
-### Backend-Generated Errors
-
-| Error Code | HTTP | Cause |
-|---|---|---|
-| `text_too_long` | 400 | Exceeded 500 chars (playground) or 5000 chars (user) |
-| `rate_limit_exceeded` | 429 | More than 5 requests/IP/hour (playground) |
-| `voice_not_found` | 404 | voice_id doesn't exist |
-| `voice_permission_denied` | 403 | Private voice not owned by user |
-| `language_not_supported` | 400 | Language not in supported list |
-| `invalid_audio_prompt_id` | 400 | audio_prompt_id not in playground catalog |
-
----
-
-## Correctness Properties (for PBT)
-
-### Property 1: Round-trip - Audio Output Format
-**For ALL synthesized audio, parsing then re-encoding SHALL produce an equivalent audio file.**
-- Input: text, audio_prompt
-- Output: WAV file (from IndexTTS)
-- Verify: decode(encode(audio)) == original_audio (with <1% tolerance)
-
-### Property 2: Idempotence - Cached Synthesis
-**FOR identical (voice_id, text) pairs, synthesizing multiple times within 30 days SHALL return the same S3 URL.**
-- Input: voice_id, text, language
-- Output: s3_url
-- Verify: f(voice_id, text) == f(voice_id, text) (same S3 URL on retry)
-
-### Property 3: Invariant - Job Status Progression
-**Jobs SHALL only transition through valid state sequences: pending → processing → completed/failed.**
-- Valid: pending → processing → completed
-- Valid: pending → processing → failed
-- Valid: pending → failed (immediate validation failure)
-- Invalid: completed → processing (illegal transition)
-- Invalid: failed → completed (illegal transition)
-
-### Property 4: Error Handling - Retry Exhaustion
-**Jobs that exhaust retries SHALL be marked as failed with proper error documentation.**
-- Given: retryable_error
-- Then: retry_count == 3 AND status == failed AND error_message != NULL
-
-### Property 5: Rate Limiting - IP-based Enforcement
-**Any IP SHALL NOT exceed 5 TTS requests per hour window.**
-- Given: requests from same IP in 1 hour
-- Then: count(successful_requests + rejected_requests) >= 5
-- When: count > 5, return 429 Too Many Requests
-
+### Secrets Management
+- AWS IAM roles for S3 access (not access keys)
+- RabbitMQ credentials rotation
+- JWT secret rotation
+- Environment variable encryption

@@ -54,47 +54,82 @@ The feature enables:
 
 ---
 
-### Requirement 2: TTS Job Submission API (studio-backend)
+### Requirement 2: Studio TTS Job Submission API (studio-backend)
 
-**User Story:** As a studio backend service, I want to submit TTS jobs to the worker and track their status, so that authenticated users can generate audio from scripts with voice recordings.
+**User Story:** As a studio backend service, I want to submit TTS jobs using existing TTSJob schema with preview_text caching, so that authenticated users can generate audio from their voice recordings.
 
 #### Acceptance Criteria
 
-1. THE Studio_Backend SHALL provide a POST `/api/v1/tts` endpoint to create TTS jobs.
-2. WHEN a TTS job is created, THE Studio_Backend SHALL accept: user_id, project_id, text, voice_id, and language (required, not optional).
-3. WHEN the request arrives, THE Studio_Backend SHALL validate voice_id exists in the Voice table before creating any job record.
-4. IF voice_id does not exist in the database, THE Studio_Backend SHALL return 404 Not Found instead of creating a job.
-5. IF voice_id exists but is private (owned by another user), THE Studio_Backend SHALL return 403 Forbidden instead of creating a job.
-6. IF voice_id is valid and accessible, THE Studio_Backend SHALL retrieve its S3 URL from the voice catalog.
-7. THE Studio_Backend SHALL create a TTS_Job database record with status "pending" and store job_id, user_id, project_id, text, voice_id, language, created_at.
-8. THE Studio_Backend SHALL publish a message to RabbitMQ tts_jobs queue containing: job_id, text, audio_prompt_url (from voice catalog), language, and user_metadata (user_id, project_id).
-9. THE Studio_Backend SHALL return a 202 Accepted response with job_id and polling/SSE URL.
-10. WHEN requesting job status via GET `/api/v1/tts/{job_id}`, THE Studio_Backend SHALL return current status, progress (if processing), and S3 audio URL (if completed).
-11. WHEN the consumer receives a tts_results message with status "completed", THE Studio_Backend SHALL validate output_s3_url exists and audio_duration_seconds is positive before updating the TTS_Job record.
-12. WHEN the consumer receives a tts_results message with status "failed", THE Studio_Backend SHALL validate error_message is present before updating the TTS_Job record.
-13. IF validation fails for either completed or failed results, THE TTS_Job SHALL remain in pending status and not be updated.
-14. THE Studio_Backend SHALL provide SSE endpoint GET `/api/v1/tts/{job_id}/stream` for real-time job status updates.
-15. THE Studio_Backend SHALL apply content-based caching: if an identical (voice_id, text) pair was synthesized within the last 30 days, reuse the audio instead of resubmitting a job.
+1. THE Studio_Backend SHALL provide a POST `/api/v1/tts` endpoint to create TTS jobs using the existing `TTSJob` table.
+2. WHEN a TTS job is created, THE Studio_Backend SHALL accept: project_id (required), text (required), voice_id (required), and language (required, not optional).
+3. THE Studio_Backend SHALL extract `preview_text` (first 2 sentences) from the full text for caching purposes.
+4. WHEN the request arrives, THE Studio_Backend SHALL validate voice_id exists in the Voice table and user has permission:
+   - Private voices (`is_shared=false`): User must be owner
+   - Shared voices (`is_shared=true`): Any user can use
+   - Approved voices (`is_shared=true AND is_approved=true`): All users (also eligible for playground)
+5. IF voice_id does not exist in the database, THE Studio_Backend SHALL return 404 Not Found.
+6. IF voice_id exists but user lacks permission (private voice not owned by user), THE Studio_Backend SHALL return 403 Forbidden.
+7. THE Studio_Backend SHALL apply content-based caching based on `preview_text`:
+   - IF an identical `(voice_id, preview_text)` pair was successfully synthesized within the last 30 days, return existing audio_path immediately
+   - Cache lookup SHALL use existing `preview_text` field in TTSJob table
+8. IF no cache hit, THE Studio_Backend SHALL create a TTSJob record with:
+   - Extended fields: language (required), correlation_id (UUID), full_text_hash (SHA256 of full text)
+   - Status: "queued" (matching existing state machine)
+   - audio_path: null (will be populated by worker)
+9. THE Studio_Backend SHALL publish to RabbitMQ tts_jobs queue with path-based storage:
+   - `audio_prompt_path`: Path to voice recording (e.g., "audio-prompts/{voice_id}.wav")
+   - `output_path_template`: "tts-output/studio/{job_id}.wav"
+   - `job_type`: "studio"
+10. THE Studio_Backend SHALL return appropriate response:
+   - 202 Accepted (new job): job_id, status="queued", stream_url, is_cached=false
+   - 200 OK (cached): job_id, status="completed", audio_path, audio_duration_seconds, is_cached=true
+11. WHEN the consumer receives a tts_results message, THE Studio_Backend SHALL:
+   - Validate audio_path exists in S3 before updating record
+   - For failed jobs, validate error_message is present
+   - Update TTSJob record with status, audio_path, audio_duration, completed_at
+12. THE Studio_Backend SHALL provide SSE endpoint GET `/api/v1/tts/{job_id}/stream` for real-time updates using existing "queued", "processing", "completed", "failed" states.
 
 ---
 
 ### Requirement 3: Playground TTS Endpoint (official-landing + studio-backend)
 
-**User Story:** As an anonymous user, I want to test the TTS service with predefined audio prompts, so that I can evaluate the quality without signing up.
+**User Story:** As an anonymous user, I want to test the TTS service with approved community voices using full text (up to 200 words), so that I can evaluate quality without signing up.
 
 #### Acceptance Criteria
 
 1. THE Playground SHALL provide an anonymous POST `/api/v1/playground/tts` endpoint accessible without authentication.
-2. WHEN a playground TTS request is received, THE Studio_Backend SHALL validate the request contains: text, audio_prompt_id, and language (required, not optional).
-3. THE Studio_Backend SHALL look up the playground audio_prompt_id from a predefined list (managed in config/database).
-4. IF text length exceeds 500 characters, THE Studio_Backend SHALL return 400 Bad Request with error message.
-5. THE Studio_Backend SHALL apply rate limiting: maximum 5 TTS requests per IP address per hour to prevent abuse.
-6. IF rate limit is exceeded, THE Studio_Backend SHALL return 429 Too Many Requests.
-7. WHEN a rate limit is exceeded, THE Studio_Backend SHALL create a temporary TTS job record with status "rate_limited" for tracking and metrics purposes, though the request is directly rejected with 429 response.
-8. WHEN rate limiting is not exceeded and the request is valid, THE Studio_Backend SHALL create a temporary TTS job record with status "pending", user_id = NULL (anonymous), and store client_ip_address for analytics and rate limiting.
-9. THE Studio_Backend SHALL publish to RabbitMQ tts_jobs queue with: job_id, text, audio_prompt_url, language, and is_playground=true flag.
-10. THE Studio_Backend SHALL return 202 Accepted with job_id and SSE URL.
-11. WHEN the playground job completes, THE Studio_Backend SHALL serve audio directly via SSE stream and retain job records with anonymized IP for 30 days for data analysis and rate limiting verification.
+2. WHEN a playground TTS request is received, THE Studio_Backend SHALL validate:
+   - `text`: Required, max 200 words (≈1000 chars), non-empty
+   - `voice_id`: Required, must be approved community voice (`is_shared=true AND is_approved=true`)
+   - `language`: Required, must match voice language
+3. THE Studio_Backend SHALL apply rate limiting using hashed IP addresses:
+   - Maximum 5 requests per hashed IP per hour
+   - IP addresses SHALL be hashed with SHA256 for privacy
+   - Rate limit counters stored in RateLimitCounter table
+4. IF rate limit is exceeded, THE Studio_Backend SHALL:
+   - Create PlaygroundTTSJob record with status "rate_limited"
+   - Return 429 Too Many Requests with retry_after: 3600 seconds
+5. WHEN rate limiting is not exceeded, THE Studio_Backend SHALL create PlaygroundTTSJob record with:
+   - UUID primary key (different from TTSJob integer IDs)
+   - Full text storage (not preview_text)
+   - Status: "queued" (matching TTSJob state machine)
+   - Hashed client_ip_address for rate limiting
+   - expires_at: created_at + 30 days (automatic cleanup)
+6. THE Studio_Backend SHALL apply content-based caching for playground:
+   - Cache based on `(voice_id, text_hash)` pairs within 30 days
+   - Use SHA256 hash of full text for cache lookup
+   - Different cache strategy than studio (full text vs preview_text)
+7. THE Studio_Backend SHALL publish to RabbitMQ tts_jobs queue with:
+   - `job_type`: "playground"
+   - `output_path_template`: "tts-output/playground/{job_id}.wav"
+   - Path-based audio_prompt_path from voice table
+8. THE Studio_Backend SHALL return 202 Accepted with:
+   - job_id (UUID), status="queued", stream_url, expires_at
+   - No user authentication required
+9. WHEN the playground job completes, THE Studio_Backend SHALL:
+   - Serve audio via SSE stream
+   - Retain PlaygroundTTSJob records for 30 days (automatic cleanup via expires_at)
+   - Use path-based audio_path for S3 access
 
 ---
 
@@ -225,18 +260,75 @@ The feature enables:
 
 ---
 
-### Requirement 12: Voice Catalog Integration (studio-backend)
+### Requirement 12: Dead-Letter Queues and Circuit Breaker
 
-**User Story:** As studio-backend, I want to seamlessly use the existing voice catalog for TTS synthesis, so that users can leverage their recordings.
+**User Story:** As an operations engineer, I want reliable message processing with dead-letter queues and circuit breaker patterns, so that the system handles failures gracefully without cascading effects.
 
 #### Acceptance Criteria
 
-1. THE Studio_Backend SHALL query the Voice table to retrieve voice_id, s3_url, language, created_by_user_id.
-2. WHEN creating a TTS job, THE Studio_Backend SHALL validate that voice_id exists in the Voice catalog.
-3. IF voice_id does not exist in the database, THE Studio_Backend SHALL return 404 Not Found.
-4. IF voice_id exists but user lacks permission to use it, THE Studio_Backend SHALL return 403 Forbidden (applies to private voices not owned by user, and also applies if private voice doesn't exist but user has no permission).
-5. IF voice_id is a community voice (public), THE Studio_Backend SHALL proceed regardless of permissions.
-6. THE Studio_Backend SHALL retrieve the voice's S3 URL and pass it as audio_prompt_url to IndexTTS_Worker.
-7. THE Voice_Catalog SHALL support filtering voices by language and availability status.
-8. WHEN a user creates a TTS job, THE System SHALL log: voice_id, voice_language, voice_owner_user_id, for analytics.
+1. THE RabbitMQ configuration SHALL include dead-letter queues:
+   - `tts_jobs_dlq`: For messages rejected after 3 retries from `tts_jobs`
+   - `tts_results_dlq`: For failed result processing from `tts_results`
+   - DLQs SHALL have 7-day TTL for manual investigation
+2. THE `tts_jobs` queue SHALL be configured with:
+   - `x-dead-letter-exchange`: '' (default exchange)
+   - `x-dead-letter-routing-key`: 'tts_jobs_dlq'
+   - `x-message-ttl`: 86400000 (24 hours in milliseconds)
+   - `x-max-length`: 10000 (prevent unlimited buildup)
+3. THE IndexTTS_Worker SHALL implement circuit breaker pattern:
+   - Monitor S3 download failures (threshold: 5 failures in 60 seconds)
+   - Monitor IndexTTS synthesis failures (threshold: 3 failures in 30 seconds)
+   - Circuit states: CLOSED (normal), OPEN (blocked), HALF_OPEN (testing)
+   - Automatic reset after 60 seconds in OPEN state
+4. FOR partial failures (S3 upload succeeds, RabbitMQ ack fails):
+   - THE IndexTTS_Worker SHALL implement idempotent retry:
+     - Tag S3 object with `job_id` and `status=uploaded`
+     - On retry, check if S3 object exists with same tags
+     - Skip upload if already exists, proceed to RabbitMQ publishing
+   - Maximum 3 retry attempts with exponential backoff
+5. WHEN all ack retries fail after S3 upload success:
+   - THE IndexTTS_Worker SHALL log critical error with job_id
+   - S3 object SHALL remain with `status=uploaded` tag
+   - Manual intervention required to reconcile state
+   - No automatic job requeueing to prevent duplicates
+6. THE System SHALL monitor DLQ depths and alert when:
+   - `tts_jobs_dlq` exceeds 100 messages
+   - `tts_results_dlq` exceeds 50 messages
+   - Any message remains in DLQ for >24 hours
+
+### Requirement 13: Voice Catalog Integration (studio-backend)
+
+**User Story:** As studio-backend, I want to use the existing three-state voice system (private/shared/approved) with path-based storage, so that users can leverage their recordings with proper permissions.
+
+#### Acceptance Criteria
+
+1. THE Studio_Backend SHALL query the existing Voice table with three-state system:
+   - `is_shared=false`: Private voice (owner only)
+   - `is_shared=true, is_approved=false`: Shared voice (owner + collaborators)
+   - `is_shared=true, is_approved=true`: Approved voice (all users, playground eligible)
+2. WHEN creating a TTS job, THE Studio_Backend SHALL validate voice permissions:
+   - Private voices: User must match `user_id` in Voice table
+   - Shared voices: Any authenticated user can use
+   - Approved voices: Any user (authenticated or playground anonymous)
+3. ALL voices SHALL have language field (NOT NULL):
+   - Existing voices SHALL be backfilled with "zh" (simplified Chinese)
+   - New voices SHALL require language specification
+   - Language SHALL match between voice and TTS job
+4. THE System SHALL use path-based storage for voice recordings:
+   - Store as `audio_path` (e.g., "audio-prompts/{voice_id}.wav")
+   - NOT full S3 URLs (shared bucket across repositories)
+   - Consistent path format across all services
+5. Voice recordings SHALL NOT be updatable:
+   - If voice quality needs improvement, create new voice recording
+   - Existing TTS jobs SHALL reference original audio_path
+   - Cache consistency maintained via voice_id stability
+6. THE Studio_Backend SHALL pass `audio_prompt_path` (not URL) to IndexTTS_Worker
+7. THE Voice_Catalog SHALL support filtering by:
+   - Language (required field)
+   - State (private/shared/approved)
+   - Owner (for user's own voices)
+   - Community eligibility (`is_shared=true AND is_approved=true`)
+8. WHEN a user creates a TTS job, THE System SHALL log:
+   - voice_id, voice_state, voice_language, owner_user_id
+   - For audit trail and analytics
 
