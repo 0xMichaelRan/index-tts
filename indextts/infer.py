@@ -52,8 +52,10 @@ if PYTORCH_AVAILABLE:
     from indextts.gpt.model import UnifiedVoice
     from indextts.utils.checkpoint import load_checkpoint
     from indextts.utils.feature_extractors import MelSpectrogramFeatures
-
-from indextts.utils.front import TextNormalizer, TextTokenizer
+    from indextts.utils.front import TextNormalizer, TextTokenizer
+else:
+    TextNormalizer = None
+    TextTokenizer = None
 
 
 class IndexTTS:
