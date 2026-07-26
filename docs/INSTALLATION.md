@@ -33,7 +33,7 @@ conda --version
 
 #### 2. Create Python Environment
 ```bash
-# Create environment with Python 3.10 or 3.11
+# Create environment with Python 3.10 (required)
 conda create -n indexTTS python=3.10
 conda activate indexTTS
 ```
@@ -201,12 +201,12 @@ sudo apt-get install -y \
 
 #### 3. Create Python Environment
 ```bash
-# Create conda environment
+# Create conda environment (required: Python 3.10)
 conda create -n indexTTS python=3.10
 conda activate indexTTS
 
 # OR use venv if conda not available
-python3 -m venv indexTTS-env
+python3.10 -m venv indexTTS-env
 source indexTTS-env/bin/activate
 ```
 
@@ -288,7 +288,7 @@ sudo usermod -a -G video $USER
 - macOS 10.13 or later
 - 8GB+ RAM
 - M1/M2/M3 (Apple Silicon) or Intel processor
-- Python 3.10 or 3.11 installed
+- Python 3.10 (required)
 
 ### Step-by-Step Setup
 
@@ -368,14 +368,14 @@ If you want to use the full IndexTTS model with GPU acceleration on macOS, you'l
 
 ##### 2. Install Dependencies
 ```bash
-# Python 3.10/3.11
-brew install python@3.11
+# Python 3.10 (required)
+brew install python@3.10
 
 # FFmpeg
 brew install ffmpeg
 
 # Create environment
-python3.11 -m venv indexTTS-env
+python3.10 -m venv indexTTS-env
 source indexTTS-env/bin/activate
 ```
 
@@ -420,11 +420,11 @@ python run-indextts-1-5.py
 # Check Python version
 python3 --version
 
-# Use specific version
-python3.11 -m venv indexTTS-env
+# Use Python 3.10 (required)
+python3.10 -m venv indexTTS-env
 
 # Or install via Homebrew
-brew install python@3.11
+brew install python@3.10
 ```
 
 #### pyobjc Installation Fails
@@ -492,7 +492,7 @@ After installation, verify everything is working:
 
 ```bash
 # 1. Python environment
-python --version  # Should be 3.10 or 3.11
+python --version  # Should be 3.10
 
 # 2. Package imports
 python -c "from indextts import create_tts_engine; print('✓ Package OK')"

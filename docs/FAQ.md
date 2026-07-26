@@ -5,10 +5,8 @@
 ## Installation & Setup
 
 ### Q: Which Python version should I use?
-**A:** Python 3.10 or 3.11 is recommended:
-- Python 3.10: Fully tested and stable
-- Python 3.11: Fully compatible
-- Python 3.12+: May work but not officially tested
+**A:** Python 3.10 is required:
+- Python 3.10: Fully tested and stable (REQUIRED)
 
 See [Installation Guide](./INSTALLATION.md) for details.
 

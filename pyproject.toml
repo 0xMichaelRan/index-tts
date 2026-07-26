@@ -7,7 +7,7 @@ name = "indextts-worker"
 version = "1.0.0"
 description = "Personal TTS Worker: FastAPI + RabbitMQ integration for IndexTTS-1.5 zero-shot text-to-speech"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = "==3.10.*"
 license = {text = "Apache-2.0"}
 authors = [
     {name = "0xmichaelran", email = "michaelran16@gmail.com"}
@@ -15,7 +15,6 @@ authors = [
 keywords = ["TTS", "text-to-speech", "zero-shot", "voice-cloning", "fastapi", "rabbitmq", "worker", "microservice"]
 classifiers = [
     "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
     "Operating System :: OS Independent",
     "Intended Audience :: Developers",
     "Topic :: Software Development :: Libraries :: Python Modules",
