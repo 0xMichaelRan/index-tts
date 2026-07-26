@@ -3,7 +3,7 @@ import sys
 import time
 import platform
 from subprocess import CalledProcessError
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, TYPE_CHECKING, Any
 
 # Platform-specific imports
 if platform.system() == "Darwin":
@@ -164,7 +164,7 @@ class IndexTTS:
         self.gr_progress = None
         self.model_version = self.cfg.version if hasattr(self.cfg, "version") else None
 
-    def remove_long_silence(self, codes: torch.Tensor, silent_token=52, max_consecutive=30):
+    def remove_long_silence(self, codes: "torch.Tensor", silent_token=52, max_consecutive=30):
         """
         Shrink special tokens (silent_token and stop_mel_token) in codes
         codes: [B, T]
@@ -277,7 +277,7 @@ class IndexTTS:
             return out_buckets
         return [outputs]
 
-    def pad_tokens_cat(self, tokens: List[torch.Tensor]) -> torch.Tensor:
+    def pad_tokens_cat(self, tokens: List["torch.Tensor"]) -> "torch.Tensor":
         if self.model_version and self.model_version >= 1.5:
             # 1.5版本以上，直接使用stop_text_token 右侧填充，填充到最大长度
             # [1, N] -> [N,]
@@ -378,7 +378,7 @@ class IndexTTS:
         bigvgan_time = 0
 
         # text processing
-        all_text_tokens: List[List[torch.Tensor]] = []
+        all_text_tokens: List[List["torch.Tensor"]] = []
         self._set_gr_progress(0.1, "text processing...")
         bucket_max_size = sentences_bucket_max_size if self.device != "cpu" else 1
         all_sentences = self.bucket_sentences(sentences, bucket_max_size=bucket_max_size)
@@ -388,7 +388,7 @@ class IndexTTS:
                   "bucket sizes:", [(len(s), [t["idx"] for t in s]) for s in all_sentences],
                   "bucket_max_size:", bucket_max_size)
         for sentences in all_sentences:
-            temp_tokens: List[torch.Tensor] = []
+            temp_tokens: List["torch.Tensor"] = []
             all_text_tokens.append(temp_tokens)
             for item in sentences:
                 sent = item["sent"]

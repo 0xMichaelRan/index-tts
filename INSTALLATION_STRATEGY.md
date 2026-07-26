@@ -82,19 +82,30 @@ pip install -e ".[mac,worker]"
 
 ### Why No Native macOS TTS?
 
-**Important Clarification**
+**UPDATED: macOS Native TTS IS Integrated!**
 
-The `[mac]` extra is **NOT for native TTS**. It's for **testing the FastAPI worker** with minimal dependencies:
+The `[mac]` extra provides **native AVFoundation TTS** for macOS:
 
-- IndexTTS requires PyTorch (2GB+ with transformers + BigVGAN)
-- The worker accepts TTS requests and processes them via IndexTTS GPU inference
-- Clients would call the API and get audio back
-- No native macOS AVFoundation/NSSpeechSynthesizer integration in this codebase
+- Uses macOS system voices (AVSpeechSynthesizer)
+- No PyTorch/CUDA required (lightweight, ~10MB dependencies)
+- Fast setup: 30 seconds - 2 minutes
+- Compatible API with IndexTTS GPU inference
+- Perfect for development/testing on macOS laptops
 
-**Why no `pyobjc` in dependencies?**
-- It's not used. The model code only does GPU inference via PyTorch
-- If you wanted native TTS fallback, you'd handle it in client code, not here
-- Keeps dependencies minimal for testing
+**Why use native TTS on macOS?**
+- macOS doesn't have NVIDIA CUDA GPUs
+- IndexTTS requires CUDA for quality inference
+- Native TTS provides instant feedback during development
+- System voices are high quality for testing purposes
+- Can switch to Windows GPU server for production inference
+
+**Dependencies required:**
+```toml
+mac = [
+    "pyobjc-framework-AVFoundation>=10.0",
+    "pyobjc-framework-Cocoa>=10.0",
+]
+```
 
 ## Design Decisions
 

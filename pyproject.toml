@@ -45,6 +45,10 @@ dependencies = [
     # Utilities
     "tqdm",
     
+    # REST API server - needed for run-indextts-1-5.py
+    "fastapi[standard]",
+    "uvicorn[standard]",
+    
     # Platform-specific text processing
     "wetext; sys_platform == 'darwin'",
     "WeTextProcessing; sys_platform != 'darwin'",
@@ -73,10 +77,8 @@ mac = [
     "pyobjc-framework-Cocoa>=10.0",
 ]
 
-# REST API and RabbitMQ worker
-worker = [
-    "fastapi[standard]",
-    "uvicorn[standard]",
+# RabbitMQ worker (for distributed task queue)
+rabbitmq = [
     "pika",
     "python-multipart",
 ]
@@ -96,16 +98,16 @@ dev = [
 
 # Platform-specific all installations
 all-windows = [
-    "indextts-worker[cuda,worker,webui,dev]",
+    "indextts-worker[cuda,rabbitmq,webui,dev]",
 ]
 
 all-mac = [
-    "indextts-worker[mac,worker,webui,dev]",
+    "indextts-worker[mac,rabbitmq,webui,dev]",
 ]
 
 # Legacy all option (defaults to CUDA for backwards compatibility)
 all = [
-    "indextts-worker[cuda,worker,webui,dev]",
+    "indextts-worker[cuda,rabbitmq,webui,dev]",
 ]
 
 [project.urls]
