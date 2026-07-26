@@ -182,9 +182,25 @@ tts.infer_fast(
 )
 ```
 
+### Python Version Requirements
+
+**Supported:** Python 3.10 or 3.11 (recommended for production)
+- Python 3.10: Fully tested and stable
+- Python 3.11: Fully compatible with all dependencies
+- Python 3.12+: May work but not officially tested (some PyTorch features may have compatibility issues)
+
+**Why 3.10-3.11?**
+- `transformers==4.36.2` requires Python >=3.8
+- `torch>=2.1.2` has best support for Python 3.10-3.11
+- All dependencies fully tested on these versions
+
 ### Environment Setup
 
 ```bash
+# 0. Create conda environment with Python 3.10 or 3.11
+conda create -n index-tts python=3.10  # or python=3.11
+conda activate index-tts
+
 # 1. Install with all dependencies
 pip install -e ".[webui]"  # includes gradio for web interface
 
@@ -399,7 +415,7 @@ FROM nvidia/cuda:12.1-runtime-ubuntu22.04
 
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies (Python 3.10 or 3.11 recommended)
 RUN apt-get update && apt-get install -y \
     ffmpeg \
     libsndfile1 \
@@ -408,7 +424,7 @@ RUN apt-get update && apt-get install -y \
     python3.10-venv \
     && rm -rf /var/lib/apt/lists/*
 
-# Create virtual environment
+# Create virtual environment with Python 3.10
 RUN python3.10 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
