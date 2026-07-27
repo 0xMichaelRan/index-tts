@@ -34,51 +34,78 @@ Never use:
 
 - **`services/tts_worker.py`** - Main worker process (RabbitMQ consumer, orchestration)
 - **`services/circuit_breaker.py`** - Circuit breaker pattern for resilience (S3, TTS)
-- **`services/s3_config.py`** - S3-compatible storage client (Supabase, AWS S3)
+- **`services/s3_config.py`** - **Dual-bucket S3 client** (independent storage/output configs)
 - **`services/idempotent_upload.py`** - Idempotent upload with integrity verification
 - **`services/logging_config.py`** - Structured logging with visual hierarchy
 - **`indextts/`** - TTS engine (BigVGAN vocoder, FastSpeech2 acoustic model)
 
+### S3 Dual-Bucket Architecture
+
+The worker now supports **completely independent S3 configurations** for storage and output buckets:
+
+- **Storage Bucket** (`S3_STORAGE_*`): Voice recordings, audio prompts (read-only during synthesis)
+- **Output Bucket** (`S3_OUTPUT_*`): TTS synthesis results (write-only during synthesis)
+
+Each bucket can have:
+- Different S3 endpoints (different providers or regions)
+- Separate credentials (different access keys)
+- Different regions and SSL settings
+- Independent retention/lifecycle policies
+
+**Example**: Use AWS S3 for voices (premium, reliable) and DigitalOcean Spaces for TTS output (cheaper, high throughput).
+
+**Backwards Compatible**: Legacy single-bucket mode (using `S3_*` vars) still works if you don't set `S3_STORAGE_*` and `S3_OUTPUT_*`.
+
 ### S3 Storage Structure
 
 ```
-bucket/
-├── audio-prompts/              # Voice recordings, audio samples
-├── tts-output/
-│   ├── studio/                 # Long-term TTS results (indefinite retention)
-│   └── playground/             # Temporary TTS results (24h retention)
-└── logs/                        # Worker and backend logs
+Storage Bucket (e.g., "voice-library"):
+├── audio-prompts/
+│   ├── {voice_id}.wav               # Worker reads voice prompts
+│   └── {voice_id}.json              # Voice metadata
+
+Output Bucket (e.g., "tts-output"):
+├── studio/
+│   ├── {job_id}.wav                 # Worker uploads long-term TTS results
+│   └── {job_id}.json                # Job metadata
+└── playground/
+    ├── {job_id}.wav                 # Worker uploads temporary TTS (24h retention)
+    └── {job_id}.json                # Job metadata
 ```
 
-**Note**: The project uses two distinct bucket references:
-- **Storage bucket** (`S3_BUCKET_NAME="studio"`): For audio prompts and voice recordings
-- **Output bucket** (`S3_OUTPUT_BUCKET="tts-output"`): For TTS synthesis results
-
-Both are logged clearly in startup summary.
+**Note**: Both buckets are logged clearly in startup summary.
 
 ## Configuration
 
 ### Environment Variables
 
-Required (set in `.env`):
+#### Required Dual-Bucket Configuration
+
+Set **all** of these variables:
 
 ```bash
+# RabbitMQ
 RABBITMQ_URL=amqp://user:pass@host:5672/
-S3_ENDPOINT_URL=https://storage.example.com
-S3_ACCESS_KEY_ID=...
-S3_SECRET_ACCESS_KEY=...
-S3_BUCKET_NAME=studio                   # Storage bucket for prompts/voices
-S3_OUTPUT_BUCKET=tts-output             # Output bucket for synthesis results
-S3_REGION=ap-southeast-1
 RABBITMQ_HOST=localhost                 # For startup logs
+
+# Storage Bucket (voices, audio prompts - read-only during synthesis)
+S3_STORAGE_ENDPOINT_URL=https://storage-provider.com/s3
+S3_STORAGE_ACCESS_KEY_ID=storage-key
+S3_STORAGE_SECRET_ACCESS_KEY=storage-secret
+S3_STORAGE_BUCKET_NAME=voice-library
+S3_STORAGE_REGION=ap-southeast-1
+S3_STORAGE_USE_SSL=true
+
+# Output Bucket (TTS synthesis results - write-only during synthesis)
+S3_OUTPUT_ENDPOINT_URL=https://output-provider.com/s3
+S3_OUTPUT_ACCESS_KEY_ID=output-key
+S3_OUTPUT_SECRET_ACCESS_KEY=output-secret
+S3_OUTPUT_BUCKET_NAME=tts-output
+S3_OUTPUT_REGION=us-east-1
+S3_OUTPUT_USE_SSL=true
 ```
 
-Optional:
-
-```bash
-S3_USE_SSL=true
-AWS_REGION=us-east-1                # Default if not set
-```
+**Benefits**: Different providers, regions, credentials, and costs per bucket.
 
 ### Logging
 
@@ -169,23 +196,33 @@ from services.s3_config import S3Client
 
 client = S3Client()
 
-# Upload with metadata
-client.upload_audio(
-    local_path="/tmp/audio.wav",
-    remote_path="tts-output/studio/job_123.wav",
-    job_id="job_123"
-)
-
-# Download with retry
+# Download from storage bucket (voices)
 client.download_file(
     remote_path="audio-prompts/voice_001.wav",
     local_path="/tmp/prompt.wav",
+    bucket_type="storage",  # Specify which bucket
     max_retries=3
 )
 
+# Upload to output bucket (TTS results)
+client.upload_file(
+    local_path="/tmp/audio.wav",
+    remote_path="tts-output/studio/job_123.wav",
+    bucket_type="output",  # Specify which bucket
+    metadata={"job_id": "job_123"}
+)
+
 # Presigned URL (temporary access)
-url = client.generate_presigned_url("audio-prompts/voice_001.wav", expiration=3600)
+url = client.generate_presigned_url(
+    remote_path="audio-prompts/voice_001.wav",
+    bucket_type="storage",
+    expiration=3600
+)
 ```
+
+**bucket_type values:**
+- `"storage"` - Storage bucket (voices, audio prompts)
+- `"output"` - Output bucket (TTS synthesis results)
 
 ### Idempotent Upload
 
@@ -242,6 +279,7 @@ logger.error("Job processing failed")
 
 ## Documentation
 
+- `DUAL_BUCKET_GUIDE.md` - Dual-bucket S3 configuration guide
 - `LOGGING_REFACTOR.md` - Details on new structured logging system
 - `WORKER_QUICKSTART.md` - Quick start guide
 - `README.md` - Project overview

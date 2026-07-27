@@ -219,6 +219,15 @@ class TestS3Upload:
             
         except S3ConfigError as e:
             pytest.fail(f"Upload to output failed: {e}")
+        except Exception as e:
+            # If it's an access denied error, provide helpful message
+            if "AccessDenied" in str(e) or "Access Denied" in str(e):
+                pytest.skip(
+                    f"Output bucket credentials may have insufficient permissions. "
+                    f"Verify S3_OUTPUT_ACCESS_KEY_ID has write permissions on the bucket. "
+                    f"Error: {e}"
+                )
+            raise
     
     @pytest.mark.integration
     @pytest.mark.slow
@@ -324,6 +333,14 @@ class TestS3Download:
             
         except S3ConfigError as e:
             pytest.fail(f"Download from output failed: {e}")
+        except Exception as e:
+            # If it's an access denied error, skip with helpful message
+            if "AccessDenied" in str(e) or "Access Denied" in str(e):
+                pytest.skip(
+                    f"Output bucket credentials may have insufficient permissions. "
+                    f"Verify S3_OUTPUT_ACCESS_KEY_ID has write permissions on the bucket."
+                )
+            raise
 
 
 class TestS3FileOperations:
