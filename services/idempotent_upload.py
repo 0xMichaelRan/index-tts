@@ -23,13 +23,13 @@ Usage:
     )
 """
 
-import os
+import hashlib
 import json
 import logging
+import os
 import time
-import hashlib
 from datetime import datetime
-from typing import Optional, Dict, Any
+from typing import Any
 
 from services.s3_config import S3Client, S3ConfigError
 
@@ -43,8 +43,8 @@ class UploadMetadata:
         self,
         job_id: str,
         status: str = "pending",
-        upload_timestamp: Optional[str] = None,
-        local_file_hash: Optional[str] = None,
+        upload_timestamp: str | None = None,
+        local_file_hash: str | None = None,
         retry_count: int = 0,
     ):
         """
@@ -63,7 +63,7 @@ class UploadMetadata:
         self.local_file_hash = local_file_hash
         self.retry_count = retry_count
     
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for S3 metadata."""
         return {
             "job_id": self.job_id,
@@ -74,7 +74,7 @@ class UploadMetadata:
         }
     
     @staticmethod
-    def from_s3_metadata(metadata: Dict[str, str]) -> "UploadMetadata":
+    def from_s3_metadata(metadata: dict[str, str]) -> "UploadMetadata":
         """Reconstruct from S3 object metadata."""
         return UploadMetadata(
             job_id=metadata.get("job_id", "unknown"),
@@ -127,7 +127,7 @@ class IdempotentUploader:
         job_id: str,
         remote_path: str,
         bucket_type: str = "output",
-    ) -> Optional[UploadMetadata]:
+    ) -> UploadMetadata | None:
         """
         Check if file already uploaded with matching job_id.
         
@@ -255,7 +255,11 @@ class IdempotentUploader:
                     f"[JOB {job_id}] Upload attempt {retry_count + 1}/{self.max_retries}"
                 )
                 
-                # Prepare metadata
+                # NOTE: Filebase and some S3 services don't support metadata in PUT operations
+                # For now, we skip metadata on upload to avoid AccessDenied errors.
+                # Consider using S3 tags or object ACLs instead for metadata storage.
+                
+                # Prepare metadata (for tracking, may be stored via tags in future)
                 metadata = UploadMetadata(
                     job_id=job_id,
                     status="uploading",
@@ -264,18 +268,24 @@ class IdempotentUploader:
                 )
                 
                 # Upload file to output bucket (TTS results)
+                # NOTE: metadata parameter is deliberately NOT passed to avoid
+                # AccessDenied errors on S3 services that don't support metadata
                 self.s3_client.upload_audio(
                     local_path=local_path,
                     remote_path=remote_path,
-                    bucket_type="output",
+                    bucket_type=bucket_type,
                     job_id=job_id,
-                    metadata=metadata.to_dict(),
+                    metadata=None,  # Disable metadata to support Filebase
                 )
                 
                 logger.info(
                     f"[JOB {job_id}] Upload successful to {remote_path} "
                     f"(attempt {retry_count + 1})"
                 )
+                
+                # Log metadata info for debugging (even though not stored in S3)
+                logger.debug(f"[JOB {job_id}] Metadata (not stored in S3): {metadata.to_dict()}")
+                
                 return remote_path
                 
             except S3ConfigError as e:
@@ -298,7 +308,7 @@ class IdempotentUploader:
             except Exception as e:
                 # Non-S3 errors (file system, permissions, etc.)
                 logger.error(f"[JOB {job_id}] Non-retryable upload error: {e}")
-                raise S3ConfigError(f"Upload failed: {str(e)}") from e
+                raise S3ConfigError(f"Upload failed: {e!s}") from e
         
         # All retries exhausted
         error_msg = (
@@ -312,7 +322,7 @@ class IdempotentUploader:
         self,
         job_id: str,
         remote_path: str,
-        local_file_hash: Optional[str] = None,
+        local_file_hash: str | None = None,
     ) -> bool:
         """
         Verify that uploaded file exists and is complete.
@@ -376,7 +386,7 @@ class IdempotentUploader:
         job_id: str,
         remote_path: str,
         error: Exception,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Handle partial failure scenario where S3 upload succeeds but RabbitMQ ack fails.
         
@@ -421,17 +431,17 @@ class IdempotentUploader:
 
 def create_uploader(
     # Storage bucket parameters
-    storage_endpoint: Optional[str] = None,
-    storage_access_key: Optional[str] = None,
-    storage_secret_key: Optional[str] = None,
-    storage_bucket: Optional[str] = None,
-    storage_region: Optional[str] = None,
+    storage_endpoint: str | None = None,
+    storage_access_key: str | None = None,
+    storage_secret_key: str | None = None,
+    storage_bucket: str | None = None,
+    storage_region: str | None = None,
     # Output bucket parameters
-    output_endpoint: Optional[str] = None,
-    output_access_key: Optional[str] = None,
-    output_secret_key: Optional[str] = None,
-    output_bucket: Optional[str] = None,
-    output_region: Optional[str] = None,
+    output_endpoint: str | None = None,
+    output_access_key: str | None = None,
+    output_secret_key: str | None = None,
+    output_bucket: str | None = None,
+    output_region: str | None = None,
 ) -> IdempotentUploader:
     """
     Factory function to create IdempotentUploader with S3 client.

@@ -306,7 +306,7 @@ class S3Client:
             local_path: Path to local file
             remote_path: S3 object key (path within bucket)
             bucket_type: "storage" or "output" (determines which bucket to use)
-            metadata: Optional metadata tags for the object
+            metadata: Optional metadata tags for the object (NOTE: Some S3 services like Filebase don't support metadata in PUT operations)
             content_type: Optional content type (auto-detected if not provided)
 
         Returns:
@@ -327,10 +327,16 @@ class S3Client:
             content_type = self._get_content_type(local_path)
 
         extra_args = {"ContentType": content_type}
+        
+        # NOTE: Filebase and some S3 services don't support S3 user-defined metadata
+        # on PUT operations. Do NOT add empty/None metadata to extra_args to avoid
+        # parameter validation errors in boto3.
         if metadata:
             extra_args["Metadata"] = metadata
+            logger.debug(f"Including metadata in upload: {list(metadata.keys())}")
 
         logger.info(f"Uploading {local_path} to s3://{bucket_name}/{remote_path}")
+        logger.debug(f"ExtraArgs: {extra_args}")
 
         try:
             client.upload_file(
@@ -343,7 +349,7 @@ class S3Client:
             return remote_path
 
         except (ClientError, BotoCoreError) as e:
-            error_msg = f"Failed to upload {local_path} to {remote_path}: {e!s}"
+            error_msg = f"Failed to upload {local_path} to {bucket_name}/{remote_path}: {e!s}"
             logger.error(error_msg)
             raise S3ConfigError(error_msg) from e
 
@@ -362,22 +368,25 @@ class S3Client:
             local_path: Path to local audio file
             remote_path: S3 object key
             bucket_type: "storage" or "output" (default: "output" for TTS results)
-            job_id: Optional job ID for tracking
-            metadata: Optional additional metadata
+            job_id: Optional job ID for tracking (NOTE: Not stored in S3 metadata due to Filebase limitations)
+            metadata: Optional additional metadata (NOTE: Some S3 services like Filebase don't support metadata)
 
         Returns:
             S3 path (remote_path)
         """
-        # Merge metadata with job_id if provided
-        full_metadata = metadata or {}
-        if job_id:
-            full_metadata["job_id"] = job_id
-
+        # NOTE: Filebase and some S3 services don't support metadata on PUT operations.
+        # We deliberately skip adding job_id and metadata to avoid AccessDenied errors.
+        # The job_id and metadata information could be stored via alternative methods:
+        # - S3 object tags (via separate API call)
+        # - Encoded in the object key/path
+        # - Stored in a separate database/metadata service
+        
+        # For now, just upload without metadata
         return self.upload_file(
             local_path=local_path,
             remote_path=remote_path,
             bucket_type=bucket_type,
-            metadata=full_metadata,
+            metadata=None,  # Disable metadata for Filebase compatibility
             content_type="audio/wav",
         )
 
