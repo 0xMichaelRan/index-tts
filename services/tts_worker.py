@@ -7,31 +7,35 @@ IndexTTS RabbitMQ Worker
 - Updates status back to RabbitMQ
 """
 
-import os
 import json
-import platform
 import logging
-import time
+import os
+import platform
 import signal
+import time
 import wave
 from datetime import datetime
-from typing import Optional, Dict, Any
-from urllib.parse import urlparse
 from pathlib import Path
+from typing import Any
+from urllib.parse import urlparse
 
 import pika
 from dotenv import load_dotenv
-from indextts.infer import create_tts_engine
 
+from indextts.infer import create_tts_engine
 from services.circuit_breaker import (
-    CircuitBreaker,
     CircuitBreakerError,
-    get_circuit_breaker,
     get_all_circuit_breaker_stats,
+    get_circuit_breaker,
+)
+from services.idempotent_upload import IdempotentUploader
+from services.logging_config import (
+    configure_logging,
+    get_logger,
+    log_shutdown_summary,
+    log_startup_summary,
 )
 from services.s3_config import S3Client, S3ConfigError
-from services.idempotent_upload import IdempotentUploader
-from services.logging_config import configure_logging, get_logger, log_startup_summary, log_shutdown_summary
 
 # Load environment variables from .env file
 env_file = Path(__file__).parent.parent / ".env"
@@ -52,34 +56,48 @@ class IndexTTSWorker:
 
     def __init__(
         self,
+        rabbitmq_url: str | None = None,
         rabbitmq_host: str = "localhost",
         rabbitmq_port: int = 5672,
         rabbitmq_user: str = "guest",
         rabbitmq_password: str = "guest",
-        s3_storage_bucket: str = "studio",
-        s3_output_bucket: str = "ttsoutput",
-        s3_region: str = "us-east-1",
     ):
         """
         Initialize the TTS worker.
 
         Args:
-            rabbitmq_host: RabbitMQ server hostname
-            rabbitmq_port: RabbitMQ server port
-            rabbitmq_user: RabbitMQ username
-            rabbitmq_password: RabbitMQ password
-            s3_storage_bucket: S3 bucket for audio prompts/voices (from S3_BUCKET_NAME)
-            s3_output_bucket: S3 bucket for TTS synthesis output (from S3_OUTPUT_BUCKET)
-            s3_region: AWS region for S3
+            rabbitmq_url: RabbitMQ connection URL (e.g., amqp://user:pass@host:5672/)
+            rabbitmq_host: RabbitMQ server hostname (fallback if rabbitmq_url not provided)
+            rabbitmq_port: RabbitMQ server port (fallback)
+            rabbitmq_user: RabbitMQ username (fallback)
+            rabbitmq_password: RabbitMQ password (fallback)
+
+        Note: S3 configuration is read from environment variables by S3Client.
+              See .env.example for required S3_STORAGE_* and S3_OUTPUT_* variables.
         """
-        self.rabbitmq_host = rabbitmq_host
-        self.rabbitmq_port = rabbitmq_port
-        self.rabbitmq_user = rabbitmq_user
-        self.rabbitmq_password = rabbitmq_password
-        self.s3_storage_bucket = s3_storage_bucket
-        self.s3_output_bucket = s3_output_bucket
-        self.s3_region = s3_region
+        # RabbitMQ configuration
+        if rabbitmq_url:
+            self.rabbitmq_url = rabbitmq_url
+            # Parse URL to extract host for logging
+            try:
+                from urllib.parse import urlparse
+
+                parsed = urlparse(rabbitmq_url)
+                self.rabbitmq_host = parsed.hostname or rabbitmq_host
+            except Exception:
+                self.rabbitmq_host = rabbitmq_host
+        else:
+            self.rabbitmq_url = None
+            self.rabbitmq_host = rabbitmq_host
+            self.rabbitmq_port = rabbitmq_port
+            self.rabbitmq_user = rabbitmq_user
+            self.rabbitmq_password = rabbitmq_password
+
         self.platform = platform.system()
+        
+        # S3 bucket names (will be set by S3Client during initialization)
+        self.s3_storage_bucket = None
+        self.s3_output_bucket = None
 
         logger.section("STARTUP")
         logger.info(f"Platform:         {self.platform}")
@@ -88,21 +106,30 @@ class IndexTTSWorker:
         self._init_tts_engine()
         logger.success("TTS engine initialized")
 
-        # Initialize S3 client
+        # Initialize S3 client (reads config from environment variables)
         try:
             self.s3_client = S3Client()
+            # Store bucket names for logging
+            self.s3_storage_bucket = self.s3_client.storage_bucket_name
+            self.s3_output_bucket = self.s3_client.output_bucket_name
             logger.success("S3 client initialized")
         except Exception as e:
-            logger.warning_icon(f"S3 client initialization failed: {e}. Will retry on first use.")
+            logger.warning_icon(
+                f"S3 client initialization failed: {e}. Will retry on first use."
+            )
             self.s3_client = None
-        
+            self.s3_storage_bucket = "N/A"
+            self.s3_output_bucket = "N/A"
+
         # Initialize idempotent uploader
         self.uploader = None
         try:
             self.uploader = IdempotentUploader(self.s3_client)
             logger.success("Idempotent uploader initialized")
         except Exception as e:
-            logger.warning_icon(f"Uploader initialization failed: {e}. Will initialize on first use.")
+            logger.warning_icon(
+                f"Uploader initialization failed: {e}. Will initialize on first use."
+            )
             self.uploader = None
 
         # Initialize circuit breakers
@@ -114,7 +141,7 @@ class IndexTTSWorker:
             half_open_max_calls=3,
             success_threshold=2,
         )
-        
+
         self.tts_breaker = get_circuit_breaker(
             name="IndexTTS",
             failure_threshold=3,
@@ -126,10 +153,10 @@ class IndexTTSWorker:
         # Placeholder for RabbitMQ connection
         self.connection = None
         self.channel = None
-        
+
         # Tracking for idempotent operations
         self._processed_jobs = set()  # Track completed job IDs for deduplication
-        
+
         # Graceful shutdown support
         self._shutdown_requested = False
         self._setup_signal_handlers()
@@ -148,15 +175,16 @@ class IndexTTSWorker:
                 is_fp16=True,
                 use_cuda_kernel=False,
             )
-    
+
     def _setup_signal_handlers(self):
         """Set up signal handlers for graceful shutdown."""
+
         def signal_handler(signum, frame):
             """Handle shutdown signals."""
             signal_name = signal.Signals(signum).name
             logger.info(f"\n{signal_name} received, initiating graceful shutdown...")
             self._shutdown_requested = True
-            
+
             # Stop consuming new messages
             if self.channel and not self.channel.is_closed:
                 try:
@@ -164,7 +192,7 @@ class IndexTTSWorker:
                     logger.info("Stopped consuming new messages")
                 except Exception as e:
                     logger.warning_icon(f"Error stopping consumer: {e}")
-        
+
         # Register handlers for SIGTERM and SIGINT
         signal.signal(signal.SIGTERM, signal_handler)
         signal.signal(signal.SIGINT, signal_handler)
@@ -172,43 +200,69 @@ class IndexTTSWorker:
 
     def connect_rabbitmq(self):
         """
-        Connect to RabbitMQ using the RABBITMQ_URL from environment.
+        Connect to RabbitMQ using the configured URL or individual parameters.
         Supports CloudAMQP and standard RabbitMQ URLs.
         """
         try:
-            rabbitmq_url = os.getenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
-            host_display = rabbitmq_url.split('@')[1] if '@' in rabbitmq_url else 'localhost'
-            logger.subsection(f"Connecting to RabbitMQ ({host_display})")
+            # Use URL if provided, otherwise construct from individual parameters
+            if self.rabbitmq_url:
+                rabbitmq_url = self.rabbitmq_url
+                host_display = (
+                    rabbitmq_url.split("@")[1]
+                    if "@" in rabbitmq_url
+                    else self.rabbitmq_host
+                )
+                logger.subsection(f"Connecting to RabbitMQ ({host_display})")
 
-            # Parse the URL manually to extract components
-            parsed = urlparse(rabbitmq_url)
-            
-            credentials = pika.PlainCredentials(
-                username=parsed.username or "guest",
-                password=parsed.password or "guest",
-            )
-            
-            connection_params = pika.ConnectionParameters(
-                host=parsed.hostname or "localhost",
-                port=parsed.port or 5672,
-                virtual_host=parsed.path.lstrip("/") or "/",
-                credentials=credentials,
-                connection_attempts=3,
-                retry_delay=2,
-                heartbeat=600,
-                blocked_connection_timeout=300,
-            )
+                # Parse the URL manually to extract components
+                parsed = urlparse(rabbitmq_url)
+
+                credentials = pika.PlainCredentials(
+                    username=parsed.username or "guest",
+                    password=parsed.password or "guest",
+                )
+
+                connection_params = pika.ConnectionParameters(
+                    host=parsed.hostname or "localhost",
+                    port=parsed.port or 5672,
+                    virtual_host=parsed.path.lstrip("/") or "/",
+                    credentials=credentials,
+                    connection_attempts=3,
+                    retry_delay=2,
+                    heartbeat=600,
+                    blocked_connection_timeout=300,
+                )
+            else:
+                # Use individual parameters
+                logger.subsection(
+                    f"Connecting to RabbitMQ ({self.rabbitmq_host}:{self.rabbitmq_port})"
+                )
+
+                credentials = pika.PlainCredentials(
+                    username=self.rabbitmq_user,
+                    password=self.rabbitmq_password,
+                )
+
+                connection_params = pika.ConnectionParameters(
+                    host=self.rabbitmq_host,
+                    port=self.rabbitmq_port,
+                    credentials=credentials,
+                    connection_attempts=3,
+                    retry_delay=2,
+                    heartbeat=600,
+                    blocked_connection_timeout=300,
+                )
 
             self.connection = pika.BlockingConnection([connection_params])
             self.channel = self.connection.channel()
-            
+
             # Declare the queue (idempotent if it already exists)
             self.channel.queue_declare(queue="tts_jobs", durable=True)
-            
+
             logger.success("Connected to RabbitMQ")
 
         except Exception as e:
-            logger.failure(f"Failed to connect to RabbitMQ: {str(e)}")
+            logger.failure(f"Failed to connect to RabbitMQ: {e!s}")
             raise
 
     def disconnect_rabbitmq(self):
@@ -218,9 +272,9 @@ class IndexTTSWorker:
                 self.connection.close()
                 logger.success("Disconnected from RabbitMQ")
         except Exception as e:
-            logger.warning_icon(f"Error disconnecting from RabbitMQ: {str(e)}")
+            logger.warning_icon(f"Error disconnecting from RabbitMQ: {e!s}")
 
-    def process_job(self, job_data: Dict[str, Any]) -> Dict[str, Any]:
+    def process_job(self, job_data: dict[str, Any]) -> dict[str, Any]:
         """
         Process a single TTS job with circuit breaker protection.
 
@@ -248,18 +302,20 @@ class IndexTTSWorker:
         # Ensure job_id is a string (may come as integer from backend)
         if job_id is not None:
             job_id = str(job_id)
-        
+
         text = job_data.get("text", "")
         audio_prompt_path = job_data.get("audio_prompt_path")
         language = job_data.get("language", "en")
         job_type = job_data.get("job_type", "studio")
         output_path_template = job_data.get("output_path_template")
-        
+
         retry_count = 0
         max_retries = 3
-        
-        logger.info(f"[JOB {job_id}] Processing TTS request (type: {job_type}, language: {language})")
-        
+
+        logger.info(
+            f"[JOB {job_id}] Processing TTS request (type: {job_type}, language: {language})"
+        )
+
         # Check for duplicate processing
         if job_id in self._processed_jobs:
             logger.warning(f"[JOB {job_id}] Already processed, skipping")
@@ -269,7 +325,7 @@ class IndexTTSWorker:
                 "note": "duplicate_skipped",
                 "timestamp": datetime.now().isoformat(),
             }
-        
+
         synthesis_start = time.time()
         local_audio_prompt = None
         local_output = None
@@ -318,7 +374,7 @@ class IndexTTSWorker:
                 # Step 3: Upload to S3 with idempotent retry
                 logger.info(f"[JOB {job_id}] Uploading to S3...")
                 output_s3_path = output_path_template.format(job_id=job_id)
-                
+
                 try:
                     with self.s3_breaker:
                         audio_path = self._upload_to_s3_idempotent(
@@ -338,12 +394,12 @@ class IndexTTSWorker:
 
                 # Step 4: Calculate audio duration
                 audio_duration = self._get_audio_duration(local_output)
-                
+
                 synthesis_duration = time.time() - synthesis_start
-                
+
                 # Mark as processed
                 self._processed_jobs.add(job_id)
-                
+
                 result = {
                     "job_type": job_type,
                     "job_id": job_id,
@@ -359,19 +415,19 @@ class IndexTTSWorker:
                 )
                 return result
 
-            except (S3ConfigError, OSError, IOError) as e:
+            except (S3ConfigError, OSError) as e:
                 # Retryable errors
                 retry_count += 1
                 if retry_count < max_retries:
-                    delay = 2 ** retry_count  # Exponential backoff: 2, 4, 8 seconds
+                    delay = 2**retry_count  # Exponential backoff: 2, 4, 8 seconds
                     logger.warning(
-                        f"[JOB {job_id}] Attempt {retry_count}/{max_retries} failed: {str(e)}. "
+                        f"[JOB {job_id}] Attempt {retry_count}/{max_retries} failed: {e!s}. "
                         f"Retrying in {delay}s..."
                     )
                     time.sleep(delay)
                 else:
                     logger.error(
-                        f"[JOB {job_id}] All {max_retries} attempts failed: {str(e)}"
+                        f"[JOB {job_id}] All {max_retries} attempts failed: {e!s}"
                     )
                     return {
                         "job_type": job_type,
@@ -382,10 +438,10 @@ class IndexTTSWorker:
                         "retry_count": retry_count,
                         "timestamp": datetime.now().isoformat(),
                     }
-            
+
             except Exception as e:
                 # Non-retryable errors
-                logger.error(f"[JOB {job_id}] Non-retryable error: {str(e)}")
+                logger.error(f"[JOB {job_id}] Non-retryable error: {e!s}")
                 return {
                     "job_type": job_type,
                     "job_id": job_id,
@@ -395,7 +451,7 @@ class IndexTTSWorker:
                     "retry_count": retry_count,
                     "timestamp": datetime.now().isoformat(),
                 }
-            
+
             finally:
                 # Always clean up local files
                 if local_audio_prompt or local_output:
@@ -408,28 +464,28 @@ class IndexTTSWorker:
     ) -> str:
         """
         Download audio prompt from S3 storage bucket with retry logic.
-        
+
         Args:
             job_id: Job identifier
             audio_prompt_path: S3 path to audio prompt (e.g., "audio-prompts/voice_123.wav")
                               Can also be voice_id (int) for backwards compatibility
-            
+
         Returns:
             Local file path to downloaded audio
-            
+
         Raises:
             S3ConfigError: If download fails after retries
             ValueError: If audio_prompt_path is invalid
         """
         if not self.s3_client:
             self.s3_client = S3Client()
-        
+
         # Create temp directory for downloads
         temp_dir = os.path.join("outputs", "temp", job_id)
         os.makedirs(temp_dir, exist_ok=True)
-        
+
         local_path = os.path.join(temp_dir, os.path.basename(audio_prompt_path))
-        
+
         # Download from storage bucket (where voices are stored)
         self.s3_client.download_file(
             remote_path=audio_prompt_path,
@@ -437,7 +493,7 @@ class IndexTTSWorker:
             bucket_type="storage",
             max_retries=3,
         )
-        
+
         logger.info(f"[JOB {job_id}] Downloaded audio prompt to {local_path}")
         return local_path
 
@@ -445,21 +501,21 @@ class IndexTTSWorker:
         self,
         job_id: str,
         text: str,
-        audio_prompt: Optional[str],
+        audio_prompt: str | None,
         language: str,
     ) -> str:
         """
         Synthesize audio using TTS engine.
-        
+
         Args:
             job_id: Job identifier
             text: Text to synthesize
             audio_prompt: Local path to audio prompt file
             language: Language code
-            
+
         Returns:
             Local path to synthesized audio
-            
+
         Raises:
             Exception: If synthesis fails
         """
@@ -489,7 +545,7 @@ class IndexTTSWorker:
                 output_path=output_path,
                 language=language,
             )
-        
+
         logger.info(f"[JOB {job_id}] Synthesis complete: {output_path}")
         return output_path
 
@@ -501,33 +557,33 @@ class IndexTTSWorker:
     ) -> str:
         """
         Upload synthesized audio to S3 with idempotent retry.
-        
+
         Implements idempotent retry by checking if file already exists
         with matching job_id metadata tag before uploading.
-        
+
         Features:
         - Check if file already uploaded (idempotent check)
         - Skip upload if file exists with matching job_id
         - Exponential backoff retry on failure (base: 2s, multiplier: 2)
         - Metadata tagging with job_id and status
         - Partial failure recovery support
-        
+
         Args:
             job_id: Job identifier
             local_path: Local file path
             remote_path: S3 destination path
-            
+
         Returns:
             S3 path (remote_path)
-            
+
         Raises:
             S3ConfigError: If upload fails after retries
         """
         if not self.uploader:
             self.uploader = IdempotentUploader(self.s3_client)
-        
+
         logger.info(f"[JOB {job_id}] Starting idempotent S3 upload")
-        
+
         try:
             # Use idempotent uploader with retry logic
             s3_path = self.uploader.upload_with_retry(
@@ -536,10 +592,10 @@ class IndexTTSWorker:
                 remote_path=remote_path,
                 verify_integrity=True,
             )
-            
+
             logger.info(f"[JOB {job_id}] Upload completed: {s3_path}")
             return s3_path
-            
+
         except S3ConfigError as e:
             logger.error(f"[JOB {job_id}] Upload failed: {e}")
             raise
@@ -547,24 +603,24 @@ class IndexTTSWorker:
     def _get_audio_duration(self, audio_path: str) -> float:
         """
         Get duration of audio file in seconds.
-        
+
         Supports WAV files using the wave module.
-        
+
         Args:
             audio_path: Path to audio file (must be .wav format)
-            
+
         Returns:
             Duration in seconds
-            
+
         Raises:
             FileNotFoundError: If audio file doesn't exist
             ValueError: If file is not a valid WAV file
         """
         if not os.path.exists(audio_path):
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
-        
+
         try:
-            with wave.open(audio_path, 'r') as audio_file:
+            with wave.open(audio_path, "r") as audio_file:
                 frames = audio_file.getnframes()
                 rate = audio_file.getframerate()
                 duration = frames / float(rate)
@@ -577,7 +633,9 @@ class IndexTTSWorker:
             # WAV at 24kHz, 16-bit mono: ~48000 bytes/sec
             file_size = os.path.getsize(audio_path)
             estimated_duration = file_size / 48000.0
-            logger.info(f"Using estimated duration: {estimated_duration:.2f}s based on file size")
+            logger.info(
+                f"Using estimated duration: {estimated_duration:.2f}s based on file size"
+            )
             return estimated_duration
 
     def _cleanup_local_files(self, *paths: str):
@@ -588,29 +646,29 @@ class IndexTTSWorker:
                     os.remove(path)
                     logger.debug(f"Removed: {path}")
             except Exception as e:
-                logger.warning(f"Failed to remove {path}: {str(e)}")
+                logger.warning(f"Failed to remove {path}: {e!s}")
 
-    def publish_result(self, result: Dict[str, Any]):
+    def publish_result(self, result: dict[str, Any]):
         """
         Publish job result back to RabbitMQ tts_results queue with retry.
-        
+
         Implements exponential backoff retry for RabbitMQ ack failures.
         If all retries fail after S3 upload success, triggers partial failure
         recovery and logs critical error for manual intervention.
-        
+
         Partial Failure Handling:
         - If S3 upload succeeded but RabbitMQ publish fails
         - File is safely stored in S3
         - Manual intervention required to update database
         - Recovery metadata is logged for debugging
-        
+
         Args:
             result: Job result dictionary with status and metadata
         """
         max_retries = 3
         retry_count = 0
         job_id = result.get("job_id")
-        
+
         while retry_count < max_retries:
             try:
                 self.channel.basic_publish(
@@ -624,11 +682,11 @@ class IndexTTSWorker:
                 )
                 logger.info(f"✓ Published result for job {job_id}")
                 return
-                
+
             except Exception as e:
                 retry_count += 1
                 if retry_count < max_retries:
-                    delay = 2 ** retry_count  # Exponential backoff: 2, 4, 8 seconds
+                    delay = 2**retry_count  # Exponential backoff: 2, 4, 8 seconds
                     logger.warning(
                         f"[JOB {job_id}] Failed to publish result (attempt {retry_count}/{max_retries}): {e}. "
                         f"Retrying in {delay}s..."
@@ -639,14 +697,14 @@ class IndexTTSWorker:
                     logger.critical(
                         f"[JOB {job_id}] ✗ Failed to publish result after {max_retries} attempts: {e}"
                     )
-                    
+
                     # If result contains audio_path, S3 upload likely succeeded
                     if result.get("status") == "completed" and result.get("audio_path"):
                         logger.critical(
                             f"[JOB {job_id}] PARTIAL FAILURE DETECTED: "
                             f"S3 upload succeeded but RabbitMQ publish failed"
                         )
-                        
+
                         # Trigger recovery for partial failure
                         if self.uploader:
                             recovery_data = self.uploader.handle_partial_failure(
@@ -654,21 +712,23 @@ class IndexTTSWorker:
                                 remote_path=result.get("audio_path"),
                                 error=e,
                             )
-                            logger.critical(f"Recovery data: {json.dumps(recovery_data, indent=2)}")
-                    
+                            logger.critical(
+                                f"Recovery data: {json.dumps(recovery_data, indent=2)}"
+                            )
+
                     # Do not raise - we've done our best, avoid requeueing the original message
 
     def start(self):
         """Start the worker and begin consuming jobs from RabbitMQ."""
         try:
             self.connect_rabbitmq()
-            
+
             # Log connection summary
             logger.subsection("CONNECTIONS")
             logger.info(f"S3 Storage Bucket:   {self.s3_storage_bucket}")
             logger.info(f"S3 Output Bucket:    {self.s3_output_bucket}")
             logger.info("")
-            
+
             # Log circuit breaker status
             cb_stats = get_all_circuit_breaker_stats()
             log_startup_summary(
@@ -687,7 +747,7 @@ class IndexTTSWorker:
                     logger.info("Shutdown requested, rejecting new message")
                     ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
                     return
-                
+
                 job_data = None
                 try:
                     job_data = json.loads(body)
@@ -700,22 +760,24 @@ class IndexTTSWorker:
                     # Acknowledge message only after successful processing
                     ch.basic_ack(delivery_tag=method.delivery_tag)
                     logger.info(f"[JOB {job_id}] Acknowledged")
-                    
+
                 except json.JSONDecodeError as e:
-                    logger.error(f"Invalid JSON in message: {str(e)}")
+                    logger.error(f"Invalid JSON in message: {e!s}")
                     # Reject without requeue - invalid messages go to DLQ
                     ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
-                    
+
                 except CircuitBreakerError as e:
-                    logger.error(f"Circuit breaker open: {str(e)}")
+                    logger.error(f"Circuit breaker open: {e!s}")
                     # Requeue when circuit breaker is open - might succeed later
                     ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
-                    
+
                 except Exception as e:
-                    logger.error(f"Error processing job: {str(e)}")
+                    logger.error(f"Error processing job: {e!s}")
                     if job_data:
                         job_id = job_data.get("job_id")
-                        logger.error(f"[JOB {job_id}] Processing failed, sending to DLQ")
+                        logger.error(
+                            f"[JOB {job_id}] Processing failed, sending to DLQ"
+                        )
                     # Reject without requeue - failed jobs go to DLQ after retries
                     ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
 
@@ -735,11 +797,11 @@ class IndexTTSWorker:
         except KeyboardInterrupt:
             logger.info("\nShutting down worker (KeyboardInterrupt)...")
             self._shutdown_requested = True
-            
+
         except Exception as e:
-            logger.failure(f"Fatal error: {str(e)}")
+            logger.failure(f"Fatal error: {e!s}")
             self._shutdown_requested = True
-            
+
         finally:
             # Graceful shutdown: Print statistics
             if self._shutdown_requested:
@@ -749,18 +811,19 @@ class IndexTTSWorker:
                     processed_count=len(self._processed_jobs),
                     stats_dict=cb_stats,
                 )
-            
+
             self.disconnect_rabbitmq()
 
 
 if __name__ == "__main__":
+    # Read RabbitMQ URL from environment (supports CloudAMQP URLs)
+    rabbitmq_url = os.getenv("RABBITMQ_URL")
+    
     worker = IndexTTSWorker(
+        rabbitmq_url=rabbitmq_url,
         rabbitmq_host=os.getenv("RABBITMQ_HOST", "localhost"),
         rabbitmq_port=int(os.getenv("RABBITMQ_PORT", 5672)),
         rabbitmq_user=os.getenv("RABBITMQ_USER", "guest"),
         rabbitmq_password=os.getenv("RABBITMQ_PASSWORD", "guest"),
-        s3_storage_bucket=os.getenv("S3_BUCKET_NAME", "studio"),
-        s3_output_bucket=os.getenv("S3_OUTPUT_BUCKET", "ttsoutput"),
-        s3_region=os.getenv("S3_REGION", "us-east-1"),
     )
     worker.start()

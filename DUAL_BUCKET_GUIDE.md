@@ -1,274 +1,457 @@
-# Dual-Bucket S3 Configuration Guide
+# Dual S3 Bucket Configuration Guide - IndexTTS Worker
 
 ## Overview
 
-The IndexTTS worker requires **completely independent S3 configurations** for storage and output buckets, matching the architecture of the studio-backend. This allows using different S3 providers, regions, credentials, and settings for each bucket.
+The IndexTTS Worker supports **separate S3 buckets** for storage and output, allowing independent management of:
+- **Storage Bucket**: Voice recordings, audio prompts (read-only during synthesis)
+- **Output Bucket**: TTS synthesis results (write-only during synthesis)
 
-## Benefits
+Each bucket can have:
+- Different S3 endpoints (e.g., different regions, providers)
+- Separate credentials (access keys)
+- Independent regions and SSL settings
+- Different retention policies
+- Independent scaling based on load
 
-### 1. Provider Flexibility
-- Use AWS S3 for voices, DigitalOcean Spaces for TTS output
-- Mix providers based on performance, cost, or location
-- Easy to migrate between providers per bucket
+## Why Separate Buckets?
 
-### 2. Cost Optimization
-- Premium storage for valuable voice recordings (infrequent access)
-- Cheap storage for temporary TTS output (high volume writes)
-- Different storage classes per bucket
+### Separation of Concerns
+- **Storage bucket**: Stable, infrequently accessed, long-term retention (voice library)
+- **Output bucket**: High-throughput writes, variable retention, transient data (TTS results)
 
-### 3. Security & Compliance
-- Separate credentials per bucket (better security)
-- Independent access controls and audit logs
-- Different retention/lifecycle policies
+### Cost Optimization
+- Route high-volume TTS output to cheaper storage
+- Keep voice assets on premium, low-latency storage
+- Use different storage classes per bucket
 
-### 4. Performance
-- Optimize endpoint selection per bucket (latency, throughput)
-- Independent connection pools
-- Region-specific optimizations
+### Scalability
+- Scale storage bucket independently for voice catalog growth
+- Scale output bucket for TTS throughput spikes
+- Use different CDN/caching per bucket
 
-## Required Configuration
+### Compliance & Security
+- Separate access controls per bucket
+- Different lifecycle policies (e.g., output auto-deletes after 24h for playground)
+- Audit trails per bucket type
 
-Set **all** of these environment variables:
+## Configuration
+
+### Setup: Dual-Bucket Mode (Required)
+
+Set **all** of these variables in `.env` file in project root:
 
 ```bash
-# Storage Bucket Configuration (voices, audio prompts)
-S3_STORAGE_ENDPOINT_URL=https://...
-S3_STORAGE_ACCESS_KEY_ID=...
-S3_STORAGE_SECRET_ACCESS_KEY=...
+# Storage Bucket (voice recordings, audio prompts - READ access)
+S3_STORAGE_ENDPOINT_URL=https://storage-region.example.com/s3
+S3_STORAGE_ACCESS_KEY_ID=storage_key_123
+S3_STORAGE_SECRET_ACCESS_KEY=storage_secret_abc
 S3_STORAGE_BUCKET_NAME=voice-library
 S3_STORAGE_REGION=ap-southeast-1
 S3_STORAGE_USE_SSL=true
 
-# Output Bucket Configuration (TTS synthesis results)
-S3_OUTPUT_ENDPOINT_URL=https://...
-S3_OUTPUT_ACCESS_KEY_ID=...
-S3_OUTPUT_SECRET_ACCESS_KEY=...
+# Output Bucket (TTS results - WRITE access)
+S3_OUTPUT_ENDPOINT_URL=https://output-region.example.com/s3
+S3_OUTPUT_ACCESS_KEY_ID=output_key_456
+S3_OUTPUT_SECRET_ACCESS_KEY=output_secret_def
 S3_OUTPUT_BUCKET_NAME=tts-output
-S3_OUTPUT_REGION=us-east-1
+S3_OUTPUT_REGION=us-west-2
 S3_OUTPUT_USE_SSL=true
 ```
 
-## Configuration Examples
+**All variables are required** - the worker will fail to start if any are missing.
 
-### Example 1: Same Provider, Different Buckets (Most Common)
+## Environment Variables Reference
 
-Use the same S3 provider for both buckets:
+### Storage Bucket (for voice recordings, audio prompts)
+
+| Variable | Required | Default | Example |
+|----------|----------|---------|---------|
+| `S3_STORAGE_ENDPOINT_URL` | **Yes** | None | `https://storage.example.com/s3` |
+| `S3_STORAGE_ACCESS_KEY_ID` | **Yes** | None | `key_abc123` |
+| `S3_STORAGE_SECRET_ACCESS_KEY` | **Yes** | None | `secret_xyz789` |
+| `S3_STORAGE_BUCKET_NAME` | **Yes** | None | `voice-library` |
+| `S3_STORAGE_REGION` | No | `us-east-1` | `ap-southeast-1` |
+| `S3_STORAGE_USE_SSL` | No | `true` | `true` or `false` |
+
+### Output Bucket (for TTS results)
+
+| Variable | Required | Default | Example |
+|----------|----------|---------|---------|
+| `S3_OUTPUT_ENDPOINT_URL` | **Yes** | None | `https://output.example.com/s3` |
+| `S3_OUTPUT_ACCESS_KEY_ID` | **Yes** | None | `key_def456` |
+| `S3_OUTPUT_SECRET_ACCESS_KEY` | **Yes** | None | `secret_uvw123` |
+| `S3_OUTPUT_BUCKET_NAME` | **Yes** | None | `tts-output` |
+| `S3_OUTPUT_REGION` | No | `us-east-1` | `us-west-2` |
+| `S3_OUTPUT_USE_SSL` | No | `true` | `true` or `false` |
+
+## File Organization
+
+### Storage Bucket (Read-Only During Synthesis)
+
+```
+voice-library/
+├── audio-prompts/
+│   ├── voice_001.wav         # Voice prompt audio files
+│   ├── voice_002.wav
+│   └── voice_003.wav
+└── metadata/
+    ├── voice_001.json        # Voice metadata files
+    └── voice_002.json
+```
+
+### Output Bucket (Write-Only During Synthesis)
+
+```
+tts-output/
+├── studio/
+│   ├── job_abc123.wav        # Long-term TTS results (projects)
+│   ├── job_abc123.json       # Job metadata
+│   └── job_def456.wav
+└── playground/
+    ├── job_xyz789.wav        # Temporary TTS (24h retention)
+    └── job_xyz789.json
+```
+
+## Worker Behavior
+
+### During Job Processing
+
+1. **Download phase** (from storage bucket):
+   - Downloads voice prompt: `audio-prompts/{voice_id}.wav`
+   - Uses `bucket_type="storage"` parameter
+
+2. **Synthesis phase**:
+   - Generates audio locally using IndexTTS engine
+   - No S3 access during synthesis
+
+3. **Upload phase** (to output bucket):
+   - Uploads result: `{studio|playground}/{job_id}.wav`
+   - Uses `bucket_type="output"` parameter
+   - Uploads metadata: `{studio|playground}/{job_id}.json`
+
+### Bucket Routing Logic
+
+```python
+# In S3Client methods, bucket_type parameter determines routing:
+s3_client.download_file(
+    remote_path="audio-prompts/voice_001.wav",
+    local_path="/tmp/prompt.wav",
+    bucket_type="storage"  # Routes to storage bucket
+)
+
+s3_client.upload_file(
+    local_path="/tmp/result.wav",
+    remote_path="studio/job_123.wav",
+    bucket_type="output"   # Routes to output bucket
+)
+```
+
+## Examples
+
+### Example 1: Supabase Storage (Same Provider, Two Buckets)
 
 ```bash
-# Both on Supabase
-S3_STORAGE_ENDPOINT_URL=https://project.storage.supabase.co/storage/v1/s3
-S3_STORAGE_ACCESS_KEY_ID=your-key
-S3_STORAGE_SECRET_ACCESS_KEY=your-secret
+# Both buckets on same Supabase project, different bucket names
+S3_STORAGE_ENDPOINT_URL=https://abcdef.supabase.co/storage/v1/s3
+S3_STORAGE_ACCESS_KEY_ID=supabase_key_123
+S3_STORAGE_SECRET_ACCESS_KEY=supabase_secret_xyz
 S3_STORAGE_BUCKET_NAME=voice-library
 S3_STORAGE_REGION=ap-southeast-1
 S3_STORAGE_USE_SSL=true
 
-S3_OUTPUT_ENDPOINT_URL=https://project.storage.supabase.co/storage/v1/s3
-S3_OUTPUT_ACCESS_KEY_ID=your-key
-S3_OUTPUT_SECRET_ACCESS_KEY=your-secret
+S3_OUTPUT_ENDPOINT_URL=https://abcdef.supabase.co/storage/v1/s3
+S3_OUTPUT_ACCESS_KEY_ID=supabase_key_123
+S3_OUTPUT_SECRET_ACCESS_KEY=supabase_secret_xyz
 S3_OUTPUT_BUCKET_NAME=tts-output
 S3_OUTPUT_REGION=ap-southeast-1
 S3_OUTPUT_USE_SSL=true
 ```
 
-### Example 2: AWS S3 (Same Provider, Different Buckets)
+**Use case**: Simple setup with one provider, separate buckets for organization.
+
+### Example 2: AWS S3 + DigitalOcean Spaces (Different Providers)
 
 ```bash
-# Storage bucket
+# Voice storage on AWS S3 (premium, low-latency)
 S3_STORAGE_ENDPOINT_URL=https://s3.ap-southeast-1.amazonaws.com
-S3_STORAGE_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE
-S3_STORAGE_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
-S3_STORAGE_BUCKET_NAME=company-voices
+S3_STORAGE_ACCESS_KEY_ID=aws_key_123
+S3_STORAGE_SECRET_ACCESS_KEY=aws_secret_xyz
+S3_STORAGE_BUCKET_NAME=voice-library
 S3_STORAGE_REGION=ap-southeast-1
 S3_STORAGE_USE_SSL=true
 
-# Output bucket
-S3_OUTPUT_ENDPOINT_URL=https://s3.us-east-1.amazonaws.com
-S3_OUTPUT_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE
-S3_OUTPUT_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
-S3_OUTPUT_BUCKET_NAME=company-tts-output
-S3_OUTPUT_REGION=us-east-1
-S3_OUTPUT_USE_SSL=true
-```
-
-### Example 3: Mixed Providers (Advanced)
-
-Use different S3 providers per bucket:
-
-```bash
-# Storage on AWS S3 (premium, reliable)
-S3_STORAGE_ENDPOINT_URL=https://s3.ap-southeast-1.amazonaws.com
-S3_STORAGE_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE
-S3_STORAGE_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
-S3_STORAGE_BUCKET_NAME=voices
-S3_STORAGE_REGION=ap-southeast-1
-S3_STORAGE_USE_SSL=true
-
-# Output on DigitalOcean Spaces (cheaper, high write throughput)
+# TTS output on DigitalOcean Spaces (cheaper, high throughput)
 S3_OUTPUT_ENDPOINT_URL=https://nyc3.digitaloceanspaces.com
-S3_OUTPUT_ACCESS_KEY_ID=DO00ABC9XYZ...
-S3_OUTPUT_SECRET_ACCESS_KEY=SecretKey123...
+S3_OUTPUT_ACCESS_KEY_ID=do_spaces_key
+S3_OUTPUT_SECRET_ACCESS_KEY=do_spaces_secret
 S3_OUTPUT_BUCKET_NAME=tts-results
 S3_OUTPUT_REGION=nyc3
 S3_OUTPUT_USE_SSL=true
 ```
 
-## Code Changes
+**Use case**: Optimize costs by using cheaper storage for high-volume TTS output.
 
-### S3Client API
+### Example 3: MinIO for Development (Local Storage)
 
-The `S3Client` requires a `bucket_type` parameter in all methods:
+```bash
+# Storage on MinIO
+S3_STORAGE_ENDPOINT_URL=http://127.0.0.1:9000
+S3_STORAGE_ACCESS_KEY_ID=minioadmin
+S3_STORAGE_SECRET_ACCESS_KEY=minioadmin
+S3_STORAGE_BUCKET_NAME=voice-library
+S3_STORAGE_REGION=us-east-1
+S3_STORAGE_USE_SSL=false
 
-```python
-from services.s3_config import S3Client
-
-client = S3Client()
-
-# Download from storage bucket (voices)
-client.download_file(
-    remote_path="audio-prompts/voice_123.wav",
-    local_path="/tmp/voice.wav",
-    bucket_type="storage"  # Required
-)
-
-# Upload to output bucket (TTS results)
-client.upload_file(
-    local_path="/tmp/result.wav",
-    remote_path="tts-output/studio/job_456.wav",
-    bucket_type="output"  # Required
-)
-
-# Generate presigned URL
-url = client.generate_presigned_url(
-    remote_path="audio-prompts/voice_001.wav",
-    bucket_type="storage",
-    expiration=3600
-)
+# Output on MinIO (different bucket)
+S3_OUTPUT_ENDPOINT_URL=http://127.0.0.1:9000
+S3_OUTPUT_ACCESS_KEY_ID=minioadmin
+S3_OUTPUT_SECRET_ACCESS_KEY=minioadmin
+S3_OUTPUT_BUCKET_NAME=tts-output
+S3_OUTPUT_REGION=us-east-1
+S3_OUTPUT_USE_SSL=false
 ```
 
-**Valid bucket_type values:**
-- `"storage"` - Storage bucket (voices, audio prompts)
-- `"output"` - Output bucket (TTS synthesis results)
+**Use case**: Local development without cloud dependencies.
 
 ## Testing
 
-### 1. Test Dual-Bucket Detection
+### Test Configuration
+
+```bash
+# Start the worker with dry-run or debug logging
+LOG_LEVEL=DEBUG uv run worker.py
+```
+
+Check startup logs:
+
+```
+18:30:45 [INFO    ] 
+═══════════════════════════════════════════════════════════════════════════
+                              STARTUP
+═══════════════════════════════════════════════════════════════════════════
+...
+18:30:46 [SUCCESS ] S3 client initialized
+18:30:46 [INFO    ]   Storage bucket: voice-library (https://storage.example.com/s3)
+18:30:46 [INFO    ]   Output bucket:  tts-output (https://output.example.com/s3)
+...
+```
+
+### Test Bucket Access
 
 ```python
+# Test script: test_s3_access.py
 from services.s3_config import S3Client
 
 client = S3Client()
 
-print(f"Storage bucket: {client.storage_bucket_name}")
-print(f"Output bucket: {client.output_bucket_name}")
+# Test storage bucket read access
+try:
+    files = client.list_files("audio-prompts/", bucket_type="storage")
+    print(f"✓ Storage bucket accessible: {len(files)} voice prompts found")
+except Exception as e:
+    print(f"✗ Storage bucket error: {e}")
+
+# Test output bucket write access
+try:
+    import tempfile
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+        f.write("test")
+        test_path = f.name
+    
+    client.upload_file(
+        local_path=test_path,
+        remote_path="test/worker_access_test.txt",
+        bucket_type="output"
+    )
+    print("✓ Output bucket writable")
+    
+    # Cleanup
+    client.delete_file("test/worker_access_test.txt", bucket_type="output")
+    import os
+    os.unlink(test_path)
+except Exception as e:
+    print(f"✗ Output bucket error: {e}")
 ```
-
-### 2. Test Download from Storage Bucket
-
-```bash
-# Set up dual-bucket .env
-# Then run worker
-uv run python services/tts_worker.py
-```
-
-Check logs for:
-```
-INFO: Dual-bucket mode initialized
-INFO:   Storage bucket: voice-library (https://provider-a.com/s3)
-INFO:   Output bucket:  tts-output (https://provider-b.com/s3)
-```
-
-### 3. Test End-to-End
-
-1. Upload a voice recording to storage bucket via backend
-2. Create a TTS job
-3. Worker downloads from storage bucket (voices)
-4. Worker uploads TTS result to output bucket
-5. Backend retrieves result from output bucket
-
-### 4. Run Test Suite
-
-```bash
-# Run all S3-related tests
-uv run pytest tests/pytest/test_s3_config.py -v
-uv run pytest tests/test_idempotent_upload.py -v
-
-# Run with coverage
-uv run pytest tests/pytest/test_s3_config.py --cov=services.s3_config
-```
-
-## Integration with Studio Backend
-
-Both the worker and backend must use dual-bucket configurations. Ensure they're aligned:
-
-| Purpose | Backend Variable | Worker Variable | Must Match |
-|---------|-----------------|-----------------|------------|
-| Storage bucket name | `S3_STORAGE_BUCKET_NAME` | `S3_STORAGE_BUCKET_NAME` | ✓ Yes |
-| Storage endpoint | `S3_STORAGE_ENDPOINT_URL` | `S3_STORAGE_ENDPOINT_URL` | ✓ Yes |
-| Storage credentials | `S3_STORAGE_ACCESS_KEY_*` | `S3_STORAGE_ACCESS_KEY_*` | ✓ Yes |
-| Output bucket name | `S3_OUTPUT_BUCKET_NAME` | `S3_OUTPUT_BUCKET_NAME` | ✓ Yes |
-| Output endpoint | `S3_OUTPUT_ENDPOINT_URL` | `S3_OUTPUT_ENDPOINT_URL` | ✓ Yes |
-| Output credentials | `S3_OUTPUT_ACCESS_KEY_*` | `S3_OUTPUT_ACCESS_KEY_*` | ✓ Yes |
-
-**Both services must use the same physical S3 buckets and have compatible credentials to access them.**
 
 ## Troubleshooting
 
-### Issue: Missing environment variables
+### Issue: "Missing required dual-bucket S3 configuration"
 
-**Error**: `Missing required dual-bucket S3 configuration`
+**Cause**: One or more S3 environment variables are not set.
 
-**Solution**: Check that **all** dual-bucket variables are set:
-```bash
-echo $S3_STORAGE_ENDPOINT_URL
-echo $S3_STORAGE_BUCKET_NAME
-echo $S3_OUTPUT_ENDPOINT_URL
-echo $S3_OUTPUT_BUCKET_NAME
-# All should return values
+**Solution**:
+1. Verify `.env` file exists in project root
+2. Check all required variables are set:
+   ```bash
+   cat .env | grep S3_STORAGE
+   cat .env | grep S3_OUTPUT
+   ```
+3. Ensure no typos in variable names (must match exactly)
+4. Restart worker after updating `.env`
+
+### Issue: Permission errors when downloading voice prompts
+
+**Cause**: Storage bucket credentials lack read permission.
+
+**Solution**:
+1. Verify credentials with AWS CLI or S3 browser
+2. Check IAM/bucket policy allows `s3:GetObject` on `audio-prompts/*`
+3. Test with presigned URL generation:
+   ```python
+   url = client.generate_presigned_url(
+       "audio-prompts/voice_001.wav",
+       bucket_type="storage"
+   )
+   print(url)  # Test in browser
+   ```
+
+### Issue: Permission errors when uploading TTS results
+
+**Cause**: Output bucket credentials lack write permission.
+
+**Solution**:
+1. Check IAM/bucket policy allows `s3:PutObject` on output bucket
+2. Verify credentials are correct for output bucket
+3. Test upload manually:
+   ```bash
+   aws s3 cp test.txt s3://tts-output/test/ \
+     --endpoint-url https://your-output-endpoint \
+     --profile output
+   ```
+
+### Issue: "Circuit breaker opened" for S3 operations
+
+**Cause**: Multiple consecutive S3 failures (5 for storage, 3 for output).
+
+**Solution**:
+1. Check S3 endpoint connectivity:
+   ```bash
+   curl -I https://your-endpoint-url/
+   ```
+2. Verify bucket exists and is accessible
+3. Check network/firewall rules
+4. Wait for circuit breaker reset timeout (60s for storage, 30s for output)
+5. Circuit breaker will auto-recover after timeout
+
+### Issue: Worker processes jobs but uploads to wrong bucket
+
+**Cause**: Bucket type parameter missing or incorrect in code.
+
+**Solution**: This shouldn't happen with the current implementation, but verify:
+```python
+# Always specify bucket_type explicitly
+client.download_file(..., bucket_type="storage")  # For voices
+client.upload_file(..., bucket_type="output")     # For TTS results
 ```
 
-### Issue: Worker can't download audio prompts
+## Performance Considerations
 
-**Cause**: Storage bucket credentials incorrect
+- **Connection pooling**: Each bucket gets its own boto3 client with separate connection pools
+- **Parallel downloads/uploads**: Circuit breakers operate independently per bucket
+- **No overhead**: Dual-bucket mode has negligible performance impact compared to single-bucket
+- **Retry logic**: Exponential backoff (2, 4, 8 seconds) per bucket
 
-**Solution**: Verify storage bucket access:
+## Security Best Practices
+
+1. **Separate credentials**: Use different access keys per bucket if possible
+2. **Least privilege**: 
+   - Storage bucket: Grant only `s3:GetObject`, `s3:ListBucket`
+   - Output bucket: Grant only `s3:PutObject`, `s3:DeleteObject`
+3. **Rotation**: Rotate credentials regularly per bucket
+4. **Monitoring**: Monitor access patterns per bucket separately
+5. **Encryption**: Enable encryption at rest per bucket if supported
+
+## Coordination with Backend
+
+The IndexTTS Worker must coordinate with the studio-backend for consistent bucket usage:
+
+### Variable Naming Differences
+
+**Worker** (this project):
+- Storage: `S3_STORAGE_*` variables
+- Output: `S3_OUTPUT_*` variables
+
+**Backend** (studio-backend):
+- Storage: `S3_STORAGE_*` variables (same)
+- Output: `S3_OUTPUT_*` variables (same)
+
+✓ **Both use the same variable names** - no translation needed!
+
+### Bucket Name Consistency
+
+Ensure bucket names match between worker and backend:
+
 ```bash
-aws s3 ls s3://voice-library --endpoint-url $S3_STORAGE_ENDPOINT_URL
+# Worker .env
+S3_STORAGE_BUCKET_NAME=voice-library
+S3_OUTPUT_BUCKET_NAME=tts-output
+
+# Backend .env (should match)
+S3_STORAGE_BUCKET_NAME=voice-library
+S3_OUTPUT_BUCKET_NAME=tts-output
 ```
 
-### Issue: Worker can't upload TTS results
+If bucket names don't match, worker won't find voice prompts or backend won't find TTS results.
 
-**Cause**: Output bucket credentials incorrect
+## Migration from Single-Bucket (Legacy)
 
-**Solution**: Verify output bucket access:
-```bash
-aws s3 ls s3://tts-output --endpoint-url $S3_OUTPUT_ENDPOINT_URL
+**Note**: The worker no longer supports legacy single-bucket mode. You must configure dual-bucket mode.
+
+If migrating from an older version:
+
+1. Create two S3 buckets (or use existing bucket as one of them)
+2. Set all `S3_STORAGE_*` and `S3_OUTPUT_*` environment variables
+3. Optionally migrate existing files to appropriate buckets:
+   - `audio-prompts/*` → Storage bucket
+   - `tts-output/*` → Output bucket
+4. Update `.env` file
+5. Restart worker
+
+The worker will fail to start if dual-bucket variables are not set, preventing accidental misconfiguration.
+
+## Quick Reference
+
+### Download Voice Prompt (Storage Bucket)
+
+```python
+prompt_path = worker._download_audio_prompt(
+    voice_id="voice_001",
+    s3_path="audio-prompts/voice_001.wav"
+)
+# Routes to: S3_STORAGE_BUCKET_NAME
 ```
 
-### Issue: Permission denied errors
+### Upload TTS Result (Output Bucket)
 
-**Cause**: Credentials don't have required permissions
+```python
+s3_path = worker._upload_to_s3_idempotent(
+    local_path="/tmp/result.wav",
+    job_id="job_123",
+    remote_path="studio/job_123.wav"
+)
+# Routes to: S3_OUTPUT_BUCKET_NAME
+```
 
-**Solution**: Ensure both credentials have appropriate permissions:
-- Storage bucket credentials: Read access required
-- Output bucket credentials: Write access required
+### Generate Presigned URL
 
-## Files Modified
+```python
+# Storage bucket (voice preview)
+url = s3_client.generate_presigned_url(
+    "audio-prompts/voice_001.wav",
+    bucket_type="storage"
+)
 
-- **`services/s3_config.py`** - Dual-bucket support with separate clients (legacy mode removed)
-- **`services/tts_worker.py`** - Updated to specify `bucket_type="storage"` for downloads
-- **`services/idempotent_upload.py`** - Updated to use `bucket_type="output"` for uploads
-- **`.env.example`** - Dual-bucket configuration template
+# Output bucket (TTS result download)
+url = s3_client.generate_presigned_url(
+    "studio/job_123.wav",
+    bucket_type="output"
+)
+```
 
-## Next Steps
+## Further Reading
 
-1. **Update `.env`**: Add all dual-bucket variables
-2. **Test locally**: Verify worker can access both buckets
-3. **Deploy**: Update production `.env` and restart worker
-4. **Monitor logs**: Confirm dual-bucket mode is active (check startup logs)
-
-## Questions?
-
-- Check `AGENTS.md` for environment variable reference
-- See `docs/S3_DUAL_BUCKET_GUIDE.md` in studio-backend for backend integration
-- See `DUAL_BUCKET_VERIFICATION.md` for verification procedures
+- `.env.example` - Configuration template
+- `services/s3_config.py` - S3 client implementation
+- `services/idempotent_upload.py` - Upload integrity verification
+- `services/circuit_breaker.py` - Resilience patterns
+- Studio Backend `docs/S3_DUAL_BUCKET_GUIDE.md` - Backend-side configuration

@@ -2,19 +2,29 @@
 """
 Simple entry point to run the TTS worker.
 Use: uv run worker.py
+
+Environment variables are loaded from .env file in project root.
+See .env.example for configuration template.
 """
 
-from services.tts_worker import IndexTTSWorker
 import os
 
+from services.tts_worker import IndexTTSWorker
+
 if __name__ == "__main__":
+    # RabbitMQ configuration
+    # Support both RABBITMQ_URL and individual parameters
+    rabbitmq_url = os.getenv("RABBITMQ_URL")
+    rabbitmq_host = os.getenv("RABBITMQ_HOST", "localhost")
+    rabbitmq_port = int(os.getenv("RABBITMQ_PORT", "5672"))
+    rabbitmq_user = os.getenv("RABBITMQ_USER", "guest")
+    rabbitmq_password = os.getenv("RABBITMQ_PASSWORD", "guest")
+
     worker = IndexTTSWorker(
-        rabbitmq_host=os.getenv("RABBITMQ_HOST", "localhost"),
-        rabbitmq_port=int(os.getenv("RABBITMQ_PORT", 5672)),
-        rabbitmq_user=os.getenv("RABBITMQ_USER", "guest"),
-        rabbitmq_password=os.getenv("RABBITMQ_PASSWORD", "guest"),
-        s3_storage_bucket=os.getenv("S3_BUCKET_NAME", "studio"),
-        s3_output_bucket=os.getenv("S3_OUTPUT_BUCKET", "ttsoutput"),
-        s3_region=os.getenv("S3_REGION", "us-east-1"),
+        rabbitmq_url=rabbitmq_url,
+        rabbitmq_host=rabbitmq_host,
+        rabbitmq_port=rabbitmq_port,
+        rabbitmq_user=rabbitmq_user,
+        rabbitmq_password=rabbitmq_password,
     )
     worker.start()

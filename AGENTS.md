@@ -81,6 +81,8 @@ Output Bucket (e.g., "tts-output"):
 
 #### Required Dual-Bucket Configuration
 
+**Location**: `.env` file in project root (copy from `.env.example`)
+
 Set **all** of these variables:
 
 ```bash
