@@ -13,11 +13,11 @@ This plan implements the TTS service integration across three repositories with 
 
 ### Phase 1: Database Migration & Core Infrastructure (Week 1-2)
 
-- [-] 1. Extend existing TTSJob schema with language, correlation_id, and full_text_hash columns
-- [ ] 2. Create PlaygroundTTSJob table with UUID primary key and full text storage
-- [ ] 3. Backfill voice language data for existing voices
-- [ ] 4. Configure RabbitMQ with dead-letter queues (tts_jobs_dlq, tts_results_dlq)
-- [ ] 5. Configure S3 path-based storage structure with lifecycle rules
+- [x] 1. Extend existing TTSJob schema with language, correlation_id, and full_text_hash columns
+- [x] 2. Create PlaygroundTTSJob table with UUID primary key and full text storage
+- [x] 3. Backfill voice language data for existing voices
+- [x] 4. Configure RabbitMQ with dead-letter queues (tts_jobs_dlq, tts_results_dlq)
+- [-] 5. Configure S3 path-based storage structure with lifecycle rules
 
 ### Phase 2: Studio Backend Implementation (Week 2-3)
 
