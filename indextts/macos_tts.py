@@ -7,21 +7,16 @@ API for text-to-speech conversion.
 """
 
 import os
-import sys
 import platform
-from pathlib import Path
-from typing import Optional, List
 
 if platform.system() == "Darwin":
     try:
-        from Foundation import NSURL, NSDate, NSRunLoop, NSDefaultRunLoopMode
         from AVFoundation import (
+            AVSpeechSynthesisVoice,
             AVSpeechSynthesizer,
             AVSpeechUtterance,
-            AVSpeechSynthesisVoice,
-            AVSpeechBoundary,
         )
-        import objc
+        from Foundation import NSDate, NSDefaultRunLoopMode, NSRunLoop
     except ImportError:
         raise ImportError(
             "macOS TTS requires pyobjc-framework-AVFoundation. "
@@ -42,7 +37,7 @@ class MacOSTTS:
     and testing on macOS systems without CUDA support.
     """
 
-    def __init__(self, voice: Optional[str] = None, language: str = "en-US"):
+    def __init__(self, voice: str | None = None, language: str = "en-US"):
         """
         Initialize macOS TTS synthesizer.
 
@@ -78,7 +73,7 @@ class MacOSTTS:
             print(f"Warning: No voice found for {language}. Using system default.")
             self.voice = AVSpeechSynthesisVoice.voiceWithLanguage_("en-US")
 
-    def _get_available_voices(self) -> List[dict]:
+    def _get_available_voices(self) -> list[dict]:
         """Get list of available system voices."""
         voices = []
         for voice in AVSpeechSynthesisVoice.speechVoices():
@@ -92,7 +87,7 @@ class MacOSTTS:
             )
         return voices
 
-    def list_voices(self, language: Optional[str] = None) -> List[dict]:
+    def list_voices(self, language: str | None = None) -> list[dict]:
         """
         List available voices, optionally filtered by language.
 
@@ -113,7 +108,7 @@ class MacOSTTS:
 
     def infer(
         self,
-        audio_prompt: Optional[str],
+        audio_prompt: str | None,
         text: str,
         output_path: str,
         rate: float = 0.5,
@@ -124,57 +119,91 @@ class MacOSTTS:
         """
         Synthesize speech from text using macOS native TTS.
 
+        Uses the 'say' command to generate audio files directly without playing
+        through system audio.
+
         Args:
             audio_prompt: Reference audio path (ignored for macOS TTS).
             text: Text to synthesize.
-            output_path: Output audio file path (.aiff, .caf, or .wav).
+            output_path: Output audio file path (will be saved as .aiff, then converted to .wav).
             rate: Speech rate (0.0 = slow, 1.0 = fast). Default 0.5 (normal).
-            pitch: Voice pitch multiplier (0.5-2.0). Default 1.0.
-            volume: Volume (0.0-1.0). Default 1.0.
+            pitch: Voice pitch multiplier (0.5-2.0). Default 1.0 (NOTE: say command doesn't support pitch).
+            volume: Volume (0.0-1.0). Default 1.0 (NOTE: say command doesn't support volume).
             **kwargs: Additional parameters (ignored for compatibility).
 
         Returns:
-            Path to the generated audio file.
+            Path to the generated audio file (.wav format).
         """
+        import subprocess
+
         if audio_prompt:
             print(
                 f"Note: audio_prompt is not used in macOS native TTS (received: {audio_prompt})"
             )
 
-        # Create utterance
-        utterance = AVSpeechUtterance.speechUtteranceWithString_(text)
-        utterance.setVoice_(self.voice)
-        utterance.setRate_(rate)
-        utterance.setPitchMultiplier_(pitch)
-        utterance.setVolume_(volume)
-
-        # For writing to file, we need to use AVAudioEngine and AVSpeechSynthesizer's
-        # write() method (macOS 13+), but for simplicity, we'll use the system
-        # afplay command to record output
-
-        # Speak to default output
-        self._is_speaking = True
-        self.synthesizer.speakUtterance_(utterance)
-
-        # Wait for speech to complete
-        run_loop = NSRunLoop.currentRunLoop()
-        while self._is_speaking:
-            run_loop.runMode_beforeDate_(
-                NSDefaultRunLoopMode, NSDate.dateWithTimeIntervalSinceNow_(0.1)
+        if pitch != 1.0:
+            print(
+                f"Warning: pitch parameter ({pitch}) not supported by macOS 'say' command"
             )
-            if not self.synthesizer.isSpeaking():
-                self._is_speaking = False
 
-        print(f"Note: macOS native TTS spoke the text to system audio.")
-        print(f"File saving to '{output_path}' requires recording system audio.")
-        print(
-            f"For production use, consider using the CUDA-based IndexTTS on Windows/Linux."
-        )
+        if volume != 1.0:
+            print(
+                f"Warning: volume parameter ({volume}) not supported by macOS 'say' command"
+            )
 
-        # Create a placeholder file to match the API
+        # Ensure output directory exists
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
-        with open(output_path, "w") as f:
-            f.write(f"macOS TTS output placeholder\nText: {text}\n")
+
+        # Force .wav extension for consistency with IndexTTS
+        if not output_path.endswith(".wav"):
+            output_path = os.path.splitext(output_path)[0] + ".wav"
+
+        # Convert rate (0.0-1.0) to words per minute (100-300 wpm)
+        # say command expects wpm, typical range is 100-300
+        wpm = int(100 + (rate * 200))
+
+        # Get voice name (say command uses voice name, not identifier)
+        voice_name = self.voice.name() if self.voice else "Samantha"
+
+        # Create temporary AIFF file (say's native format)
+        temp_aiff = output_path.replace(".wav", "_temp.aiff")
+
+        try:
+            # Build say command to generate AIFF
+            cmd_say = ["say", "-v", voice_name, "-r", str(wpm), "-o", temp_aiff, text]
+
+            print(f"Generating audio: voice={voice_name}, rate={wpm}wpm")
+            subprocess.run(cmd_say, check=True, capture_output=True, text=True)
+
+            # Convert AIFF to WAV using afconvert (built into macOS)
+            cmd_convert = [
+                "afconvert",
+                "-f",
+                "WAVE",  # Output format: WAVE
+                "-d",
+                "LEI16",  # Data format: 16-bit little-endian integer PCM
+                temp_aiff,
+                output_path,
+            ]
+
+            print("Converting AIFF to WAV...")
+            subprocess.run(cmd_convert, check=True, capture_output=True, text=True)
+
+            print(f"Saved audio to: {output_path}")
+
+        except subprocess.CalledProcessError as e:
+            error_msg = e.stderr if e.stderr else str(e)
+            raise RuntimeError(
+                f"Failed to generate audio with macOS tools: {error_msg}"
+            )
+
+        finally:
+            # Clean up temporary AIFF file
+            if os.path.exists(temp_aiff):
+                try:
+                    os.remove(temp_aiff)
+                except OSError as e:
+                    print(f"Warning: Failed to remove temporary file {temp_aiff}: {e}")
 
         return output_path
 
@@ -214,7 +243,7 @@ class MacOSTTS:
 
 
 def create_macos_tts_engine(
-    voice: Optional[str] = None, language: str = "en-US"
+    voice: str | None = None, language: str = "en-US"
 ) -> MacOSTTS:
     """
     Factory function to create a macOS TTS engine.
