@@ -85,12 +85,21 @@ class TestIdempotentUploader:
     
     @pytest.fixture
     def mock_s3_client(self):
-        """Create mock S3 client."""
+        """Create mock S3 client with dual-bucket support."""
         client = Mock()
-        client.bucket_name = "test-bucket"
+        client.storage_bucket_name = "voice-library"
+        client.output_bucket_name = "tts-output"
         client.file_exists = Mock(return_value=False)
         client.upload_audio = Mock()
-        client.client = Mock()
+        client.storage_client = Mock()
+        client.output_client = Mock()
+        client._get_client_and_bucket = Mock(
+            side_effect=lambda bucket_type: (
+                (client.storage_client, client.storage_bucket_name) 
+                if bucket_type == "storage" 
+                else (client.output_client, client.output_bucket_name)
+            )
+        )
         return client
     
     @pytest.fixture
@@ -142,15 +151,15 @@ class TestIdempotentUploader:
         """Test checking for non-existent upload."""
         mock_s3_client.file_exists.return_value = False
         
-        result = uploader._check_existing_upload("job-123", "s3://bucket/file.wav")
+        result = uploader._check_existing_upload("job-123", "s3://bucket/file.wav", bucket_type="output")
         
         assert result is None
-        mock_s3_client.file_exists.assert_called_once_with("s3://bucket/file.wav")
+        mock_s3_client.file_exists.assert_called_once_with("s3://bucket/file.wav", bucket_type="output")
     
     def test_check_existing_upload_exists_and_valid(self, uploader, mock_s3_client):
         """Test checking for existing upload that is valid."""
         mock_s3_client.file_exists.return_value = True
-        mock_s3_client.client.head_object.return_value = {
+        mock_s3_client.output_client.head_object.return_value = {
             "Metadata": {
                 "job_id": "job-123",
                 "status": "uploaded",
@@ -160,7 +169,7 @@ class TestIdempotentUploader:
             }
         }
         
-        result = uploader._check_existing_upload("job-123", "tts-output/job-123.wav")
+        result = uploader._check_existing_upload("job-123", "tts-output/job-123.wav", bucket_type="output")
         
         assert result is not None
         assert result.job_id == "job-123"
@@ -169,37 +178,37 @@ class TestIdempotentUploader:
     def test_check_existing_upload_exists_but_wrong_job(self, uploader, mock_s3_client):
         """Test checking for existing upload from different job."""
         mock_s3_client.file_exists.return_value = True
-        mock_s3_client.client.head_object.return_value = {
+        mock_s3_client.output_client.head_object.return_value = {
             "Metadata": {
                 "job_id": "job-999",  # Different job ID
                 "status": "uploaded",
             }
         }
         
-        result = uploader._check_existing_upload("job-123", "tts-output/file.wav")
+        result = uploader._check_existing_upload("job-123", "tts-output/file.wav", bucket_type="output")
         
         assert result is None
     
     def test_check_existing_upload_exists_but_not_complete(self, uploader, mock_s3_client):
         """Test checking for existing upload that's not yet complete."""
         mock_s3_client.file_exists.return_value = True
-        mock_s3_client.client.head_object.return_value = {
+        mock_s3_client.output_client.head_object.return_value = {
             "Metadata": {
                 "job_id": "job-123",
                 "status": "uploading",  # Still in progress
             }
         }
         
-        result = uploader._check_existing_upload("job-123", "tts-output/file.wav")
+        result = uploader._check_existing_upload("job-123", "tts-output/file.wav", bucket_type="output")
         
         assert result is None
     
     def test_check_existing_upload_metadata_error(self, uploader, mock_s3_client):
         """Test handling of metadata fetch errors."""
         mock_s3_client.file_exists.return_value = True
-        mock_s3_client.client.head_object.side_effect = Exception("Access denied")
+        mock_s3_client.output_client.head_object.side_effect = Exception("Access denied")
         
-        result = uploader._check_existing_upload("job-123", "tts-output/file.wav")
+        result = uploader._check_existing_upload("job-123", "tts-output/file.wav", bucket_type="output")
         
         assert result is None
     
@@ -378,9 +387,19 @@ class TestIdempotentUploaderIntegration:
     def test_upload_workflow_complete(self):
         """Test complete upload workflow."""
         mock_s3_client = Mock()
-        mock_s3_client.bucket_name = "test-bucket"
+        mock_s3_client.storage_bucket_name = "voice-library"
+        mock_s3_client.output_bucket_name = "tts-output"
         mock_s3_client.file_exists = Mock(return_value=False)
         mock_s3_client.upload_audio = Mock()
+        mock_s3_client.storage_client = Mock()
+        mock_s3_client.output_client = Mock()
+        mock_s3_client._get_client_and_bucket = Mock(
+            side_effect=lambda bucket_type: (
+                (mock_s3_client.storage_client, mock_s3_client.storage_bucket_name) 
+                if bucket_type == "storage" 
+                else (mock_s3_client.output_client, mock_s3_client.output_bucket_name)
+            )
+        )
         
         uploader = IdempotentUploader(mock_s3_client)
         
@@ -394,6 +413,7 @@ class TestIdempotentUploaderIntegration:
                 job_id="job-123",
                 local_path=temp_path,
                 remote_path="tts-output/job-123.wav",
+                bucket_type="output",
             )
             
             assert result == "tts-output/job-123.wav"
@@ -415,7 +435,17 @@ class TestIdempotentUploaderIntegration:
     def test_idempotent_retry_workflow(self):
         """Test idempotent retry on second upload attempt."""
         mock_s3_client = Mock()
-        mock_s3_client.bucket_name = "test-bucket"
+        mock_s3_client.storage_bucket_name = "voice-library"
+        mock_s3_client.output_bucket_name = "tts-output"
+        mock_s3_client.storage_client = Mock()
+        mock_s3_client.output_client = Mock()
+        mock_s3_client._get_client_and_bucket = Mock(
+            side_effect=lambda bucket_type: (
+                (mock_s3_client.storage_client, mock_s3_client.storage_bucket_name) 
+                if bucket_type == "storage" 
+                else (mock_s3_client.output_client, mock_s3_client.output_bucket_name)
+            )
+        )
         
         uploader = IdempotentUploader(mock_s3_client)
         
@@ -432,6 +462,7 @@ class TestIdempotentUploaderIntegration:
                 job_id="job-123",
                 local_path=temp_path,
                 remote_path="tts-output/job-123.wav",
+                bucket_type="output",
             )
             
             assert result1 == "tts-output/job-123.wav"
@@ -448,6 +479,7 @@ class TestIdempotentUploaderIntegration:
                 job_id="job-123",
                 local_path=temp_path,
                 remote_path="tts-output/job-123.wav",
+                bucket_type="output",
             )
             
             assert result2 == "tts-output/job-123.wav"
@@ -468,11 +500,16 @@ class TestCreateUploader:
             mock_s3_class.return_value = mock_s3_instance
             
             uploader = create_uploader(
-                s3_endpoint="http://localhost:9000",
-                s3_access_key="minioadmin",
-                s3_secret_key="minioadmin",
-                s3_bucket="test-bucket",
-                s3_region="us-east-1",
+                storage_endpoint="http://localhost:9000",
+                storage_access_key="storage_key",
+                storage_secret_key="storage_secret",
+                storage_bucket="voice-library",
+                storage_region="us-east-1",
+                output_endpoint="http://localhost:9000",
+                output_access_key="output_key",
+                output_secret_key="output_secret",
+                output_bucket="tts-output",
+                output_region="us-east-1",
             )
             
             assert isinstance(uploader, IdempotentUploader)
@@ -481,11 +518,16 @@ class TestCreateUploader:
     def test_create_uploader_with_env_vars(self):
         """Test creating uploader from environment variables."""
         with patch.dict(os.environ, {
-            "S3_ENDPOINT_URL": "http://localhost:9000",
-            "S3_ACCESS_KEY_ID": "minioadmin",
-            "S3_SECRET_ACCESS_KEY": "minioadmin",
-            "S3_BUCKET_NAME": "test-bucket",
-            "S3_REGION": "us-east-1",
+            "S3_STORAGE_ENDPOINT_URL": "http://localhost:9000",
+            "S3_STORAGE_ACCESS_KEY_ID": "storage_key",
+            "S3_STORAGE_SECRET_ACCESS_KEY": "storage_secret",
+            "S3_STORAGE_BUCKET_NAME": "voice-library",
+            "S3_STORAGE_REGION": "us-east-1",
+            "S3_OUTPUT_ENDPOINT_URL": "http://localhost:9000",
+            "S3_OUTPUT_ACCESS_KEY_ID": "output_key",
+            "S3_OUTPUT_SECRET_ACCESS_KEY": "output_secret",
+            "S3_OUTPUT_BUCKET_NAME": "tts-output",
+            "S3_OUTPUT_REGION": "us-east-1",
         }):
             with patch("services.idempotent_upload.S3Client") as mock_s3_class:
                 mock_s3_instance = Mock()

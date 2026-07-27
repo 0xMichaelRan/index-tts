@@ -420,21 +420,34 @@ class IdempotentUploader:
 
 
 def create_uploader(
-    s3_endpoint: Optional[str] = None,
-    s3_access_key: Optional[str] = None,
-    s3_secret_key: Optional[str] = None,
-    s3_bucket: Optional[str] = None,
-    s3_region: Optional[str] = None,
+    # Storage bucket parameters
+    storage_endpoint: Optional[str] = None,
+    storage_access_key: Optional[str] = None,
+    storage_secret_key: Optional[str] = None,
+    storage_bucket: Optional[str] = None,
+    storage_region: Optional[str] = None,
+    # Output bucket parameters
+    output_endpoint: Optional[str] = None,
+    output_access_key: Optional[str] = None,
+    output_secret_key: Optional[str] = None,
+    output_bucket: Optional[str] = None,
+    output_region: Optional[str] = None,
 ) -> IdempotentUploader:
     """
     Factory function to create IdempotentUploader with S3 client.
     
     Args:
-        s3_endpoint: S3 endpoint URL (from env if not provided)
-        s3_access_key: S3 access key (from env if not provided)
-        s3_secret_key: S3 secret key (from env if not provided)
-        s3_bucket: S3 bucket name (from env if not provided)
-        s3_region: S3 region (from env if not provided)
+        storage_endpoint: Storage bucket S3 endpoint URL (from env if not provided)
+        storage_access_key: Storage bucket access key (from env if not provided)
+        storage_secret_key: Storage bucket secret key (from env if not provided)
+        storage_bucket: Storage bucket name (from env if not provided)
+        storage_region: Storage bucket region (from env if not provided)
+        
+        output_endpoint: Output bucket S3 endpoint URL (from env if not provided)
+        output_access_key: Output bucket access key (from env if not provided)
+        output_secret_key: Output bucket secret key (from env if not provided)
+        output_bucket: Output bucket name (from env if not provided)
+        output_region: Output bucket region (from env if not provided)
         
     Returns:
         Configured IdempotentUploader instance
@@ -444,11 +457,16 @@ def create_uploader(
     """
     try:
         s3_client = S3Client(
-            endpoint_url=s3_endpoint,
-            access_key_id=s3_access_key,
-            secret_access_key=s3_secret_key,
-            bucket_name=s3_bucket,
-            region=s3_region,
+            storage_endpoint_url=storage_endpoint,
+            storage_access_key_id=storage_access_key,
+            storage_secret_access_key=storage_secret_key,
+            storage_bucket_name=storage_bucket,
+            storage_region=storage_region,
+            output_endpoint_url=output_endpoint,
+            output_access_key_id=output_access_key,
+            output_secret_access_key=output_secret_key,
+            output_bucket_name=output_bucket,
+            output_region=output_region,
         )
         return IdempotentUploader(s3_client)
     except Exception as e:

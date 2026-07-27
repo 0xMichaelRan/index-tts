@@ -106,58 +106,34 @@ class S3Client:
     """
     Dual-bucket S3-compatible storage client.
     
-    Supports completely independent configurations for storage bucket (voices) 
+    Requires completely independent configurations for storage bucket (voices) 
     and output bucket (TTS results), including separate endpoints, credentials, 
     regions, and SSL settings.
-    
-    Configuration priority:
-    1. Dual-bucket mode (if S3_STORAGE_* and S3_OUTPUT_* env vars are set)
-    2. Legacy single-bucket mode (if S3_* env vars are set)
     """
     
     def __init__(
         self,
-        # Legacy single-bucket parameters (backwards compatibility)
-        endpoint_url: Optional[str] = None,
-        access_key_id: Optional[str] = None,
-        secret_access_key: Optional[str] = None,
-        bucket_name: Optional[str] = None,
-        region: Optional[str] = None,
-        use_ssl: bool = True,
-        max_retries: int = 3,
-        # Dual-bucket parameters
+        # Storage bucket parameters
         storage_endpoint_url: Optional[str] = None,
         storage_access_key_id: Optional[str] = None,
         storage_secret_access_key: Optional[str] = None,
         storage_bucket_name: Optional[str] = None,
         storage_region: Optional[str] = None,
         storage_use_ssl: Optional[bool] = None,
+        # Output bucket parameters
         output_endpoint_url: Optional[str] = None,
         output_access_key_id: Optional[str] = None,
         output_secret_access_key: Optional[str] = None,
         output_bucket_name: Optional[str] = None,
         output_region: Optional[str] = None,
         output_use_ssl: Optional[bool] = None,
+        # Shared parameters
+        max_retries: int = 3,
     ):
         """
-        Initialize S3 client with support for dual-bucket configuration.
-        
-        Dual-bucket mode (recommended):
-            Set S3_STORAGE_* and S3_OUTPUT_* environment variables for 
-            completely independent bucket configurations.
-            
-        Legacy mode (backwards compatible):
-            Set S3_* environment variables for single-bucket configuration.
+        Initialize S3 client with dual-bucket configuration.
         
         Args:
-            endpoint_url: Legacy S3 endpoint URL
-            access_key_id: Legacy S3 access key
-            secret_access_key: Legacy S3 secret key
-            bucket_name: Legacy S3 bucket name
-            region: Legacy S3 region
-            use_ssl: Legacy SSL setting
-            max_retries: Maximum retry attempts for operations
-            
             storage_endpoint_url: Storage bucket endpoint (voices)
             storage_access_key_id: Storage bucket access key
             storage_secret_access_key: Storage bucket secret key
@@ -172,6 +148,8 @@ class S3Client:
             output_region: Output bucket region
             output_use_ssl: Output bucket SSL setting
             
+            max_retries: Maximum retry attempts for operations
+            
         Raises:
             ImportError: If boto3 is not installed
             S3ConfigError: If required configuration is missing
@@ -184,121 +162,64 @@ class S3Client:
         
         self.max_retries = max_retries
         
-        # Check for dual-bucket configuration
-        storage_endpoint = storage_endpoint_url or os.getenv("S3_STORAGE_ENDPOINT_URL")
-        output_endpoint = output_endpoint_url or os.getenv("S3_OUTPUT_ENDPOINT_URL")
+        logger.info("Initializing S3 client in dual-bucket mode")
         
-        self._use_dual_buckets = bool(storage_endpoint and output_endpoint)
+        # Storage bucket configuration
+        self.storage_endpoint_url = storage_endpoint_url or os.getenv("S3_STORAGE_ENDPOINT_URL")
+        self.storage_access_key_id = storage_access_key_id or os.getenv("S3_STORAGE_ACCESS_KEY_ID")
+        self.storage_secret_access_key = storage_secret_access_key or os.getenv("S3_STORAGE_SECRET_ACCESS_KEY")
+        self.storage_bucket_name = storage_bucket_name or os.getenv("S3_STORAGE_BUCKET_NAME")
+        self.storage_region = storage_region or os.getenv("S3_STORAGE_REGION", "us-east-1")
+        self.storage_use_ssl = (
+            storage_use_ssl 
+            if storage_use_ssl is not None 
+            else os.getenv("S3_STORAGE_USE_SSL", "true").lower() in ("true", "1", "yes")
+        )
         
-        if self._use_dual_buckets:
-            # Dual-bucket mode: separate configurations
-            logger.info("Initializing S3 client in dual-bucket mode")
-            
-            # Storage bucket configuration
-            self.storage_endpoint_url = storage_endpoint
-            self.storage_access_key_id = storage_access_key_id or os.getenv("S3_STORAGE_ACCESS_KEY_ID")
-            self.storage_secret_access_key = storage_secret_access_key or os.getenv("S3_STORAGE_SECRET_ACCESS_KEY")
-            self.storage_bucket_name = storage_bucket_name or os.getenv("S3_STORAGE_BUCKET_NAME")
-            self.storage_region = storage_region or os.getenv("S3_STORAGE_REGION", "us-east-1")
-            self.storage_use_ssl = (
-                storage_use_ssl 
-                if storage_use_ssl is not None 
-                else os.getenv("S3_STORAGE_USE_SSL", "true").lower() in ("true", "1", "yes")
-            )
-            
-            # Output bucket configuration
-            self.output_endpoint_url = output_endpoint
-            self.output_access_key_id = output_access_key_id or os.getenv("S3_OUTPUT_ACCESS_KEY_ID")
-            self.output_secret_access_key = output_secret_access_key or os.getenv("S3_OUTPUT_SECRET_ACCESS_KEY")
-            self.output_bucket_name = output_bucket_name or os.getenv("S3_OUTPUT_BUCKET_NAME")
-            self.output_region = output_region or os.getenv("S3_OUTPUT_REGION", "us-east-1")
-            self.output_use_ssl = (
-                output_use_ssl 
-                if output_use_ssl is not None 
-                else os.getenv("S3_OUTPUT_USE_SSL", "true").lower() in ("true", "1", "yes")
-            )
-            
-            # Validate dual-bucket config
-            self._validate_dual_bucket_config()
-            
-            # Create separate clients
-            config = Config(
-                retries={"max_attempts": self.max_retries, "mode": "adaptive"},
-                signature_version="s3v4",
-            )
-            
-            self.storage_client = self._create_client(
-                endpoint_url=self.storage_endpoint_url,
-                access_key_id=self.storage_access_key_id,
-                secret_access_key=self.storage_secret_access_key,
-                region=self.storage_region,
-                use_ssl=self.storage_use_ssl,
-                config=config,
-            )
-            
-            self.output_client = self._create_client(
-                endpoint_url=self.output_endpoint_url,
-                access_key_id=self.output_access_key_id,
-                secret_access_key=self.output_secret_access_key,
-                region=self.output_region,
-                use_ssl=self.output_use_ssl,
-                config=config,
-            )
-            
-            # Legacy compatibility: set default client and bucket
-            self.client = self.storage_client
-            self.bucket_name = self.storage_bucket_name
-            self.endpoint_url = self.storage_endpoint_url
-            self.region = self.storage_region
-            
-            logger.success(f"Dual-bucket mode initialized")
-            logger.info(f"  Storage bucket: {self.storage_bucket_name} ({self.storage_endpoint_url})")
-            logger.info(f"  Output bucket:  {self.output_bucket_name} ({self.output_endpoint_url})")
-            
-        else:
-            # Legacy single-bucket mode
-            logger.info("Initializing S3 client in legacy single-bucket mode")
-            
-            self.endpoint_url = endpoint_url or os.getenv("S3_ENDPOINT_URL")
-            self.access_key_id = access_key_id or os.getenv("S3_ACCESS_KEY_ID")
-            self.secret_access_key = secret_access_key or os.getenv("S3_SECRET_ACCESS_KEY")
-            self.bucket_name = bucket_name or os.getenv("S3_BUCKET_NAME")
-            self.region = region or os.getenv("S3_REGION", "us-east-1")
-            
-            # Parse SSL from environment if not provided
-            if os.getenv("S3_USE_SSL"):
-                use_ssl = os.getenv("S3_USE_SSL", "true").lower() in ("true", "1", "yes")
-            
-            self.use_ssl = use_ssl
-            
-            # Validate legacy config
-            self._validate_legacy_config()
-            
-            # Create single client
-            config = Config(
-                retries={"max_attempts": self.max_retries, "mode": "adaptive"},
-                signature_version="s3v4",
-            )
-            
-            self.client = self._create_client(
-                endpoint_url=self.endpoint_url,
-                access_key_id=self.access_key_id,
-                secret_access_key=self.secret_access_key,
-                region=self.region,
-                use_ssl=self.use_ssl,
-                config=config,
-            )
-            
-            # Set dual-bucket references to same client (backwards compatibility)
-            self.storage_client = self.client
-            self.output_client = self.client
-            self.storage_bucket_name = self.bucket_name
-            self.output_bucket_name = self.bucket_name
-            
-            logger.success(f"Legacy single-bucket mode initialized")
-            logger.info(f"  Bucket: {self.bucket_name} ({self.endpoint_url})")
+        # Output bucket configuration
+        self.output_endpoint_url = output_endpoint_url or os.getenv("S3_OUTPUT_ENDPOINT_URL")
+        self.output_access_key_id = output_access_key_id or os.getenv("S3_OUTPUT_ACCESS_KEY_ID")
+        self.output_secret_access_key = output_secret_access_key or os.getenv("S3_OUTPUT_SECRET_ACCESS_KEY")
+        self.output_bucket_name = output_bucket_name or os.getenv("S3_OUTPUT_BUCKET_NAME")
+        self.output_region = output_region or os.getenv("S3_OUTPUT_REGION", "us-east-1")
+        self.output_use_ssl = (
+            output_use_ssl 
+            if output_use_ssl is not None 
+            else os.getenv("S3_OUTPUT_USE_SSL", "true").lower() in ("true", "1", "yes")
+        )
+        
+        # Validate configuration
+        self._validate_config()
+        
+        # Create separate clients
+        config = Config(
+            retries={"max_attempts": self.max_retries, "mode": "adaptive"},
+            signature_version="s3v4",
+        )
+        
+        self.storage_client = self._create_client(
+            endpoint_url=self.storage_endpoint_url,
+            access_key_id=self.storage_access_key_id,
+            secret_access_key=self.storage_secret_access_key,
+            region=self.storage_region,
+            use_ssl=self.storage_use_ssl,
+            config=config,
+        )
+        
+        self.output_client = self._create_client(
+            endpoint_url=self.output_endpoint_url,
+            access_key_id=self.output_access_key_id,
+            secret_access_key=self.output_secret_access_key,
+            region=self.output_region,
+            use_ssl=self.output_use_ssl,
+            config=config,
+        )
+        
+        logger.success(f"Dual-bucket mode initialized")
+        logger.info(f"  Storage bucket: {self.storage_bucket_name} ({self.storage_endpoint_url})")
+        logger.info(f"  Output bucket:  {self.output_bucket_name} ({self.output_endpoint_url})")
     
-    def _validate_dual_bucket_config(self) -> None:
+    def _validate_config(self) -> None:
         """Validate required dual-bucket S3 configuration."""
         missing_storage = []
         missing_output = []
@@ -328,27 +249,8 @@ class S3Client:
         if missing:
             raise S3ConfigError(
                 f"Missing required dual-bucket S3 configuration: {', '.join(missing)}. "
-                "For dual-bucket mode, set all S3_STORAGE_* and S3_OUTPUT_* variables. "
-                "For legacy mode, use S3_* variables instead."
-            )
-    
-    def _validate_legacy_config(self) -> None:
-        """Validate required legacy S3 configuration."""
-        missing = []
-        
-        if not self.endpoint_url:
-            missing.append("S3_ENDPOINT_URL")
-        if not self.access_key_id:
-            missing.append("S3_ACCESS_KEY_ID")
-        if not self.secret_access_key:
-            missing.append("S3_SECRET_ACCESS_KEY")
-        if not self.bucket_name:
-            missing.append("S3_BUCKET_NAME")
-        
-        if missing:
-            raise S3ConfigError(
-                f"Missing required S3 configuration: {', '.join(missing)}. "
-                "Set environment variables or pass as parameters."
+                "Set all S3_STORAGE_* and S3_OUTPUT_* environment variables. "
+                "See .env.example or DUAL_BUCKET_GUIDE.md for configuration template."
             )
     
     @staticmethod
@@ -373,13 +275,19 @@ class S3Client:
             
         Returns:
             Tuple of (client, bucket_name)
+            
+        Raises:
+            ValueError: If bucket_type is invalid
         """
         if bucket_type == "storage":
             return self.storage_client, self.storage_bucket_name
         elif bucket_type == "output":
             return self.output_client, self.output_bucket_name
         else:
-            raise ValueError(f"Invalid bucket type: {bucket_type}. Use 'storage' or 'output'.")
+            raise ValueError(
+                f"Invalid bucket type: {bucket_type}. "
+                f"Must be 'storage' or 'output'."
+            )
     
     def upload_file(
         self,
