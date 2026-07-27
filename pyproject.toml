@@ -51,6 +51,7 @@ dependencies = [
     # RabbitMQ worker (for distributed task queue)
     "pika",
     "python-multipart",
+    "python-dotenv",
     
     # S3 storage (for audio file persistence)
     "boto3>=1.28.0",

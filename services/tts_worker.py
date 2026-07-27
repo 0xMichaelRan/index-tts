@@ -13,8 +13,17 @@ import platform
 import logging
 from datetime import datetime
 from typing import Optional, Dict, Any
+from urllib.parse import urlparse
+from pathlib import Path
 
+import pika
+from dotenv import load_dotenv
 from indextts.infer import create_tts_engine
+
+# Load environment variables from .env file
+env_file = Path(__file__).parent.parent / ".env"
+if env_file.exists():
+    load_dotenv(str(env_file))
 
 # Configure logging
 logging.basicConfig(
@@ -79,24 +88,52 @@ class IndexTTSWorker:
 
     def connect_rabbitmq(self):
         """
-        Connect to RabbitMQ.
-        TODO: Implement actual RabbitMQ connection using pika
+        Connect to RabbitMQ using the RABBITMQ_URL from environment.
+        Supports CloudAMQP and standard RabbitMQ URLs.
         """
-        logger.info(
-            f"[PLACEHOLDER] Connecting to RabbitMQ at {self.rabbitmq_host}:{self.rabbitmq_port}"
-        )
-        # self.connection = pika.BlockingConnection(...)
-        # self.channel = self.connection.channel()
-        # self.channel.queue_declare(queue="tts_jobs", durable=True)
+        try:
+            rabbitmq_url = os.getenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
+            logger.info(f"Connecting to RabbitMQ: {rabbitmq_url.split('@')[1] if '@' in rabbitmq_url else 'local'}")
+
+            # Parse the URL manually to extract components
+            parsed = urlparse(rabbitmq_url)
+            
+            credentials = pika.PlainCredentials(
+                username=parsed.username or "guest",
+                password=parsed.password or "guest",
+            )
+            
+            connection_params = pika.ConnectionParameters(
+                host=parsed.hostname or "localhost",
+                port=parsed.port or 5672,
+                virtual_host=parsed.path.lstrip("/") or "/",
+                credentials=credentials,
+                connection_attempts=3,
+                retry_delay=2,
+                heartbeat=600,
+                blocked_connection_timeout=300,
+            )
+
+            self.connection = pika.BlockingConnection([connection_params])
+            self.channel = self.connection.channel()
+            
+            # Declare the queue (idempotent if it already exists)
+            self.channel.queue_declare(queue="tts_jobs", durable=True)
+            
+            logger.info("✓ Connected to RabbitMQ")
+
+        except Exception as e:
+            logger.error(f"✗ Failed to connect to RabbitMQ: {str(e)}")
+            raise
 
     def disconnect_rabbitmq(self):
-        """
-        Disconnect from RabbitMQ.
-        TODO: Implement actual RabbitMQ disconnection
-        """
-        logger.info("[PLACEHOLDER] Disconnecting from RabbitMQ")
-        # if self.connection:
-        #     self.connection.close()
+        """Safely close RabbitMQ connection."""
+        try:
+            if self.connection and not self.connection.is_closed:
+                self.connection.close()
+                logger.info("✓ Disconnected from RabbitMQ")
+        except Exception as e:
+            logger.error(f"Error disconnecting from RabbitMQ: {str(e)}")
 
     def process_job(self, job_data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -217,17 +254,21 @@ class IndexTTSWorker:
 
     def publish_result(self, result: Dict[str, Any]):
         """
-        Publish job result back to RabbitMQ.
-        TODO: Implement actual result publishing
+        Publish job result back to RabbitMQ tts_results queue.
         """
-        logger.info(f"[PLACEHOLDER] Publishing result for job {result.get('job_id')}")
-        logger.info(f"Result: {json.dumps(result, indent=2)}")
-        # In real implementation:
-        # self.channel.basic_publish(
-        #     exchange="",
-        #     routing_key="tts_results",
-        #     body=json.dumps(result),
-        # )
+        try:
+            self.channel.basic_publish(
+                exchange="",
+                routing_key="tts_results",
+                body=json.dumps(result),
+                properties=pika.BasicProperties(
+                    delivery_mode=pika.DeliveryMode.Persistent,
+                    content_type="application/json",
+                ),
+            )
+            logger.info(f"✓ Published result for job {result.get('job_id')}")
+        except Exception as e:
+            logger.error(f"✗ Failed to publish result: {str(e)}")
 
     def start(self):
         """Start the worker and begin consuming jobs from RabbitMQ."""
@@ -239,26 +280,42 @@ class IndexTTSWorker:
                 """Handle incoming job message."""
                 try:
                     job_data = json.loads(body)
-                    logger.info(f"Received job: {job_data.get('job_id')}")
+                    job_id = job_data.get("job_id")
+                    logger.info(f"[JOB {job_id}] Received from queue")
 
                     result = self.process_job(job_data)
                     self.publish_result(result)
 
-                    # Acknowledge message
-                    # ch.basic_ack(delivery_tag=method.delivery_tag)
+                    # Acknowledge message only after successful processing
+                    ch.basic_ack(delivery_tag=method.delivery_tag)
+                    logger.info(f"[JOB {job_id}] Acknowledged")
+                except json.JSONDecodeError as e:
+                    logger.error(f"Invalid JSON in message: {str(e)}")
+                    ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
                 except Exception as e:
-                    logger.error(f"Error in callback: {str(e)}")
-                    # ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
+                    logger.error(f"Error processing job: {str(e)}")
+                    ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
 
-            logger.info(
-                "[PLACEHOLDER] Waiting for jobs... (consumer loop not implemented)"
+            # Set QoS to process one message at a time
+            self.channel.basic_qos(prefetch_count=1)
+
+            # Set up consumer
+            self.channel.basic_consume(
+                queue="tts_jobs",
+                on_message_callback=callback,
+                auto_ack=False,
             )
-            # In real implementation:
-            # self.channel.basic_consume(queue="tts_jobs", on_message_callback=callback)
-            # self.channel.start_consuming()
+
+            logger.info("✓ Worker ready and listening for jobs...")
+            logger.info("Press CTRL+C to stop")
+            
+            # Start consuming
+            self.channel.start_consuming()
 
         except KeyboardInterrupt:
-            logger.info("Shutting down worker...")
+            logger.info("\nShutting down worker...")
+        except Exception as e:
+            logger.error(f"Fatal error: {str(e)}")
         finally:
             self.disconnect_rabbitmq()
 
