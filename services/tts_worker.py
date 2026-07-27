@@ -57,7 +57,7 @@ class IndexTTSWorker:
         rabbitmq_user: str = "guest",
         rabbitmq_password: str = "guest",
         s3_storage_bucket: str = "studio",
-        s3_output_bucket: str = "tts-output",
+        s3_output_bucket: str = "ttsoutput",
         s3_region: str = "us-east-1",
     ):
         """
@@ -760,7 +760,7 @@ if __name__ == "__main__":
         rabbitmq_user=os.getenv("RABBITMQ_USER", "guest"),
         rabbitmq_password=os.getenv("RABBITMQ_PASSWORD", "guest"),
         s3_storage_bucket=os.getenv("S3_BUCKET_NAME", "studio"),
-        s3_output_bucket=os.getenv("S3_OUTPUT_BUCKET", "tts-output"),
+        s3_output_bucket=os.getenv("S3_OUTPUT_BUCKET", "ttsoutput"),
         s3_region=os.getenv("S3_REGION", "us-east-1"),
     )
     worker.start()
