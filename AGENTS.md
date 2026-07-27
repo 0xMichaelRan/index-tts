@@ -65,12 +65,9 @@ Storage Bucket (e.g., "voice-library"):
 │   └── {voice_id}.json              # Voice metadata
 
 Output Bucket (e.g., "tts-output"):
-├── studio/
-│   ├── {job_id}.wav                 # Worker uploads long-term TTS results
-│   └── {job_id}.json                # Job metadata
-└── playground/
-    ├── {job_id}.wav                 # Worker uploads temporary TTS (24h retention)
-    └── {job_id}.json                # Job metadata
+├── tts-audio/
+│   ├── studio/{job_id}.mp3          # Worker uploads studio TTS results (long-term)
+│   └── playground/{job_id}.mp3      # Worker uploads playground TTS (temporary, 30d retention)
 ```
 
 **Note**: Both buckets are logged clearly in startup summary.
@@ -209,7 +206,7 @@ client.download_file(
 # Upload to output bucket (TTS results)
 client.upload_file(
     local_path="/tmp/audio.wav",
-    remote_path="tts-output/studio/job_123.wav",
+    remote_path="tts-audio/studio/job_123.mp3",
     bucket_type="output",  # Specify which bucket
     metadata={"job_id": "job_123"}
 )
@@ -238,7 +235,7 @@ uploader = IdempotentUploader(s3_client)
 s3_path = uploader.upload_with_retry(
     job_id="job_123",
     local_path="/tmp/audio.wav",
-    remote_path="tts-output/studio/job_123.wav",
+    remote_path="tts-audio/studio/job_123.mp3",
     verify_integrity=True
 )
 ```

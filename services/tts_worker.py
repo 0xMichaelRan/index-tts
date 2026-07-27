@@ -282,16 +282,16 @@ class IndexTTSWorker:
             job_data: Job message containing:
                 - job_id: Unique job identifier
                 - text: Text to synthesize
-                - audio_prompt_path: S3 path to audio prompt file
+                - audio_prompt_path: S3 path to audio prompt file (e.g., "audio-prompts/voice_001.wav")
                 - language: Language code
                 - job_type: "studio" or "playground"
-                - output_path_template: S3 output path template
+                - output_path_template: S3 output path template (e.g., "tts-audio/studio/{job_id}.mp3")
 
         Returns:
             Result dictionary with:
                 - job_id: Original job ID
                 - status: "completed" or "failed"
-                - audio_path: S3 path to generated audio (if successful)
+                - audio_path: S3 path to generated audio (e.g., "tts-audio/studio/123.mp3")
                 - audio_duration_seconds: Duration of synthesized audio
                 - synthesis_duration_seconds: Time taken for synthesis
                 - error_code: Error code (if failed)

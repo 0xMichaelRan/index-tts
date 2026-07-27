@@ -189,7 +189,7 @@ class TestLanguageSupport:
             "audio_prompt_path": "audio-prompts/voice.wav",
             "language": "zh",  # Chinese
             "job_type": "studio",
-            "output_path_template": "tts-output/studio/{job_id}.wav",
+            "output_path_template": "tts-audio/studio/{job_id}.mp3",
         }
         
         result = worker.process_job(job_data)
@@ -288,7 +288,7 @@ class TestJobProcessingFlow:
             "audio_prompt_path": "audio-prompts/voice.wav",
             "language": "en",
             "job_type": "studio",
-            "output_path_template": "tts-output/studio/{job_id}.wav",
+            "output_path_template": "tts-audio/studio/{job_id}.mp3",
         }
         
         result = worker.process_job(job_data)
@@ -337,7 +337,7 @@ class TestJobProcessingFlow:
             "audio_prompt_path": "audio-prompts/voice.wav",
             "language": "en",
             "job_type": "studio",
-            "output_path_template": "tts-output/studio/{job_id}.wav",
+            "output_path_template": "tts-audio/studio/{job_id}.mp3",
         }
         
         with patch('services.tts_worker.time.sleep'):  # Speed up test
@@ -369,7 +369,7 @@ class TestCircuitBreakerIntegration:
             "audio_prompt_path": "audio-prompts/voice.wav",
             "language": "en",
             "job_type": "studio",
-            "output_path_template": "tts-output/studio/{job_id}.wav",
+            "output_path_template": "tts-audio/studio/{job_id}.mp3",
         }
         
         # Process job multiple times to trigger circuit breaker

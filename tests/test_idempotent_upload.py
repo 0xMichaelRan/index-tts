@@ -169,7 +169,7 @@ class TestIdempotentUploader:
             }
         }
         
-        result = uploader._check_existing_upload("job-123", "tts-output/job-123.wav", bucket_type="output")
+        result = uploader._check_existing_upload("job-123", "tts-audio/studio/job-123.mp3", bucket_type="output")
         
         assert result is not None
         assert result.job_id == "job-123"
@@ -185,7 +185,7 @@ class TestIdempotentUploader:
             }
         }
         
-        result = uploader._check_existing_upload("job-123", "tts-output/file.wav", bucket_type="output")
+        result = uploader._check_existing_upload("job-123", "tts-audio/studio/file.mp3", bucket_type="output")
         
         assert result is None
     
@@ -199,7 +199,7 @@ class TestIdempotentUploader:
             }
         }
         
-        result = uploader._check_existing_upload("job-123", "tts-output/file.wav", bucket_type="output")
+        result = uploader._check_existing_upload("job-123", "tts-audio/studio/file.mp3", bucket_type="output")
         
         assert result is None
     
@@ -208,7 +208,7 @@ class TestIdempotentUploader:
         mock_s3_client.file_exists.return_value = True
         mock_s3_client.output_client.head_object.side_effect = Exception("Access denied")
         
-        result = uploader._check_existing_upload("job-123", "tts-output/file.wav", bucket_type="output")
+        result = uploader._check_existing_upload("job-123", "tts-audio/studio/file.mp3", bucket_type="output")
         
         assert result is None
     
@@ -219,10 +219,10 @@ class TestIdempotentUploader:
         result = uploader.upload_with_retry(
             job_id="job-123",
             local_path=temp_audio_file,
-            remote_path="tts-output/job-123.wav",
+            remote_path="tts-audio/studio/job-123.mp3",
         )
         
-        assert result == "tts-output/job-123.wav"
+        assert result == "tts-audio/studio/job-123.mp3"
         mock_s3_client.upload_audio.assert_called_once()
     
     def test_upload_with_retry_skips_existing(self, uploader, mock_s3_client, temp_audio_file):
@@ -237,10 +237,10 @@ class TestIdempotentUploader:
         result = uploader.upload_with_retry(
             job_id="job-123",
             local_path=temp_audio_file,
-            remote_path="tts-output/job-123.wav",
+            remote_path="tts-audio/studio/job-123.mp3",
         )
         
-        assert result == "tts-output/job-123.wav"
+        assert result == "tts-audio/studio/job-123.mp3"
         mock_s3_client.upload_audio.assert_not_called()  # Should not upload
     
     def test_upload_with_retry_file_not_found(self, uploader):
@@ -249,7 +249,7 @@ class TestIdempotentUploader:
             uploader.upload_with_retry(
                 job_id="job-123",
                 local_path="/nonexistent/file.wav",
-                remote_path="tts-output/job-123.wav",
+                remote_path="tts-audio/studio/job-123.mp3",
             )
     
     def test_upload_with_retry_exponential_backoff(self, uploader, mock_s3_client, temp_audio_file):
@@ -266,11 +266,11 @@ class TestIdempotentUploader:
             result = uploader.upload_with_retry(
                 job_id="job-123",
                 local_path=temp_audio_file,
-                remote_path="tts-output/job-123.wav",
+                remote_path="tts-audio/studio/job-123.mp3",
                 verify_integrity=False,
             )
         
-        assert result == "tts-output/job-123.wav"
+        assert result == "tts-audio/studio/job-123.mp3"
         
         # Verify exponential backoff: 2^1=2, 2^2=4
         mock_sleep.assert_has_calls([call(2), call(4)])
@@ -286,7 +286,7 @@ class TestIdempotentUploader:
                 uploader.upload_with_retry(
                     job_id="job-123",
                     local_path=temp_audio_file,
-                    remote_path="tts-output/job-123.wav",
+                    remote_path="tts-audio/studio/job-123.mp3",
                     verify_integrity=False,
                 )
         
@@ -301,14 +301,14 @@ class TestIdempotentUploader:
             uploader.upload_with_retry(
                 job_id="job-123",
                 local_path=temp_audio_file,
-                remote_path="tts-output/job-123.wav",
+                remote_path="tts-audio/studio/job-123.mp3",
             )
     
     def test_verify_upload_success(self, uploader, mock_s3_client):
         """Test successful upload verification."""
         mock_s3_client.file_exists.return_value = True
         
-        result = uploader.verify_upload("job-123", "tts-output/job-123.wav")
+        result = uploader.verify_upload("job-123", "tts-audio/studio/job-123.mp3")
         
         assert result is True
     
@@ -316,7 +316,7 @@ class TestIdempotentUploader:
         """Test verification failure when file not found."""
         mock_s3_client.file_exists.return_value = False
         
-        result = uploader.verify_upload("job-123", "tts-output/job-123.wav")
+        result = uploader.verify_upload("job-123", "tts-audio/studio/job-123.mp3")
         
         assert result is False
     
@@ -324,7 +324,7 @@ class TestIdempotentUploader:
         """Test verification error handling."""
         mock_s3_client.file_exists.side_effect = Exception("Access denied")
         
-        result = uploader.verify_upload("job-123", "tts-output/job-123.wav")
+        result = uploader.verify_upload("job-123", "tts-audio/studio/job-123.mp3")
         
         assert result is False
     
@@ -332,7 +332,7 @@ class TestIdempotentUploader:
         """Test marking upload as complete."""
         mock_s3_client.file_exists.return_value = True
         
-        result = uploader.mark_upload_complete("job-123", "tts-output/job-123.wav")
+        result = uploader.mark_upload_complete("job-123", "tts-audio/studio/job-123.mp3")
         
         assert result is True
     
@@ -340,7 +340,7 @@ class TestIdempotentUploader:
         """Test marking non-existent file as complete."""
         mock_s3_client.file_exists.return_value = False
         
-        result = uploader.mark_upload_complete("job-123", "tts-output/job-123.wav")
+        result = uploader.mark_upload_complete("job-123", "tts-audio/studio/job-123.mp3")
         
         assert result is False
     
@@ -350,12 +350,12 @@ class TestIdempotentUploader:
         
         recovery_data = uploader.handle_partial_failure(
             job_id="job-123",
-            remote_path="tts-output/job-123.wav",
+            remote_path="tts-audio/studio/job-123.mp3",
             error=error,
         )
         
         assert recovery_data["job_id"] == "job-123"
-        assert recovery_data["remote_path"] == "tts-output/job-123.wav"
+        assert recovery_data["remote_path"] == "tts-audio/studio/job-123.mp3"
         assert recovery_data["s3_status"] == "uploaded"
         assert recovery_data["rabbitmq_status"] == "failed"
         assert "recovery_steps" in recovery_data
@@ -368,11 +368,11 @@ class TestIdempotentUploader:
         result = uploader.upload_with_retry(
             job_id="job-123",
             local_path=temp_audio_file,
-            remote_path="tts-output/job-123.wav",
+            remote_path="tts-audio/studio/job-123.mp3",
             verify_integrity=True,
         )
         
-        assert result == "tts-output/job-123.wav"
+        assert result == "tts-audio/studio/job-123.mp3"
         
         # Verify metadata includes file hash
         call_args = mock_s3_client.upload_audio.call_args
@@ -412,20 +412,20 @@ class TestIdempotentUploaderIntegration:
             result = uploader.upload_with_retry(
                 job_id="job-123",
                 local_path=temp_path,
-                remote_path="tts-output/job-123.wav",
+                remote_path="tts-audio/studio/job-123.mp3",
                 bucket_type="output",
             )
             
-            assert result == "tts-output/job-123.wav"
+            assert result == "tts-audio/studio/job-123.mp3"
             
             # Step 2: Verify upload
             mock_s3_client.file_exists.return_value = True
-            verified = uploader.verify_upload("job-123", "tts-output/job-123.wav")
+            verified = uploader.verify_upload("job-123", "tts-audio/studio/job-123.mp3")
             
             assert verified is True
             
             # Step 3: Mark as complete
-            completed = uploader.mark_upload_complete("job-123", "tts-output/job-123.wav")
+            completed = uploader.mark_upload_complete("job-123", "tts-audio/studio/job-123.mp3")
             
             assert completed is True
             
@@ -461,11 +461,11 @@ class TestIdempotentUploaderIntegration:
             result1 = uploader.upload_with_retry(
                 job_id="job-123",
                 local_path=temp_path,
-                remote_path="tts-output/job-123.wav",
+                remote_path="tts-audio/studio/job-123.mp3",
                 bucket_type="output",
             )
             
-            assert result1 == "tts-output/job-123.wav"
+            assert result1 == "tts-audio/studio/job-123.mp3"
             assert mock_s3_client.upload_audio.call_count == 1
             
             # Second upload - file already exists (idempotent)
@@ -478,11 +478,11 @@ class TestIdempotentUploaderIntegration:
             result2 = uploader.upload_with_retry(
                 job_id="job-123",
                 local_path=temp_path,
-                remote_path="tts-output/job-123.wav",
+                remote_path="tts-audio/studio/job-123.mp3",
                 bucket_type="output",
             )
             
-            assert result2 == "tts-output/job-123.wav"
+            assert result2 == "tts-audio/studio/job-123.mp3"
             # Should not have called upload again
             assert mock_s3_client.upload_audio.call_count == 1
             
