@@ -403,7 +403,7 @@ class IndexTTSWorker:
         audio_prompt_path: str,
     ) -> str:
         """
-        Download audio prompt from S3 with retry logic.
+        Download audio prompt from S3 storage bucket with retry logic.
         
         Args:
             job_id: Job identifier
@@ -424,10 +424,11 @@ class IndexTTSWorker:
         
         local_path = os.path.join(temp_dir, os.path.basename(audio_prompt_path))
         
-        # Download with S3 client retry logic
+        # Download from storage bucket (where voices are stored)
         self.s3_client.download_file(
             remote_path=audio_prompt_path,
             local_path=local_path,
+            bucket_type="storage",
             max_retries=3,
         )
         

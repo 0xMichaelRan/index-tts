@@ -126,6 +126,7 @@ class IdempotentUploader:
         self,
         job_id: str,
         remote_path: str,
+        bucket_type: str = "output",
     ) -> Optional[UploadMetadata]:
         """
         Check if file already uploaded with matching job_id.
@@ -138,20 +139,24 @@ class IdempotentUploader:
         Args:
             job_id: Job identifier to match
             remote_path: S3 path to check
+            bucket_type: "storage" or "output" bucket
             
         Returns:
             UploadMetadata if file exists and matches, None otherwise
         """
         try:
             # Check if file exists
-            if not self.s3_client.file_exists(remote_path):
+            if not self.s3_client.file_exists(remote_path, bucket_type=bucket_type):
                 logger.debug(f"[JOB {job_id}] No existing file at {remote_path}")
                 return None
             
+            # Get appropriate client and bucket
+            client, bucket_name = self.s3_client._get_client_and_bucket(bucket_type)
+            
             # Try to fetch metadata from S3
             try:
-                response = self.s3_client.client.head_object(
-                    Bucket=self.s3_client.bucket_name,
+                response = client.head_object(
+                    Bucket=bucket_name,
                     Key=remote_path,
                 )
                 
@@ -196,6 +201,7 @@ class IdempotentUploader:
         job_id: str,
         local_path: str,
         remote_path: str,
+        bucket_type: str = "output",
         verify_integrity: bool = True,
     ) -> str:
         """
@@ -212,6 +218,7 @@ class IdempotentUploader:
             job_id: Unique job identifier
             local_path: Path to local file to upload
             remote_path: S3 destination path
+            bucket_type: "storage" or "output" (default: "output" for TTS results)
             verify_integrity: Check file hash for integrity
             
         Returns:
@@ -227,7 +234,7 @@ class IdempotentUploader:
         logger.info(f"[JOB {job_id}] Starting idempotent upload to {remote_path}")
         
         # Step 1: Check for existing upload (idempotent retry)
-        existing = self._check_existing_upload(job_id, remote_path)
+        existing = self._check_existing_upload(job_id, remote_path, bucket_type=bucket_type)
         if existing:
             logger.info(
                 f"[JOB {job_id}] Skipping upload - file already exists in S3 "
@@ -256,10 +263,11 @@ class IdempotentUploader:
                     retry_count=retry_count,
                 )
                 
-                # Upload file
+                # Upload file to output bucket (TTS results)
                 self.s3_client.upload_audio(
                     local_path=local_path,
                     remote_path=remote_path,
+                    bucket_type="output",
                     job_id=job_id,
                     metadata=metadata.to_dict(),
                 )

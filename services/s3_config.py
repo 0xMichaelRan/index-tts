@@ -104,14 +104,20 @@ class S3ConfigError(Exception):
 
 class S3Client:
     """
-    S3-compatible storage client for Supabase Storage.
+    Dual-bucket S3-compatible storage client.
     
-    Provides methods for uploading, downloading, and managing files in S3-compatible
-    storage with automatic retry logic and connection pooling.
+    Supports completely independent configurations for storage bucket (voices) 
+    and output bucket (TTS results), including separate endpoints, credentials, 
+    regions, and SSL settings.
+    
+    Configuration priority:
+    1. Dual-bucket mode (if S3_STORAGE_* and S3_OUTPUT_* env vars are set)
+    2. Legacy single-bucket mode (if S3_* env vars are set)
     """
     
     def __init__(
         self,
+        # Legacy single-bucket parameters (backwards compatibility)
         endpoint_url: Optional[str] = None,
         access_key_id: Optional[str] = None,
         secret_access_key: Optional[str] = None,
@@ -119,18 +125,52 @@ class S3Client:
         region: Optional[str] = None,
         use_ssl: bool = True,
         max_retries: int = 3,
+        # Dual-bucket parameters
+        storage_endpoint_url: Optional[str] = None,
+        storage_access_key_id: Optional[str] = None,
+        storage_secret_access_key: Optional[str] = None,
+        storage_bucket_name: Optional[str] = None,
+        storage_region: Optional[str] = None,
+        storage_use_ssl: Optional[bool] = None,
+        output_endpoint_url: Optional[str] = None,
+        output_access_key_id: Optional[str] = None,
+        output_secret_access_key: Optional[str] = None,
+        output_bucket_name: Optional[str] = None,
+        output_region: Optional[str] = None,
+        output_use_ssl: Optional[bool] = None,
     ):
         """
-        Initialize S3 client with Supabase Storage configuration.
+        Initialize S3 client with support for dual-bucket configuration.
+        
+        Dual-bucket mode (recommended):
+            Set S3_STORAGE_* and S3_OUTPUT_* environment variables for 
+            completely independent bucket configurations.
+            
+        Legacy mode (backwards compatible):
+            Set S3_* environment variables for single-bucket configuration.
         
         Args:
-            endpoint_url: S3 endpoint URL (default: from S3_ENDPOINT_URL env var)
-            access_key_id: S3 access key (default: from S3_ACCESS_KEY_ID env var)
-            secret_access_key: S3 secret key (default: from S3_SECRET_ACCESS_KEY env var)
-            bucket_name: S3 bucket name (default: from S3_BUCKET_NAME env var)
-            region: S3 region (default: from S3_REGION env var)
-            use_ssl: Use SSL for connections (default: from S3_USE_SSL env var or True)
-            max_retries: Maximum number of retry attempts for operations
+            endpoint_url: Legacy S3 endpoint URL
+            access_key_id: Legacy S3 access key
+            secret_access_key: Legacy S3 secret key
+            bucket_name: Legacy S3 bucket name
+            region: Legacy S3 region
+            use_ssl: Legacy SSL setting
+            max_retries: Maximum retry attempts for operations
+            
+            storage_endpoint_url: Storage bucket endpoint (voices)
+            storage_access_key_id: Storage bucket access key
+            storage_secret_access_key: Storage bucket secret key
+            storage_bucket_name: Storage bucket name
+            storage_region: Storage bucket region
+            storage_use_ssl: Storage bucket SSL setting
+            
+            output_endpoint_url: Output bucket endpoint (TTS results)
+            output_access_key_id: Output bucket access key
+            output_secret_access_key: Output bucket secret key
+            output_bucket_name: Output bucket name
+            output_region: Output bucket region
+            output_use_ssl: Output bucket SSL setting
             
         Raises:
             ImportError: If boto3 is not installed
@@ -142,30 +182,158 @@ class S3Client:
                 "Install it with: pip install boto3"
             )
         
-        # Load configuration from parameters or environment
-        self.endpoint_url = endpoint_url or os.getenv("S3_ENDPOINT_URL")
-        self.access_key_id = access_key_id or os.getenv("S3_ACCESS_KEY_ID")
-        self.secret_access_key = secret_access_key or os.getenv("S3_SECRET_ACCESS_KEY")
-        self.bucket_name = bucket_name or os.getenv("S3_BUCKET_NAME")
-        self.region = region or os.getenv("S3_REGION", "us-east-1")
-        
-        # Parse SSL from environment if not provided
-        if use_ssl and os.getenv("S3_USE_SSL"):
-            use_ssl = os.getenv("S3_USE_SSL", "true").lower() in ("true", "1", "yes")
-        
-        self.use_ssl = use_ssl
         self.max_retries = max_retries
         
-        # Validate required configuration
-        self._validate_config()
+        # Check for dual-bucket configuration
+        storage_endpoint = storage_endpoint_url or os.getenv("S3_STORAGE_ENDPOINT_URL")
+        output_endpoint = output_endpoint_url or os.getenv("S3_OUTPUT_ENDPOINT_URL")
         
-        # Initialize boto3 client with retry configuration
-        self.client = self._create_client()
+        self._use_dual_buckets = bool(storage_endpoint and output_endpoint)
         
-        logger.info(f"S3 client initialized (endpoint: {self.endpoint_url})")
+        if self._use_dual_buckets:
+            # Dual-bucket mode: separate configurations
+            logger.info("Initializing S3 client in dual-bucket mode")
+            
+            # Storage bucket configuration
+            self.storage_endpoint_url = storage_endpoint
+            self.storage_access_key_id = storage_access_key_id or os.getenv("S3_STORAGE_ACCESS_KEY_ID")
+            self.storage_secret_access_key = storage_secret_access_key or os.getenv("S3_STORAGE_SECRET_ACCESS_KEY")
+            self.storage_bucket_name = storage_bucket_name or os.getenv("S3_STORAGE_BUCKET_NAME")
+            self.storage_region = storage_region or os.getenv("S3_STORAGE_REGION", "us-east-1")
+            self.storage_use_ssl = (
+                storage_use_ssl 
+                if storage_use_ssl is not None 
+                else os.getenv("S3_STORAGE_USE_SSL", "true").lower() in ("true", "1", "yes")
+            )
+            
+            # Output bucket configuration
+            self.output_endpoint_url = output_endpoint
+            self.output_access_key_id = output_access_key_id or os.getenv("S3_OUTPUT_ACCESS_KEY_ID")
+            self.output_secret_access_key = output_secret_access_key or os.getenv("S3_OUTPUT_SECRET_ACCESS_KEY")
+            self.output_bucket_name = output_bucket_name or os.getenv("S3_OUTPUT_BUCKET_NAME")
+            self.output_region = output_region or os.getenv("S3_OUTPUT_REGION", "us-east-1")
+            self.output_use_ssl = (
+                output_use_ssl 
+                if output_use_ssl is not None 
+                else os.getenv("S3_OUTPUT_USE_SSL", "true").lower() in ("true", "1", "yes")
+            )
+            
+            # Validate dual-bucket config
+            self._validate_dual_bucket_config()
+            
+            # Create separate clients
+            config = Config(
+                retries={"max_attempts": self.max_retries, "mode": "adaptive"},
+                signature_version="s3v4",
+            )
+            
+            self.storage_client = self._create_client(
+                endpoint_url=self.storage_endpoint_url,
+                access_key_id=self.storage_access_key_id,
+                secret_access_key=self.storage_secret_access_key,
+                region=self.storage_region,
+                use_ssl=self.storage_use_ssl,
+                config=config,
+            )
+            
+            self.output_client = self._create_client(
+                endpoint_url=self.output_endpoint_url,
+                access_key_id=self.output_access_key_id,
+                secret_access_key=self.output_secret_access_key,
+                region=self.output_region,
+                use_ssl=self.output_use_ssl,
+                config=config,
+            )
+            
+            # Legacy compatibility: set default client and bucket
+            self.client = self.storage_client
+            self.bucket_name = self.storage_bucket_name
+            self.endpoint_url = self.storage_endpoint_url
+            self.region = self.storage_region
+            
+            logger.success(f"Dual-bucket mode initialized")
+            logger.info(f"  Storage bucket: {self.storage_bucket_name} ({self.storage_endpoint_url})")
+            logger.info(f"  Output bucket:  {self.output_bucket_name} ({self.output_endpoint_url})")
+            
+        else:
+            # Legacy single-bucket mode
+            logger.info("Initializing S3 client in legacy single-bucket mode")
+            
+            self.endpoint_url = endpoint_url or os.getenv("S3_ENDPOINT_URL")
+            self.access_key_id = access_key_id or os.getenv("S3_ACCESS_KEY_ID")
+            self.secret_access_key = secret_access_key or os.getenv("S3_SECRET_ACCESS_KEY")
+            self.bucket_name = bucket_name or os.getenv("S3_BUCKET_NAME")
+            self.region = region or os.getenv("S3_REGION", "us-east-1")
+            
+            # Parse SSL from environment if not provided
+            if os.getenv("S3_USE_SSL"):
+                use_ssl = os.getenv("S3_USE_SSL", "true").lower() in ("true", "1", "yes")
+            
+            self.use_ssl = use_ssl
+            
+            # Validate legacy config
+            self._validate_legacy_config()
+            
+            # Create single client
+            config = Config(
+                retries={"max_attempts": self.max_retries, "mode": "adaptive"},
+                signature_version="s3v4",
+            )
+            
+            self.client = self._create_client(
+                endpoint_url=self.endpoint_url,
+                access_key_id=self.access_key_id,
+                secret_access_key=self.secret_access_key,
+                region=self.region,
+                use_ssl=self.use_ssl,
+                config=config,
+            )
+            
+            # Set dual-bucket references to same client (backwards compatibility)
+            self.storage_client = self.client
+            self.output_client = self.client
+            self.storage_bucket_name = self.bucket_name
+            self.output_bucket_name = self.bucket_name
+            
+            logger.success(f"Legacy single-bucket mode initialized")
+            logger.info(f"  Bucket: {self.bucket_name} ({self.endpoint_url})")
     
-    def _validate_config(self) -> None:
-        """Validate required S3 configuration."""
+    def _validate_dual_bucket_config(self) -> None:
+        """Validate required dual-bucket S3 configuration."""
+        missing_storage = []
+        missing_output = []
+        
+        # Storage bucket validation
+        if not self.storage_endpoint_url:
+            missing_storage.append("S3_STORAGE_ENDPOINT_URL")
+        if not self.storage_access_key_id:
+            missing_storage.append("S3_STORAGE_ACCESS_KEY_ID")
+        if not self.storage_secret_access_key:
+            missing_storage.append("S3_STORAGE_SECRET_ACCESS_KEY")
+        if not self.storage_bucket_name:
+            missing_storage.append("S3_STORAGE_BUCKET_NAME")
+        
+        # Output bucket validation
+        if not self.output_endpoint_url:
+            missing_output.append("S3_OUTPUT_ENDPOINT_URL")
+        if not self.output_access_key_id:
+            missing_output.append("S3_OUTPUT_ACCESS_KEY_ID")
+        if not self.output_secret_access_key:
+            missing_output.append("S3_OUTPUT_SECRET_ACCESS_KEY")
+        if not self.output_bucket_name:
+            missing_output.append("S3_OUTPUT_BUCKET_NAME")
+        
+        missing = missing_storage + missing_output
+        
+        if missing:
+            raise S3ConfigError(
+                f"Missing required dual-bucket S3 configuration: {', '.join(missing)}. "
+                "For dual-bucket mode, set all S3_STORAGE_* and S3_OUTPUT_* variables. "
+                "For legacy mode, use S3_* variables instead."
+            )
+    
+    def _validate_legacy_config(self) -> None:
+        """Validate required legacy S3 configuration."""
         missing = []
         
         if not self.endpoint_url:
@@ -183,30 +351,41 @@ class S3Client:
                 "Set environment variables or pass as parameters."
             )
     
-    def _create_client(self):
-        """Create boto3 S3 client with retry configuration."""
-        config = Config(
-            retries={
-                "max_attempts": self.max_retries,
-                "mode": "adaptive",
-            },
-            signature_version="s3v4",
-        )
-        
+    @staticmethod
+    def _create_client(endpoint_url, access_key_id, secret_access_key, region, use_ssl, config):
+        """Create boto3 S3 client with the given configuration."""
         return boto3.client(
             "s3",
-            endpoint_url=self.endpoint_url,
-            aws_access_key_id=self.access_key_id,
-            aws_secret_access_key=self.secret_access_key,
-            region_name=self.region,
-            use_ssl=self.use_ssl,
+            endpoint_url=endpoint_url,
+            aws_access_key_id=access_key_id,
+            aws_secret_access_key=secret_access_key,
+            region_name=region,
+            use_ssl=use_ssl,
             config=config,
         )
+    
+    def _get_client_and_bucket(self, bucket_type: str):
+        """
+        Get the appropriate client and bucket for a bucket type.
+        
+        Args:
+            bucket_type: "storage" or "output"
+            
+        Returns:
+            Tuple of (client, bucket_name)
+        """
+        if bucket_type == "storage":
+            return self.storage_client, self.storage_bucket_name
+        elif bucket_type == "output":
+            return self.output_client, self.output_bucket_name
+        else:
+            raise ValueError(f"Invalid bucket type: {bucket_type}. Use 'storage' or 'output'.")
     
     def upload_file(
         self,
         local_path: str,
         remote_path: str,
+        bucket_type: str = "storage",
         metadata: Optional[Dict[str, str]] = None,
         content_type: Optional[str] = None,
     ) -> str:
@@ -216,6 +395,7 @@ class S3Client:
         Args:
             local_path: Path to local file
             remote_path: S3 object key (path within bucket)
+            bucket_type: "storage" or "output" (determines which bucket to use)
             metadata: Optional metadata tags for the object
             content_type: Optional content type (auto-detected if not provided)
             
@@ -229,6 +409,9 @@ class S3Client:
         if not os.path.exists(local_path):
             raise FileNotFoundError(f"Local file not found: {local_path}")
         
+        # Get appropriate client and bucket
+        client, bucket_name = self._get_client_and_bucket(bucket_type)
+        
         # Auto-detect content type from file extension
         if not content_type:
             content_type = self._get_content_type(local_path)
@@ -237,12 +420,12 @@ class S3Client:
         if metadata:
             extra_args["Metadata"] = metadata
         
-        logger.info(f"Uploading {local_path} to s3://{self.bucket_name}/{remote_path}")
+        logger.info(f"Uploading {local_path} to s3://{bucket_name}/{remote_path}")
         
         try:
-            self.client.upload_file(
+            client.upload_file(
                 Filename=local_path,
-                Bucket=self.bucket_name,
+                Bucket=bucket_name,
                 Key=remote_path,
                 ExtraArgs=extra_args,
             )
@@ -258,6 +441,7 @@ class S3Client:
         self,
         local_path: str,
         remote_path: str,
+        bucket_type: str = "output",
         job_id: Optional[str] = None,
         metadata: Optional[Dict[str, str]] = None,
     ) -> str:
@@ -267,6 +451,7 @@ class S3Client:
         Args:
             local_path: Path to local audio file
             remote_path: S3 object key
+            bucket_type: "storage" or "output" (default: "output" for TTS results)
             job_id: Optional job ID for tracking
             metadata: Optional additional metadata
             
@@ -281,6 +466,7 @@ class S3Client:
         return self.upload_file(
             local_path=local_path,
             remote_path=remote_path,
+            bucket_type=bucket_type,
             metadata=full_metadata,
             content_type="audio/wav",
         )
@@ -289,6 +475,7 @@ class S3Client:
         self,
         remote_path: str,
         local_path: str,
+        bucket_type: str = "storage",
         max_retries: Optional[int] = None,
     ) -> str:
         """
@@ -297,6 +484,7 @@ class S3Client:
         Args:
             remote_path: S3 object key
             local_path: Local destination path
+            bucket_type: "storage" or "output" (determines which bucket to use)
             max_retries: Override default max_retries
             
         Returns:
@@ -307,15 +495,18 @@ class S3Client:
         """
         retries = max_retries or self.max_retries
         
-        logger.info(f"Downloading s3://{self.bucket_name}/{remote_path} to {local_path}")
+        # Get appropriate client and bucket
+        client, bucket_name = self._get_client_and_bucket(bucket_type)
+        
+        logger.info(f"Downloading s3://{bucket_name}/{remote_path} to {local_path}")
         
         for attempt in range(1, retries + 1):
             try:
                 # Ensure parent directory exists
                 os.makedirs(os.path.dirname(local_path), exist_ok=True)
                 
-                self.client.download_file(
-                    Bucket=self.bucket_name,
+                client.download_file(
+                    Bucket=bucket_name,
                     Key=remote_path,
                     Filename=local_path,
                 )
@@ -336,18 +527,21 @@ class S3Client:
                 )
                 time.sleep(delay)
     
-    def file_exists(self, remote_path: str) -> bool:
+    def file_exists(self, remote_path: str, bucket_type: str = "storage") -> bool:
         """
         Check if a file exists in S3.
         
         Args:
             remote_path: S3 object key
+            bucket_type: "storage" or "output" (determines which bucket to check)
             
         Returns:
             True if file exists, False otherwise
         """
+        client, bucket_name = self._get_client_and_bucket(bucket_type)
+        
         try:
-            self.client.head_object(Bucket=self.bucket_name, Key=remote_path)
+            client.head_object(Bucket=bucket_name, Key=remote_path)
             return True
         except ClientError as e:
             if e.response["Error"]["Code"] == "404":
@@ -355,12 +549,13 @@ class S3Client:
             # Re-raise other errors (permission issues, etc.)
             raise S3ConfigError(f"Error checking file existence: {str(e)}") from e
     
-    def delete_file(self, remote_path: str) -> bool:
+    def delete_file(self, remote_path: str, bucket_type: str = "storage") -> bool:
         """
         Delete a file from S3.
         
         Args:
             remote_path: S3 object key
+            bucket_type: "storage" or "output" (determines which bucket to use)
             
         Returns:
             True if deleted successfully
@@ -368,10 +563,12 @@ class S3Client:
         Raises:
             S3ConfigError: If deletion fails
         """
-        logger.info(f"Deleting s3://{self.bucket_name}/{remote_path}")
+        client, bucket_name = self._get_client_and_bucket(bucket_type)
+        
+        logger.info(f"Deleting s3://{bucket_name}/{remote_path}")
         
         try:
-            self.client.delete_object(Bucket=self.bucket_name, Key=remote_path)
+            client.delete_object(Bucket=bucket_name, Key=remote_path)
             logger.info(f"✓ Deleted: {remote_path}")
             return True
             
@@ -383,6 +580,7 @@ class S3Client:
     def generate_presigned_url(
         self,
         remote_path: str,
+        bucket_type: str = "storage",
         expiration: int = 3600,
         http_method: str = "GET",
     ) -> str:
@@ -391,6 +589,7 @@ class S3Client:
         
         Args:
             remote_path: S3 object key
+            bucket_type: "storage" or "output" (determines which bucket to use)
             expiration: URL expiration time in seconds (default: 1 hour)
             http_method: HTTP method for the URL (GET, PUT, etc.)
             
@@ -400,12 +599,14 @@ class S3Client:
         Raises:
             S3ConfigError: If URL generation fails
         """
+        client, bucket_name = self._get_client_and_bucket(bucket_type)
+        
         try:
             client_method = "get_object" if http_method == "GET" else "put_object"
             
-            url = self.client.generate_presigned_url(
+            url = client.generate_presigned_url(
                 ClientMethod=client_method,
-                Params={"Bucket": self.bucket_name, "Key": remote_path},
+                Params={"Bucket": bucket_name, "Key": remote_path},
                 ExpiresIn=expiration,
             )
             
@@ -417,12 +618,13 @@ class S3Client:
             logger.error(error_msg)
             raise S3ConfigError(error_msg) from e
     
-    def list_files(self, prefix: str, max_keys: int = 1000) -> list:
+    def list_files(self, prefix: str, bucket_type: str = "storage", max_keys: int = 1000) -> list:
         """
         List files in S3 with a given prefix.
         
         Args:
             prefix: S3 key prefix (directory path)
+            bucket_type: "storage" or "output" (determines which bucket to use)
             max_keys: Maximum number of keys to return
             
         Returns:
@@ -431,9 +633,11 @@ class S3Client:
         Raises:
             S3ConfigError: If listing fails
         """
+        client, bucket_name = self._get_client_and_bucket(bucket_type)
+        
         try:
-            response = self.client.list_objects_v2(
-                Bucket=self.bucket_name,
+            response = client.list_objects_v2(
+                Bucket=bucket_name,
                 Prefix=prefix,
                 MaxKeys=max_keys,
             )
