@@ -38,7 +38,7 @@ This specification defines the integration of IndexTTS text-to-speech engine acr
 │  │  - Text input (max 200 words)                                    │  │
 │  │  - Voice selector (approved community voices only)               │  │
 │  │  - Language selector (mandatory)                                 │  │
-│  │  - SSE stream subscription for real-time updates                 │  │
+│  │  - HTTP polling for job status (2-5 second intervals)            │  │
 │  └──────────────────────────────────────────────────────────────────┘  │
 └────────────────────────────┬──────────────────────────────────────────┘
                              │ HTTP POST /api/v1/playground/tts
@@ -50,8 +50,7 @@ This specification defines the integration of IndexTTS text-to-speech engine acr
 │  │ TTS API Layer                                                    │  │
 │  │  - POST /api/v1/tts (authenticated)                              │  │
 │  │  - POST /api/v1/playground/tts (anonymous)                       │  │
-│  │  - GET /api/v1/tts/{job_id}                                      │  │
-│  │  - GET /api/v1/tts/{job_id}/stream (SSE)                         │  │
+│  │  - GET /api/v1/tts/{job_id} (polling status endpoint)            │  │
 │  └──────────────────────────────────────────────────────────────────┘  │
 │  ┌──────────────────────────────────────────────────────────────────┐  │
 │  │ Database Layer                                                   │  │
@@ -332,7 +331,6 @@ Dead-Letter Queues (Durable):
 {
   "job_id": "uuid-1234",
   "status": "queued",
-  "stream_url": "/api/v1/tts/{job_id}/stream",
   "expires_at": "2024-12-25T12:00:00Z"
 }
 
@@ -379,7 +377,6 @@ Dead-Letter Queues (Durable):
 {
   "job_id": 12345,
   "status": "queued",
-  "stream_url": "/api/v1/tts/{job_id}/stream",
   "is_cached": false
 }
 
@@ -394,20 +391,24 @@ Dead-Letter Queues (Durable):
 }
 ```
 
-### 3. TTS Job Status Endpoints
+### 3. TTS Job Status Endpoint
 
 #### GET /api/v1/tts/{job_id}
-**Purpose**: Get current status of TTS job
+**Purpose**: Get current status of TTS job (supports polling)
 
 **Authentication**: Required for studio jobs, optional for playground
 
+**Polling Recommendation**: Client should poll every 2-5 seconds while job status is "queued" or "processing"
+
 **Responses**:
 ```http
-200 OK
+200 OK (processing)
 {
   "job_id": "uuid-1234",
   "status": "processing",
-  "created_at": "2024-12-25T10:00:00Z"
+  "progress": 50,
+  "created_at": "2024-12-25T10:00:00Z",
+  "started_at": "2024-12-25T10:00:15Z"
 }
 
 200 OK (completed)
@@ -419,23 +420,16 @@ Dead-Letter Queues (Durable):
   "created_at": "2024-12-25T10:00:00Z",
   "completed_at": "2024-12-25T10:02:00Z"
 }
-```
 
-#### GET /api/v1/tts/{job_id}/stream
-**Purpose**: Server-Sent Events stream for real-time job updates
-
-**Content-Type**: `text/event-stream`
-
-**Events**:
-```text
-event: status
-data: {"status":"processing","progress":50}
-
-event: completed
-data: {"status":"completed","audio_path":"tts-output/studio/12345.wav","audio_duration_seconds":30.5}
-
-event: failed
-data: {"status":"failed","error_message":"Synthesis timeout","retry_count":3}
+200 OK (failed)
+{
+  "job_id": "uuid-1234",
+  "status": "failed",
+  "error_message": "Synthesis timeout after 3 retries",
+  "retry_count": 3,
+  "created_at": "2024-12-25T10:00:00Z",
+  "completed_at": "2024-12-25T10:02:00Z"
+}
 ```
 
 ## Error Handling

@@ -21,9 +21,9 @@ This plan implements the TTS service integration across three repositories with 
 
 ### Phase 2: Studio Backend Implementation (Week 2-3)
 
-- [ ] 6. Implement Studio TTS endpoint processing only first 2 sentences of script text
-- [ ] 7. Implement Playground TTS endpoint with full text processing (max 200 words)
-- [ ] 8. Implement Server-Sent Events (SSE) streaming for real-time job updates
+- [x] 6. Implement Studio TTS endpoint processing only first 2 sentences of script text
+- [x] 7. Implement Playground TTS endpoint with full text processing (max 200 words)
+- [ ] 8. Implement polling endpoint for TTS job status (simplified from SSE)
 - [ ] 9. Enhance TTS results consumer with circuit breaker for database updates
 
 ### Phase 3: IndexTTS Worker Implementation (Week 3-4)
@@ -114,3 +114,4 @@ This plan implements the TTS service integration across three repositories with 
 6. **Security**: IP hashing for rate limiting, path-based S3 storage, proper voice permission checking
 7. **Testing**: Property-based tests for cache consistency, state machines, and rate limiting
 8. **Deployment**: Gradual rollout with feature flags, canary deployment, and rollback plan
+9. **Polling vs SSE**: Simple HTTP polling every 2-5 seconds replaces SSE for better simplicity and horizontal scaling

@@ -98,7 +98,7 @@ The feature enables:
    - Validate audio_path exists in S3 before updating record
    - For failed jobs, validate error_message is present
    - Update TTSJob record with status, audio_path, audio_duration, completed_at
-12. THE Studio_Backend SHALL provide SSE endpoint GET `/api/v1/tts/{job_id}/stream` for real-time updates using existing "queued", "processing", "completed", "failed" states.
+12. THE Studio_Backend SHALL provide polling endpoint GET `/api/v1/tts/{job_id}` for status queries (clients poll every 2-5 seconds).
 13. FOR Studio-Backend TTS Jobs, THE System SHALL NEVER perform full-script-text TTS synthesis - only the first 2 sentences shall be processed to ensure fast and quick response times for logged-in users.
 
 ---
@@ -137,29 +137,31 @@ The feature enables:
    - Path-based audio_prompt_path from voice table
    - `text`: Full text (up to 200 words) for playground synthesis
 8. THE Studio_Backend SHALL return 202 Accepted with:
-   - job_id (UUID), status="queued", stream_url, expires_at
+   - job_id (UUID), status="queued", expires_at
    - No user authentication required
 9. WHEN the playground job completes, THE Studio_Backend SHALL:
-   - Serve audio via SSE stream
+   - Return updated status via polling endpoint GET `/api/v1/tts/{job_id}`
    - Retain PlaygroundTTSJob records for 30 days (automatic cleanup via expires_at)
    - Use path-based audio_path for S3 access
 
 ---
 
-### Requirement 4: Audio Streaming Response (studio-backend)
+### Requirement 4: Job Status Polling (studio-backend)
 
-**User Story:** As a client application, I want to receive synthesized audio as a continuous stream, so that playback can start while synthesis completes.
+**User Story:** As a client application, I want to poll for TTS job status updates, so that I can display progress to users with a simple, scalable approach.
 
 #### Acceptance Criteria
 
-1. THE Studio_Backend SHALL provide GET `/api/v1/tts/{job_id}/stream` endpoint that accepts application/event-stream content type.
-2. WHEN the job is still processing, THE SSE_Stream SHALL send status events with current job status ("pending" or "processing").
-3. WHEN the job completes successfully, THE SSE_Stream SHALL send a "completed" event with: status, s3_url, audio_duration_seconds, and audio_format (determined by IndexTTS output).
-4. WHEN the job fails, THE SSE_Stream SHALL NOT send a "completed" event.
-5. WHEN the job fails, THE SSE_Stream SHALL send a "failed" event with: status, error_message, and retry_count.
-6. THE SSE_Stream SHALL close the connection after sending a terminal event (completed/failed).
-7. IF the client disconnects before completion, THE TTS_Job SHALL continue processing in the background.
-8. THE Studio_Backend SHALL set SSE heartbeat interval to 30 seconds to detect connection drops.
+1. THE Studio_Backend SHALL provide GET `/api/v1/tts/{job_id}` endpoint for retrieving current job status.
+2. THE Endpoint SHALL return complete job information including: job_id, status, progress (0-100), audio_path (if completed), audio_duration_seconds (if completed), error_message (if failed), retry_count, created_at, started_at, completed_at.
+3. THE Endpoint SHALL support both authenticated requests (studio jobs) and unauthenticated requests (playground jobs with UUID).
+4. WHEN the job is processing, THE Response SHALL include current progress percentage (0-100) for display to users.
+5. WHEN the job completes successfully, THE Response SHALL include audio_path and audio_duration_seconds for immediate playback.
+6. WHEN the job fails, THE Response SHALL include error_message and retry_count for debugging and user feedback.
+7. THE Client SHALL poll this endpoint every 2-5 seconds while job status is "queued" or "processing".
+8. THE Client SHALL stop polling when status becomes "completed", "failed", or "rate_limited".
+9. IF the client stops polling, THE TTS_Job SHALL continue processing in the background.
+10. THE Studio_Backend SHALL set appropriate cache headers (no-cache) to prevent stale status responses.
 
 ---
 
