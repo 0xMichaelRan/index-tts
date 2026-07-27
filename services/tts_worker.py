@@ -245,6 +245,10 @@ class IndexTTSWorker:
                 - retry_count: Number of retries attempted
         """
         job_id = job_data.get("job_id")
+        # Ensure job_id is a string (may come as integer from backend)
+        if job_id is not None:
+            job_id = str(job_id)
+        
         text = job_data.get("text", "")
         audio_prompt_path = job_data.get("audio_prompt_path")
         language = job_data.get("language", "en")
@@ -407,13 +411,15 @@ class IndexTTSWorker:
         
         Args:
             job_id: Job identifier
-            audio_prompt_path: S3 path to audio prompt
+            audio_prompt_path: S3 path to audio prompt (e.g., "audio-prompts/voice_123.wav")
+                              Can also be voice_id (int) for backwards compatibility
             
         Returns:
             Local file path to downloaded audio
             
         Raises:
             S3ConfigError: If download fails after retries
+            ValueError: If audio_prompt_path is invalid
         """
         if not self.s3_client:
             self.s3_client = S3Client()

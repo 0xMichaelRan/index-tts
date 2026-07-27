@@ -4,26 +4,6 @@ S3 Storage Configuration with Path-Based Structure
 This module provides S3-compatible storage configuration for the TTS service,
 supporting Supabase Storage S3 API with path-based organization.
 
-Storage Structure:
-    s3://{bucket-name}/
-    ├── audio-prompts/
-    │   ├── {voice_id}.wav      # Voice recordings (path-based)
-    │   └── {voice_id}.json     # Voice metadata
-    ├── tts-output/
-    │   ├── studio/
-    │   │   ├── {job_id}.wav    # Studio job outputs (indefinite retention)
-    │   │   └── {job_id}.json   # Job metadata
-    │   └── playground/
-    │       ├── {job_id}.wav    # Playground outputs (24h retention)
-    │       └── {job_id}.json   # Job metadata
-    └── logs/
-        ├── worker/
-        └── backend/
-
-Lifecycle Rules:
-    - tts-output/playground/: Delete after 24 hours
-    - tts-output/studio/: Never expire (manual cleanup)
-    - logs/: Transition to Glacier after 30 days, delete after 365 days
 
 Usage:
     from services.s3_config import S3Client, configure_bucket_structure
