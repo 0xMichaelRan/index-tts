@@ -23,8 +23,8 @@ This plan implements the TTS service integration across three repositories with 
 
 - [x] 6. Implement Studio TTS endpoint processing only first 2 sentences of script text
 - [x] 7. Implement Playground TTS endpoint with full text processing (max 200 words)
-- [ ] 8. Implement polling endpoint for TTS job status (simplified from SSE)
-- [ ] 9. Enhance TTS results consumer with circuit breaker for database updates
+- [x] 8. Implement polling endpoint for TTS job status (simplified from SSE)
+- [x] 9. Enhance TTS results consumer with circuit breaker for database updates
 
 ### Phase 3: IndexTTS Worker Implementation (Week 3-4)
 
