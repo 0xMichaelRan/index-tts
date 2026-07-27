@@ -48,6 +48,13 @@ dependencies = [
     "fastapi[standard]",
     "uvicorn[standard]",
     
+    # RabbitMQ worker (for distributed task queue)
+    "pika",
+    "python-multipart",
+    
+    # S3 storage (for audio file persistence)
+    "boto3>=1.28.0",
+    
     # Platform-specific text processing
     "wetext; sys_platform == 'darwin'",
     "WeTextProcessing; sys_platform != 'darwin'",
@@ -76,12 +83,6 @@ mac = [
     "pyobjc-framework-Cocoa>=10.0",
 ]
 
-# RabbitMQ worker (for distributed task queue)
-rabbitmq = [
-    "pika",
-    "python-multipart",
-]
-
 # Gradio web UI
 webui = [
     "gradio",
@@ -97,16 +98,16 @@ dev = [
 
 # Platform-specific all installations
 all-windows = [
-    "indextts-worker[cuda,rabbitmq,webui,dev]",
+    "indextts-worker[cuda,webui,dev]",
 ]
 
 all-mac = [
-    "indextts-worker[mac,rabbitmq,webui,dev]",
+    "indextts-worker[mac,webui,dev]",
 ]
 
 # Legacy all option (defaults to CUDA for backwards compatibility)
 all = [
-    "indextts-worker[cuda,rabbitmq,webui,dev]",
+    "indextts-worker[cuda,webui,dev]",
 ]
 
 [project.urls]
