@@ -11,6 +11,7 @@ import os
 import json
 import platform
 import logging
+import time
 from datetime import datetime
 from typing import Optional, Dict, Any
 from urllib.parse import urlparse
@@ -19,6 +20,15 @@ from pathlib import Path
 import pika
 from dotenv import load_dotenv
 from indextts.infer import create_tts_engine
+
+from services.circuit_breaker import (
+    CircuitBreaker,
+    CircuitBreakerError,
+    get_circuit_breaker,
+    get_all_circuit_breaker_stats,
+)
+from services.s3_config import S3Client, S3ConfigError
+from services.idempotent_upload import IdempotentUploader
 
 # Load environment variables from .env file
 env_file = Path(__file__).parent.parent / ".env"
@@ -67,9 +77,48 @@ class IndexTTSWorker:
         logger.info(f"Running on: {platform.system()}")
         self._init_tts_engine()
 
+        # Initialize S3 client
+        try:
+            self.s3_client = S3Client()
+            logger.info("✓ S3 client initialized")
+        except Exception as e:
+            logger.warning(f"S3 client initialization failed: {e}. Will retry on first use.")
+            self.s3_client = None
+        
+        # Initialize idempotent uploader
+        self.uploader = None
+        try:
+            self.uploader = IdempotentUploader(self.s3_client)
+            logger.info("✓ Idempotent uploader initialized")
+        except Exception as e:
+            logger.warning(f"Uploader initialization failed: {e}. Will initialize on first use.")
+            self.uploader = None
+
+        # Initialize circuit breakers
+        self.s3_breaker = get_circuit_breaker(
+            name="S3Download",
+            failure_threshold=5,
+            reset_timeout=60,
+            half_open_max_calls=3,
+            success_threshold=2,
+        )
+        
+        self.tts_breaker = get_circuit_breaker(
+            name="IndexTTS",
+            failure_threshold=3,
+            reset_timeout=30,
+            half_open_max_calls=2,
+            success_threshold=2,
+        )
+        
+        logger.info("✓ Circuit breakers initialized")
+
         # Placeholder for RabbitMQ connection
         self.connection = None
         self.channel = None
+        
+        # Tracking for idempotent operations
+        self._processed_jobs = set()  # Track completed job IDs for deduplication
 
     def _init_tts_engine(self):
         """Initialize the appropriate TTS engine based on platform."""
@@ -137,110 +186,348 @@ class IndexTTSWorker:
 
     def process_job(self, job_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Process a single TTS job.
+        Process a single TTS job with circuit breaker protection.
 
         Args:
             job_data: Job message containing:
                 - job_id: Unique job identifier
                 - text: Text to synthesize
-                - audio_prompt: Optional path/URL to audio prompt file
-                - voice_params: Optional voice parameters (rate, pitch, volume)
+                - audio_prompt_path: S3 path to audio prompt file
+                - language: Language code
+                - job_type: "studio" or "playground"
+                - output_path_template: S3 output path template
 
         Returns:
             Result dictionary with:
                 - job_id: Original job ID
                 - status: "completed" or "failed"
-                - output_s3_path: S3 path to generated audio (if successful)
+                - audio_path: S3 path to generated audio (if successful)
+                - audio_duration_seconds: Duration of synthesized audio
+                - synthesis_duration_seconds: Time taken for synthesis
+                - error_code: Error code (if failed)
                 - error: Error message (if failed)
+                - retry_count: Number of retries attempted
         """
         job_id = job_data.get("job_id")
         text = job_data.get("text", "")
-        audio_prompt = job_data.get("audio_prompt")
-        voice_params = job_data.get("voice_params", {})
-
-        logger.info(f"[JOB {job_id}] Processing TTS request")
-
-        try:
-            # Step 1: Synthesize audio
-            logger.info(f"[JOB {job_id}] Synthesizing audio...")
-            output_path = self._synthesize_audio(
-                job_id, text, audio_prompt, voice_params
-            )
-
-            # Step 2: Upload to S3
-            logger.info(f"[JOB {job_id}] Uploading to S3...")
-            s3_path = self._upload_to_s3(job_id, output_path)
-
-            # Step 3: Clean up local file
-            logger.info(f"[JOB {job_id}] Cleaning up local files...")
-            self._cleanup_local_files(output_path)
-
-            result = {
-                "job_id": job_id,
-                "status": "completed",
-                "output_s3_path": s3_path,
-                "timestamp": datetime.now().isoformat(),
-            }
-            logger.info(f"[JOB {job_id}] Job completed successfully")
-            return result
-
-        except Exception as e:
-            logger.error(f"[JOB {job_id}] Error processing job: {str(e)}")
+        audio_prompt_path = job_data.get("audio_prompt_path")
+        language = job_data.get("language", "en")
+        job_type = job_data.get("job_type", "studio")
+        output_path_template = job_data.get("output_path_template")
+        
+        retry_count = 0
+        max_retries = 3
+        
+        logger.info(f"[JOB {job_id}] Processing TTS request (type: {job_type}, language: {language})")
+        
+        # Check for duplicate processing
+        if job_id in self._processed_jobs:
+            logger.warning(f"[JOB {job_id}] Already processed, skipping")
             return {
                 "job_id": job_id,
-                "status": "failed",
-                "error": str(e),
+                "status": "completed",
+                "note": "duplicate_skipped",
                 "timestamp": datetime.now().isoformat(),
             }
+        
+        synthesis_start = time.time()
+        local_audio_prompt = None
+        local_output = None
+
+        # Retry loop for transient failures
+        while retry_count < max_retries:
+            try:
+                # Step 1: Download audio prompt from S3 with circuit breaker
+                logger.info(f"[JOB {job_id}] Downloading audio prompt from S3...")
+                try:
+                    with self.s3_breaker:
+                        local_audio_prompt = self._download_audio_prompt(
+                            job_id, audio_prompt_path
+                        )
+                except CircuitBreakerError:
+                    error_msg = "S3 circuit breaker is open - service unavailable"
+                    logger.error(f"[JOB {job_id}] {error_msg}")
+                    return {
+                        "job_id": job_id,
+                        "status": "failed",
+                        "error_code": "S3_CIRCUIT_OPEN",
+                        "error_message": error_msg,
+                        "retry_count": retry_count,
+                        "timestamp": datetime.now().isoformat(),
+                    }
+
+                # Step 2: Synthesize audio with circuit breaker
+                logger.info(f"[JOB {job_id}] Synthesizing audio...")
+                try:
+                    with self.tts_breaker:
+                        local_output = self._synthesize_audio(
+                            job_id, text, local_audio_prompt, language
+                        )
+                except CircuitBreakerError:
+                    error_msg = "IndexTTS circuit breaker is open - service unavailable"
+                    logger.error(f"[JOB {job_id}] {error_msg}")
+                    return {
+                        "job_id": job_id,
+                        "status": "failed",
+                        "error_code": "TTS_CIRCUIT_OPEN",
+                        "error_message": error_msg,
+                        "retry_count": retry_count,
+                        "timestamp": datetime.now().isoformat(),
+                    }
+
+                # Step 3: Upload to S3 with idempotent retry
+                logger.info(f"[JOB {job_id}] Uploading to S3...")
+                output_s3_path = output_path_template.format(job_id=job_id)
+                
+                try:
+                    with self.s3_breaker:
+                        audio_path = self._upload_to_s3_idempotent(
+                            job_id, local_output, output_s3_path
+                        )
+                except CircuitBreakerError:
+                    error_msg = "S3 circuit breaker is open during upload"
+                    logger.error(f"[JOB {job_id}] {error_msg}")
+                    return {
+                        "job_id": job_id,
+                        "status": "failed",
+                        "error_code": "S3_UPLOAD_CIRCUIT_OPEN",
+                        "error_message": error_msg,
+                        "retry_count": retry_count,
+                        "timestamp": datetime.now().isoformat(),
+                    }
+
+                # Step 4: Calculate audio duration (placeholder - needs actual implementation)
+                audio_duration = self._get_audio_duration(local_output)
+                
+                # Step 5: Clean up local files
+                logger.info(f"[JOB {job_id}] Cleaning up local files...")
+                self._cleanup_local_files(local_audio_prompt, local_output)
+
+                synthesis_duration = time.time() - synthesis_start
+                
+                # Mark as processed
+                self._processed_jobs.add(job_id)
+                
+                result = {
+                    "job_type": job_type,
+                    "job_id": job_id,
+                    "status": "completed",
+                    "audio_path": audio_path,
+                    "audio_duration_seconds": audio_duration,
+                    "synthesis_duration_seconds": round(synthesis_duration, 2),
+                    "retry_count": retry_count,
+                    "timestamp": datetime.now().isoformat(),
+                }
+                logger.info(
+                    f"[JOB {job_id}] Job completed successfully in {synthesis_duration:.2f}s"
+                )
+                return result
+
+            except (S3ConfigError, OSError, IOError) as e:
+                # Retryable errors
+                retry_count += 1
+                if retry_count < max_retries:
+                    delay = 2 ** retry_count  # Exponential backoff: 2, 4, 8 seconds
+                    logger.warning(
+                        f"[JOB {job_id}] Attempt {retry_count}/{max_retries} failed: {str(e)}. "
+                        f"Retrying in {delay}s..."
+                    )
+                    time.sleep(delay)
+                else:
+                    logger.error(
+                        f"[JOB {job_id}] All {max_retries} attempts failed: {str(e)}"
+                    )
+                    return {
+                        "job_type": job_type,
+                        "job_id": job_id,
+                        "status": "failed",
+                        "error_code": "RETRYABLE_ERROR_EXHAUSTED",
+                        "error_message": str(e),
+                        "retry_count": retry_count,
+                        "timestamp": datetime.now().isoformat(),
+                    }
+            
+            except Exception as e:
+                # Non-retryable errors
+                logger.error(f"[JOB {job_id}] Non-retryable error: {str(e)}")
+                return {
+                    "job_type": job_type,
+                    "job_id": job_id,
+                    "status": "failed",
+                    "error_code": "NON_RETRYABLE_ERROR",
+                    "error_message": str(e),
+                    "retry_count": retry_count,
+                    "timestamp": datetime.now().isoformat(),
+                }
+            
+            finally:
+                # Always clean up local files
+                if local_audio_prompt or local_output:
+                    self._cleanup_local_files(local_audio_prompt, local_output)
+
+    def _download_audio_prompt(
+        self,
+        job_id: str,
+        audio_prompt_path: str,
+    ) -> str:
+        """
+        Download audio prompt from S3 with retry logic.
+        
+        Args:
+            job_id: Job identifier
+            audio_prompt_path: S3 path to audio prompt
+            
+        Returns:
+            Local file path to downloaded audio
+            
+        Raises:
+            S3ConfigError: If download fails after retries
+        """
+        if not self.s3_client:
+            self.s3_client = S3Client()
+        
+        # Create temp directory for downloads
+        temp_dir = os.path.join("outputs", "temp", job_id)
+        os.makedirs(temp_dir, exist_ok=True)
+        
+        local_path = os.path.join(temp_dir, os.path.basename(audio_prompt_path))
+        
+        # Download with S3 client retry logic
+        self.s3_client.download_file(
+            remote_path=audio_prompt_path,
+            local_path=local_path,
+            max_retries=3,
+        )
+        
+        logger.info(f"[JOB {job_id}] Downloaded audio prompt to {local_path}")
+        return local_path
 
     def _synthesize_audio(
         self,
         job_id: str,
         text: str,
         audio_prompt: Optional[str],
-        voice_params: Dict[str, Any],
+        language: str,
     ) -> str:
         """
         Synthesize audio using TTS engine.
-        TODO: Implement actual synthesis logic
+        
+        Args:
+            job_id: Job identifier
+            text: Text to synthesize
+            audio_prompt: Local path to audio prompt file
+            language: Language code
+            
+        Returns:
+            Local path to synthesized audio
+            
+        Raises:
+            Exception: If synthesis fails
         """
-        output_dir = os.path.join("outputs", "tts_output")
+        output_dir = os.path.join("outputs", "tts_output", job_id)
         os.makedirs(output_dir, exist_ok=True)
 
         timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
         output_filename = f"{job_id}_{timestamp}.wav"
         output_path = os.path.join(output_dir, output_filename)
 
-        logger.info(f"[JOB {job_id}] [PLACEHOLDER] Synthesizing to {output_path}")
+        logger.info(f"[JOB {job_id}] Synthesizing to {output_path}")
 
-        # Placeholder: Just create an empty file
-        # In real implementation:
-        # if platform.system() == "Darwin":
-        #     self.tts.infer(audio_prompt=None, text=text, output_path=output_path, ...)
-        # else:
-        #     self.tts.infer_fast(audio_prompt=audio_prompt, text=text, output_path=output_path, ...)
-
-        with open(output_path, "wb") as f:
-            f.write(b"PLACEHOLDER_AUDIO_DATA")
-
+        # Platform-specific synthesis
+        if platform.system() == "Darwin":
+            # macOS native TTS
+            self.tts.infer(
+                audio_prompt=None,
+                text=text,
+                output_path=output_path,
+                language=language,
+            )
+        else:
+            # IndexTTS GPU inference
+            self.tts.infer_fast(
+                audio_prompt=audio_prompt,
+                text=text,
+                output_path=output_path,
+                language=language,
+            )
+        
+        logger.info(f"[JOB {job_id}] Synthesis complete: {output_path}")
         return output_path
 
-    def _upload_to_s3(self, job_id: str, local_path: str) -> str:
+    def _upload_to_s3_idempotent(
+        self,
+        job_id: str,
+        local_path: str,
+        remote_path: str,
+    ) -> str:
         """
-        Upload synthesized audio to S3.
-        TODO: Implement actual S3 upload using boto3
+        Upload synthesized audio to S3 with idempotent retry.
+        
+        Implements idempotent retry by checking if file already exists
+        with matching job_id metadata tag before uploading.
+        
+        Features:
+        - Check if file already uploaded (idempotent check)
+        - Skip upload if file exists with matching job_id
+        - Exponential backoff retry on failure (base: 2s, multiplier: 2)
+        - Metadata tagging with job_id and status
+        - Partial failure recovery support
+        
+        Args:
+            job_id: Job identifier
+            local_path: Local file path
+            remote_path: S3 destination path
+            
+        Returns:
+            S3 path (remote_path)
+            
+        Raises:
+            S3ConfigError: If upload fails after retries
         """
-        s3_key = f"tts-output/{job_id}/{os.path.basename(local_path)}"
-        logger.info(
-            f"[JOB {job_id}] [PLACEHOLDER] Uploading to s3://{self.s3_bucket}/{s3_key}"
-        )
+        if not self.uploader:
+            self.uploader = IdempotentUploader(self.s3_client)
+        
+        logger.info(f"[JOB {job_id}] Starting idempotent S3 upload")
+        
+        try:
+            # Use idempotent uploader with retry logic
+            s3_path = self.uploader.upload_with_retry(
+                job_id=job_id,
+                local_path=local_path,
+                remote_path=remote_path,
+                verify_integrity=True,
+            )
+            
+            logger.info(f"[JOB {job_id}] Upload completed: {s3_path}")
+            return s3_path
+            
+        except S3ConfigError as e:
+            logger.error(f"[JOB {job_id}] Upload failed: {e}")
+            raise
 
-        # Placeholder S3 path
-        # In real implementation:
-        # s3_client = boto3.client("s3", region_name=self.s3_region)
-        # s3_client.upload_file(local_path, self.s3_bucket, s3_key)
-
-        return f"s3://{self.s3_bucket}/{s3_key}"
+    def _get_audio_duration(self, audio_path: str) -> float:
+        """
+        Get duration of audio file in seconds.
+        
+        TODO: Implement actual duration calculation using audio library
+        (e.g., pydub, librosa, or wave module)
+        
+        Args:
+            audio_path: Path to audio file
+            
+        Returns:
+            Duration in seconds (placeholder value)
+        """
+        # Placeholder implementation
+        # In real implementation, use:
+        # import wave
+        # with wave.open(audio_path, 'r') as audio_file:
+        #     frames = audio_file.getnframes()
+        #     rate = audio_file.getframerate()
+        #     duration = frames / float(rate)
+        #     return duration
+        
+        return 30.0  # Placeholder: 30 seconds
 
     def _cleanup_local_files(self, *paths: str):
         """Remove local temporary files."""
@@ -254,30 +541,89 @@ class IndexTTSWorker:
 
     def publish_result(self, result: Dict[str, Any]):
         """
-        Publish job result back to RabbitMQ tts_results queue.
+        Publish job result back to RabbitMQ tts_results queue with retry.
+        
+        Implements exponential backoff retry for RabbitMQ ack failures.
+        If all retries fail after S3 upload success, triggers partial failure
+        recovery and logs critical error for manual intervention.
+        
+        Partial Failure Handling:
+        - If S3 upload succeeded but RabbitMQ publish fails
+        - File is safely stored in S3
+        - Manual intervention required to update database
+        - Recovery metadata is logged for debugging
+        
+        Args:
+            result: Job result dictionary with status and metadata
         """
-        try:
-            self.channel.basic_publish(
-                exchange="",
-                routing_key="tts_results",
-                body=json.dumps(result),
-                properties=pika.BasicProperties(
-                    delivery_mode=pika.DeliveryMode.Persistent,
-                    content_type="application/json",
-                ),
-            )
-            logger.info(f"✓ Published result for job {result.get('job_id')}")
-        except Exception as e:
-            logger.error(f"✗ Failed to publish result: {str(e)}")
+        max_retries = 3
+        retry_count = 0
+        job_id = result.get("job_id")
+        
+        while retry_count < max_retries:
+            try:
+                self.channel.basic_publish(
+                    exchange="",
+                    routing_key="tts_results",
+                    body=json.dumps(result),
+                    properties=pika.BasicProperties(
+                        delivery_mode=pika.DeliveryMode.Persistent,
+                        content_type="application/json",
+                    ),
+                )
+                logger.info(f"✓ Published result for job {job_id}")
+                return
+                
+            except Exception as e:
+                retry_count += 1
+                if retry_count < max_retries:
+                    delay = 2 ** retry_count  # Exponential backoff: 2, 4, 8 seconds
+                    logger.warning(
+                        f"[JOB {job_id}] Failed to publish result (attempt {retry_count}/{max_retries}): {e}. "
+                        f"Retrying in {delay}s..."
+                    )
+                    time.sleep(delay)
+                else:
+                    # All retries exhausted - check for partial failure scenario
+                    logger.critical(
+                        f"[JOB {job_id}] ✗ Failed to publish result after {max_retries} attempts: {e}"
+                    )
+                    
+                    # If result contains audio_path, S3 upload likely succeeded
+                    if result.get("status") == "completed" and result.get("audio_path"):
+                        logger.critical(
+                            f"[JOB {job_id}] PARTIAL FAILURE DETECTED: "
+                            f"S3 upload succeeded but RabbitMQ publish failed"
+                        )
+                        
+                        # Trigger recovery for partial failure
+                        if self.uploader:
+                            recovery_data = self.uploader.handle_partial_failure(
+                                job_id=job_id,
+                                remote_path=result.get("audio_path"),
+                                error=e,
+                            )
+                            logger.critical(f"Recovery data: {json.dumps(recovery_data, indent=2)}")
+                    
+                    # Do not raise - we've done our best, avoid requeueing the original message
 
     def start(self):
         """Start the worker and begin consuming jobs from RabbitMQ."""
         logger.info("Starting IndexTTS Worker...")
+        logger.info("=" * 70)
+        logger.info(f"Platform: {platform.system()}")
+        logger.info(f"S3 Bucket: {self.s3_bucket}")
+        logger.info("Circuit Breakers:")
+        for name, stats in get_all_circuit_breaker_stats().items():
+            logger.info(f"  - {name}: {stats['state']}")
+        logger.info("=" * 70)
+        
         try:
             self.connect_rabbitmq()
 
             def callback(ch, method, properties, body):
                 """Handle incoming job message."""
+                job_data = None
                 try:
                     job_data = json.loads(body)
                     job_id = job_data.get("job_id")
@@ -289,12 +635,24 @@ class IndexTTSWorker:
                     # Acknowledge message only after successful processing
                     ch.basic_ack(delivery_tag=method.delivery_tag)
                     logger.info(f"[JOB {job_id}] Acknowledged")
+                    
                 except json.JSONDecodeError as e:
                     logger.error(f"Invalid JSON in message: {str(e)}")
+                    # Reject without requeue - invalid messages go to DLQ
                     ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+                    
+                except CircuitBreakerError as e:
+                    logger.error(f"Circuit breaker open: {str(e)}")
+                    # Requeue when circuit breaker is open - might succeed later
+                    ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
+                    
                 except Exception as e:
                     logger.error(f"Error processing job: {str(e)}")
-                    ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
+                    if job_data:
+                        job_id = job_data.get("job_id")
+                        logger.error(f"[JOB {job_id}] Processing failed, sending to DLQ")
+                    # Reject without requeue - failed jobs go to DLQ after retries
+                    ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
 
             # Set QoS to process one message at a time
             self.channel.basic_qos(prefetch_count=1)
@@ -314,6 +672,14 @@ class IndexTTSWorker:
 
         except KeyboardInterrupt:
             logger.info("\nShutting down worker...")
+            logger.info("Circuit Breaker Statistics:")
+            for name, stats in get_all_circuit_breaker_stats().items():
+                logger.info(f"  {name}:")
+                logger.info(f"    State: {stats['state']}")
+                logger.info(f"    Successes: {stats['success_count']}")
+                logger.info(f"    Failures: {stats['failure_count']}")
+                logger.info(f"    Error Rate: {stats['error_rate']:.2%}")
+                
         except Exception as e:
             logger.error(f"Fatal error: {str(e)}")
         finally:
