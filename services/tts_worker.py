@@ -12,6 +12,8 @@ import json
 import platform
 import logging
 import time
+import signal
+import wave
 from datetime import datetime
 from typing import Optional, Dict, Any
 from urllib.parse import urlparse
@@ -119,6 +121,14 @@ class IndexTTSWorker:
         
         # Tracking for idempotent operations
         self._processed_jobs = set()  # Track completed job IDs for deduplication
+        
+        # Graceful shutdown support
+        self._shutdown_requested = False
+        self._setup_signal_handlers()
+        
+        # Shutdown flag for graceful termination
+        self._shutdown_requested = False
+        self._setup_signal_handlers()
 
     def _init_tts_engine(self):
         """Initialize the appropriate TTS engine based on platform."""
@@ -134,6 +144,38 @@ class IndexTTSWorker:
                 is_fp16=True,
                 use_cuda_kernel=False,
             )
+    
+    def _setup_signal_handlers(self):
+        """Set up signal handlers for graceful shutdown."""
+        def signal_handler(signum, frame):
+            """Handle shutdown signals."""
+            signal_name = "SIGTERM" if signum == signal.SIGTERM else "SIGINT"
+            logger.info(f"\n{signal_name} received, initiating graceful shutdown...")
+            self._shutdown_requested = True
+        
+        # Register handlers for SIGTERM and SIGINT
+        signal.signal(signal.SIGTERM, signal_handler)
+        signal.signal(signal.SIGINT, signal_handler)
+    
+    def _setup_signal_handlers(self):
+        """Setup signal handlers for graceful shutdown."""
+        def signal_handler(signum, frame):
+            signal_name = signal.Signals(signum).name
+            logger.info(f"Received {signal_name} signal, initiating graceful shutdown...")
+            self._shutdown_requested = True
+            
+            # Stop consuming new messages
+            if self.channel and not self.channel.is_closed:
+                try:
+                    self.channel.stop_consuming()
+                    logger.info("Stopped consuming new messages")
+                except Exception as e:
+                    logger.warning(f"Error stopping consumer: {e}")
+        
+        # Register handlers for SIGTERM and SIGINT
+        signal.signal(signal.SIGTERM, signal_handler)
+        signal.signal(signal.SIGINT, signal_handler)
+        logger.info("✓ Signal handlers registered (SIGTERM, SIGINT)")
 
     def connect_rabbitmq(self):
         """
@@ -296,13 +338,9 @@ class IndexTTSWorker:
                         "timestamp": datetime.now().isoformat(),
                     }
 
-                # Step 4: Calculate audio duration (placeholder - needs actual implementation)
+                # Step 4: Calculate audio duration
                 audio_duration = self._get_audio_duration(local_output)
                 
-                # Step 5: Clean up local files
-                logger.info(f"[JOB {job_id}] Cleaning up local files...")
-                self._cleanup_local_files(local_audio_prompt, local_output)
-
                 synthesis_duration = time.time() - synthesis_start
                 
                 # Mark as processed
@@ -509,25 +547,37 @@ class IndexTTSWorker:
         """
         Get duration of audio file in seconds.
         
-        TODO: Implement actual duration calculation using audio library
-        (e.g., pydub, librosa, or wave module)
+        Supports WAV files using the wave module.
         
         Args:
-            audio_path: Path to audio file
+            audio_path: Path to audio file (must be .wav format)
             
         Returns:
-            Duration in seconds (placeholder value)
+            Duration in seconds
+            
+        Raises:
+            FileNotFoundError: If audio file doesn't exist
+            ValueError: If file is not a valid WAV file
         """
-        # Placeholder implementation
-        # In real implementation, use:
-        # import wave
-        # with wave.open(audio_path, 'r') as audio_file:
-        #     frames = audio_file.getnframes()
-        #     rate = audio_file.getframerate()
-        #     duration = frames / float(rate)
-        #     return duration
+        if not os.path.exists(audio_path):
+            raise FileNotFoundError(f"Audio file not found: {audio_path}")
         
-        return 30.0  # Placeholder: 30 seconds
+        try:
+            with wave.open(audio_path, 'r') as audio_file:
+                frames = audio_file.getnframes()
+                rate = audio_file.getframerate()
+                duration = frames / float(rate)
+                return duration
+        except wave.Error as e:
+            raise ValueError(f"Invalid WAV file {audio_path}: {e}")
+        except Exception as e:
+            logger.warning(f"Could not read audio duration from {audio_path}: {e}")
+            # Fallback: estimate based on file size (very rough approximation)
+            # WAV at 24kHz, 16-bit mono: ~48000 bytes/sec
+            file_size = os.path.getsize(audio_path)
+            estimated_duration = file_size / 48000.0
+            logger.info(f"Using estimated duration: {estimated_duration:.2f}s based on file size")
+            return estimated_duration
 
     def _cleanup_local_files(self, *paths: str):
         """Remove local temporary files."""
@@ -623,6 +673,12 @@ class IndexTTSWorker:
 
             def callback(ch, method, properties, body):
                 """Handle incoming job message."""
+                # Check for shutdown request before processing
+                if self._shutdown_requested:
+                    logger.info("Shutdown requested, rejecting new message")
+                    ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
+                    return
+                
                 job_data = None
                 try:
                     job_data = json.loads(body)
@@ -671,18 +727,28 @@ class IndexTTSWorker:
             self.channel.start_consuming()
 
         except KeyboardInterrupt:
-            logger.info("\nShutting down worker...")
-            logger.info("Circuit Breaker Statistics:")
-            for name, stats in get_all_circuit_breaker_stats().items():
-                logger.info(f"  {name}:")
-                logger.info(f"    State: {stats['state']}")
-                logger.info(f"    Successes: {stats['success_count']}")
-                logger.info(f"    Failures: {stats['failure_count']}")
-                logger.info(f"    Error Rate: {stats['error_rate']:.2%}")
-                
+            logger.info("\nShutting down worker (KeyboardInterrupt)...")
+            self._shutdown_requested = True
+            
         except Exception as e:
             logger.error(f"Fatal error: {str(e)}")
+            self._shutdown_requested = True
+            
         finally:
+            # Graceful shutdown: Print statistics
+            if self._shutdown_requested:
+                logger.info("=" * 70)
+                logger.info("Graceful Shutdown Summary:")
+                logger.info(f"Processed jobs: {len(self._processed_jobs)}")
+                logger.info("Circuit Breaker Statistics:")
+                for name, stats in get_all_circuit_breaker_stats().items():
+                    logger.info(f"  {name}:")
+                    logger.info(f"    State: {stats['state']}")
+                    logger.info(f"    Successes: {stats['success_count']}")
+                    logger.info(f"    Failures: {stats['failure_count']}")
+                    logger.info(f"    Error Rate: {stats['error_rate']:.2%}")
+                logger.info("=" * 70)
+            
             self.disconnect_rabbitmq()
 
 

@@ -31,7 +31,7 @@ This plan implements the TTS service integration across three repositories with 
 - [x] 10. Implement circuit breaker pattern for S3 downloads and IndexTTS synthesis
 - [x] 11. Implement dead-letter queue monitoring and alerting
 - [x] 12. Implement idempotent S3 upload with retry logic
-- [ ] 13. Implement TTS worker core with platform-specific synthesis (GPU/macOS)
+- [x] 13. Implement TTS worker core with platform-specific synthesis (GPU/macOS)
 - [ ] 14. Implement structured logging and Prometheus metrics
 
 ### Phase 4: Official Landing Integration (Week 4-5)
