@@ -91,7 +91,7 @@ RABBITMQ_URL=amqp://user:pass@host:port/vhost
 S3_ENDPOINT=https://...supabase.co/storage/v1/s3
 S3_ACCESS_KEY=...
 S3_SECRET_KEY=...
-S3_BUCKET=studio
+S3_BUCKET_NAME=studio
 AWS_REGION=us-east-1
 
 # TTS Model
