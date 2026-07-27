@@ -47,7 +47,12 @@ from typing import Optional, Callable, Any
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
-logger = logging.getLogger(__name__)
+# Use structured logging if available, fall back to default
+try:
+    from services.logging_config import get_logger
+    logger = get_logger(__name__)
+except ImportError:
+    logger = logging.getLogger(__name__)
 
 
 class CircuitState(Enum):

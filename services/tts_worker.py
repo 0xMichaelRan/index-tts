@@ -31,18 +31,20 @@ from services.circuit_breaker import (
 )
 from services.s3_config import S3Client, S3ConfigError
 from services.idempotent_upload import IdempotentUploader
+from services.logging_config import configure_logging, get_logger, log_startup_summary, log_shutdown_summary
 
 # Load environment variables from .env file
 env_file = Path(__file__).parent.parent / ".env"
 if env_file.exists():
     load_dotenv(str(env_file))
 
-# Configure logging
-logging.basicConfig(
+# Configure structured logging
+configure_logging(
     level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    use_file=False,  # Set to True to enable file logging
+    use_color=True,
 )
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class IndexTTSWorker:
@@ -54,7 +56,8 @@ class IndexTTSWorker:
         rabbitmq_port: int = 5672,
         rabbitmq_user: str = "guest",
         rabbitmq_password: str = "guest",
-        s3_bucket: str = "tts-output",
+        s3_storage_bucket: str = "studio",
+        s3_output_bucket: str = "tts-output",
         s3_region: str = "us-east-1",
     ):
         """
@@ -65,38 +68,45 @@ class IndexTTSWorker:
             rabbitmq_port: RabbitMQ server port
             rabbitmq_user: RabbitMQ username
             rabbitmq_password: RabbitMQ password
-            s3_bucket: S3 bucket for storing output audio
+            s3_storage_bucket: S3 bucket for audio prompts/voices (from S3_BUCKET_NAME)
+            s3_output_bucket: S3 bucket for TTS synthesis output (from S3_OUTPUT_BUCKET)
             s3_region: AWS region for S3
         """
         self.rabbitmq_host = rabbitmq_host
         self.rabbitmq_port = rabbitmq_port
         self.rabbitmq_user = rabbitmq_user
         self.rabbitmq_password = rabbitmq_password
-        self.s3_bucket = s3_bucket
+        self.s3_storage_bucket = s3_storage_bucket
+        self.s3_output_bucket = s3_output_bucket
         self.s3_region = s3_region
+        self.platform = platform.system()
+
+        logger.section("STARTUP")
+        logger.info(f"Platform:         {self.platform}")
 
         # Initialize TTS engine
-        logger.info(f"Running on: {platform.system()}")
         self._init_tts_engine()
+        logger.success("TTS engine initialized")
 
         # Initialize S3 client
         try:
             self.s3_client = S3Client()
-            logger.info("✓ S3 client initialized")
+            logger.success("S3 client initialized")
         except Exception as e:
-            logger.warning(f"S3 client initialization failed: {e}. Will retry on first use.")
+            logger.warning_icon(f"S3 client initialization failed: {e}. Will retry on first use.")
             self.s3_client = None
         
         # Initialize idempotent uploader
         self.uploader = None
         try:
             self.uploader = IdempotentUploader(self.s3_client)
-            logger.info("✓ Idempotent uploader initialized")
+            logger.success("Idempotent uploader initialized")
         except Exception as e:
-            logger.warning(f"Uploader initialization failed: {e}. Will initialize on first use.")
+            logger.warning_icon(f"Uploader initialization failed: {e}. Will initialize on first use.")
             self.uploader = None
 
         # Initialize circuit breakers
+        logger.subsection("Initializing Circuit Breakers")
         self.s3_breaker = get_circuit_breaker(
             name="S3Download",
             failure_threshold=5,
@@ -112,8 +122,6 @@ class IndexTTSWorker:
             half_open_max_calls=2,
             success_threshold=2,
         )
-        
-        logger.info("✓ Circuit breakers initialized")
 
         # Placeholder for RabbitMQ connection
         self.connection = None
@@ -125,18 +133,14 @@ class IndexTTSWorker:
         # Graceful shutdown support
         self._shutdown_requested = False
         self._setup_signal_handlers()
-        
-        # Shutdown flag for graceful termination
-        self._shutdown_requested = False
-        self._setup_signal_handlers()
 
     def _init_tts_engine(self):
         """Initialize the appropriate TTS engine based on platform."""
-        if platform.system() == "Darwin":
-            logger.info(">> Initializing macOS native TTS engine")
+        if self.platform == "Darwin":
+            logger.info("Initializing macOS native TTS engine (language: en-US)")
             self.tts = create_tts_engine(use_native_macos=True, language="en-US")
         else:
-            logger.info(">> Initializing IndexTTS GPU inference engine")
+            logger.info("Initializing IndexTTS GPU inference engine")
             self.tts = create_tts_engine(
                 use_native_macos=False,
                 cfg_path="checkpoints/config.yaml",
@@ -149,19 +153,8 @@ class IndexTTSWorker:
         """Set up signal handlers for graceful shutdown."""
         def signal_handler(signum, frame):
             """Handle shutdown signals."""
-            signal_name = "SIGTERM" if signum == signal.SIGTERM else "SIGINT"
-            logger.info(f"\n{signal_name} received, initiating graceful shutdown...")
-            self._shutdown_requested = True
-        
-        # Register handlers for SIGTERM and SIGINT
-        signal.signal(signal.SIGTERM, signal_handler)
-        signal.signal(signal.SIGINT, signal_handler)
-    
-    def _setup_signal_handlers(self):
-        """Setup signal handlers for graceful shutdown."""
-        def signal_handler(signum, frame):
             signal_name = signal.Signals(signum).name
-            logger.info(f"Received {signal_name} signal, initiating graceful shutdown...")
+            logger.info(f"\n{signal_name} received, initiating graceful shutdown...")
             self._shutdown_requested = True
             
             # Stop consuming new messages
@@ -170,12 +163,12 @@ class IndexTTSWorker:
                     self.channel.stop_consuming()
                     logger.info("Stopped consuming new messages")
                 except Exception as e:
-                    logger.warning(f"Error stopping consumer: {e}")
+                    logger.warning_icon(f"Error stopping consumer: {e}")
         
         # Register handlers for SIGTERM and SIGINT
         signal.signal(signal.SIGTERM, signal_handler)
         signal.signal(signal.SIGINT, signal_handler)
-        logger.info("✓ Signal handlers registered (SIGTERM, SIGINT)")
+        logger.success("Signal handlers registered (SIGTERM, SIGINT)")
 
     def connect_rabbitmq(self):
         """
@@ -184,7 +177,8 @@ class IndexTTSWorker:
         """
         try:
             rabbitmq_url = os.getenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
-            logger.info(f"Connecting to RabbitMQ: {rabbitmq_url.split('@')[1] if '@' in rabbitmq_url else 'local'}")
+            host_display = rabbitmq_url.split('@')[1] if '@' in rabbitmq_url else 'localhost'
+            logger.subsection(f"Connecting to RabbitMQ ({host_display})")
 
             # Parse the URL manually to extract components
             parsed = urlparse(rabbitmq_url)
@@ -211,10 +205,10 @@ class IndexTTSWorker:
             # Declare the queue (idempotent if it already exists)
             self.channel.queue_declare(queue="tts_jobs", durable=True)
             
-            logger.info("✓ Connected to RabbitMQ")
+            logger.success("Connected to RabbitMQ")
 
         except Exception as e:
-            logger.error(f"✗ Failed to connect to RabbitMQ: {str(e)}")
+            logger.failure(f"Failed to connect to RabbitMQ: {str(e)}")
             raise
 
     def disconnect_rabbitmq(self):
@@ -222,9 +216,9 @@ class IndexTTSWorker:
         try:
             if self.connection and not self.connection.is_closed:
                 self.connection.close()
-                logger.info("✓ Disconnected from RabbitMQ")
+                logger.success("Disconnected from RabbitMQ")
         except Exception as e:
-            logger.error(f"Error disconnecting from RabbitMQ: {str(e)}")
+            logger.warning_icon(f"Error disconnecting from RabbitMQ: {str(e)}")
 
     def process_job(self, job_data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -659,17 +653,25 @@ class IndexTTSWorker:
 
     def start(self):
         """Start the worker and begin consuming jobs from RabbitMQ."""
-        logger.info("Starting IndexTTS Worker...")
-        logger.info("=" * 70)
-        logger.info(f"Platform: {platform.system()}")
-        logger.info(f"S3 Bucket: {self.s3_bucket}")
-        logger.info("Circuit Breakers:")
-        for name, stats in get_all_circuit_breaker_stats().items():
-            logger.info(f"  - {name}: {stats['state']}")
-        logger.info("=" * 70)
-        
         try:
             self.connect_rabbitmq()
+            
+            # Log connection summary
+            logger.subsection("CONNECTIONS")
+            logger.info(f"S3 Storage Bucket:   {self.s3_storage_bucket}")
+            logger.info(f"S3 Output Bucket:    {self.s3_output_bucket}")
+            logger.info("")
+            
+            # Log circuit breaker status
+            cb_stats = get_all_circuit_breaker_stats()
+            log_startup_summary(
+                logger,
+                platform=self.platform,
+                s3_storage_bucket=self.s3_storage_bucket,
+                s3_output_bucket=self.s3_output_bucket,
+                rabbitmq_host=self.rabbitmq_host,
+                stats_dict=cb_stats,
+            )
 
             def callback(ch, method, properties, body):
                 """Handle incoming job message."""
@@ -720,9 +722,6 @@ class IndexTTSWorker:
                 auto_ack=False,
             )
 
-            logger.info("✓ Worker ready and listening for jobs...")
-            logger.info("Press CTRL+C to stop")
-            
             # Start consuming
             self.channel.start_consuming()
 
@@ -731,23 +730,18 @@ class IndexTTSWorker:
             self._shutdown_requested = True
             
         except Exception as e:
-            logger.error(f"Fatal error: {str(e)}")
+            logger.failure(f"Fatal error: {str(e)}")
             self._shutdown_requested = True
             
         finally:
             # Graceful shutdown: Print statistics
             if self._shutdown_requested:
-                logger.info("=" * 70)
-                logger.info("Graceful Shutdown Summary:")
-                logger.info(f"Processed jobs: {len(self._processed_jobs)}")
-                logger.info("Circuit Breaker Statistics:")
-                for name, stats in get_all_circuit_breaker_stats().items():
-                    logger.info(f"  {name}:")
-                    logger.info(f"    State: {stats['state']}")
-                    logger.info(f"    Successes: {stats['success_count']}")
-                    logger.info(f"    Failures: {stats['failure_count']}")
-                    logger.info(f"    Error Rate: {stats['error_rate']:.2%}")
-                logger.info("=" * 70)
+                cb_stats = get_all_circuit_breaker_stats()
+                log_shutdown_summary(
+                    logger,
+                    processed_count=len(self._processed_jobs),
+                    stats_dict=cb_stats,
+                )
             
             self.disconnect_rabbitmq()
 
@@ -758,7 +752,8 @@ if __name__ == "__main__":
         rabbitmq_port=int(os.getenv("RABBITMQ_PORT", 5672)),
         rabbitmq_user=os.getenv("RABBITMQ_USER", "guest"),
         rabbitmq_password=os.getenv("RABBITMQ_PASSWORD", "guest"),
-        s3_bucket=os.getenv("S3_BUCKET", "tts-output"),
+        s3_storage_bucket=os.getenv("S3_BUCKET", "studio"),
+        s3_output_bucket=os.getenv("S3_OUTPUT_BUCKET", "tts-output"),
         s3_region=os.getenv("AWS_REGION", "us-east-1"),
     )
     worker.start()

@@ -61,11 +61,15 @@ except ImportError:
     logging.warning("boto3 is not installed. Install with: pip install boto3")
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
-logger = logging.getLogger(__name__)
+try:
+    from services.logging_config import get_logger
+    logger = get_logger(__name__)
+except ImportError:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    )
+    logger = logging.getLogger(__name__)
 
 
 # S3 Path Structure Constants
@@ -158,7 +162,7 @@ class S3Client:
         # Initialize boto3 client with retry configuration
         self.client = self._create_client()
         
-        logger.info(f"S3 client initialized (endpoint: {self.endpoint_url}, bucket: {self.bucket_name})")
+        logger.info(f"S3 client initialized (endpoint: {self.endpoint_url})")
     
     def _validate_config(self) -> None:
         """Validate required S3 configuration."""
@@ -242,7 +246,7 @@ class S3Client:
                 Key=remote_path,
                 ExtraArgs=extra_args,
             )
-            logger.info(f"✓ Upload successful: {remote_path}")
+            logger.info(f"Upload successful: {remote_path}")
             return remote_path
             
         except (ClientError, BotoCoreError) as e:
