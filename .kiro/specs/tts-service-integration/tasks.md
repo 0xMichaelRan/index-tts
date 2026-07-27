@@ -37,7 +37,7 @@ This plan implements the TTS service integration across three repositories with 
 ### Phase 4: Official Landing Integration (Week 4-5)
 
 - [ ] 15. Create Playground UI component with text input and voice selector
-- [ ] 16. Implement SSE client streaming for real-time updates
+- [ ] 16. Implement HTTP polling client for TTS job status updates
 - [ ] 17. Implement audio playback component with S3 presigned URLs
 - [ ] 18. Implement graceful degradation for TTS service unavailability
 - [ ] 19. Implement i18n for playground with English and Chinese translations

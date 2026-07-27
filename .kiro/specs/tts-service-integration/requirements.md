@@ -36,7 +36,7 @@ The feature enables:
 - **Playground**: Anonymous TTS demonstration feature on official-landing
 - **Studio Backend**: Authenticated backend service managing TTS jobs and voice recordings
 - **S3**: Object storage service used for persisting synthesized audio results
-- **SSE (Server-Sent Events)**: HTTP protocol for streaming real-time updates to clients
+- **HTTP Polling**: Simple request-response pattern for checking job status at regular intervals
 - **Voice Catalog**: Database of voice recordings (user recordings + community voices) in studio-backend
 - **Playground Text**: Full text up to 200 words used for anonymous TTS demonstrations
 - **Studio Processed Text**: First 2 sentences of script text used for quick previews in studio-backend
@@ -92,8 +92,8 @@ The feature enables:
    - `job_type`: "studio"
    - `processed_text`: First 2 sentences of the script text (used for caching)
 10. THE Studio_Backend SHALL return appropriate response:
-   - 202 Accepted (new job): job_id, status="queued", stream_url, is_cached=false
-   - 200 OK (cached): job_id, status="completed", audio_path, audio_duration_seconds, is_cached=true
+   - 202 Accepted (new job): job_id, status="queued", is_cached=false
+   - 200 OK (cached): job_id, status="completed", audio_path, audio_duration_seconds, is_cached=true, cached_from_date
 11. WHEN the consumer receives a tts_results message, THE Studio_Backend SHALL:
    - Validate audio_path exists in S3 before updating record
    - For failed jobs, validate error_message is present
