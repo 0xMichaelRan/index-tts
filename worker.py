@@ -15,6 +15,6 @@ if __name__ == "__main__":
         rabbitmq_password=os.getenv("RABBITMQ_PASSWORD", "guest"),
         s3_storage_bucket=os.getenv("S3_BUCKET_NAME", "studio"),
         s3_output_bucket=os.getenv("S3_OUTPUT_BUCKET", "tts-output"),
-        s3_region=os.getenv("AWS_REGION", "us-east-1"),
+        s3_region=os.getenv("S3_REGION", "us-east-1"),
     )
     worker.start()
