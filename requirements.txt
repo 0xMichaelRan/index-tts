@@ -11,7 +11,7 @@
 #   conda activate index-tts
 #   pip install -e .
 #
-# This file is kept temporarily for backward compatibility only.
+# This file is DEPRECATED.
 # ---------------------------------------------------------------------
 
 accelerate==0.25.0
