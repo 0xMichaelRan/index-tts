@@ -54,8 +54,8 @@ except ImportError:
 # S3 Path Structure Constants
 PATH_STRUCTURE = {
     "audio_prompts": "audio-prompts",
-    "tts_output_studio": "ttsoutput/studio",
-    "tts_output_playground": "ttsoutput/playground",
+    "tts_output_studio": "tts-audio/studio",
+    "tts_output_playground": "tts-audio/playground",
     "logs_worker": "logs/worker",
     "logs_backend": "logs/backend",
 }
@@ -63,7 +63,7 @@ PATH_STRUCTURE = {
 # Lifecycle configuration (for documentation - Supabase may not support all features)
 LIFECYCLE_RULES = {
     "playground_cleanup": {
-        "prefix": "ttsoutput/playground/",
+        "prefix": "tts-audio/playground/",
         "expiration_days": 1,
         "description": "Delete playground outputs after 24 hours",
     },
@@ -733,7 +733,7 @@ def main():
         print("\n✓ S3 configuration completed successfully")
         print("\nNext steps:")
         print("1. Configure lifecycle rules in Supabase dashboard:")
-        print("   - Playground cleanup: ttsoutput/playground/ → Delete after 1 day")
+        print("   - Playground cleanup: tts-audio/playground/ → Delete after 1 day")
         print("   - Log archival: logs/ → Archive after 30 days, delete after 365 days")
         print("2. Configure CORS for cross-origin access if needed")
         print("3. Test upload/download with: python -m services.s3_config --test")

@@ -18,7 +18,7 @@ Usage:
     s3_path = uploader.upload_with_retry(
         job_id="job-123",
         local_path="/tmp/audio.wav",
-        remote_path="ttsoutput/studio/job-123.wav",
+        remote_path="tts-audio/studio/job-123.wav",
         max_retries=3
     )
 """

@@ -1,5 +1,13 @@
 # Dual S3 Bucket Configuration Guide - IndexTTS Worker
 
+## Quick Reference - Path Standardization
+
+**Key Rules** (applies to both backend and worker):
+- ✓ Voice recordings: Storage Bucket → `voice-recordings/`
+- ✓ Voice prompts: Storage Bucket → `audio-prompts/`
+- ✓ **ALL TTS output: Output Bucket → `tts-audio/`**
+- ✓ Thumbnails: Output Bucket → `thumbnails/`
+
 ## Overview
 
 The IndexTTS Worker supports **separate S3 buckets** for storage and output, allowing independent management of:
@@ -45,7 +53,7 @@ Set **all** of these variables in `.env` file in project root:
 S3_STORAGE_ENDPOINT_URL=https://storage-region.example.com/s3
 S3_STORAGE_ACCESS_KEY_ID=storage_key_123
 S3_STORAGE_SECRET_ACCESS_KEY=storage_secret_abc
-S3_STORAGE_BUCKET_NAME=voice-library
+S3_STORAGE_BUCKET_NAME=bucket-name
 S3_STORAGE_REGION=ap-southeast-1
 S3_STORAGE_USE_SSL=true
 
@@ -53,7 +61,7 @@ S3_STORAGE_USE_SSL=true
 S3_OUTPUT_ENDPOINT_URL=https://output-region.example.com/s3
 S3_OUTPUT_ACCESS_KEY_ID=output_key_456
 S3_OUTPUT_SECRET_ACCESS_KEY=output_secret_def
-S3_OUTPUT_BUCKET_NAME=tts-output
+S3_OUTPUT_BUCKET_NAME=bucket-name
 S3_OUTPUT_REGION=us-west-2
 S3_OUTPUT_USE_SSL=true
 ```
@@ -89,28 +97,36 @@ S3_OUTPUT_USE_SSL=true
 ### Storage Bucket (Read-Only During Synthesis)
 
 ```
-voice-library/
-├── audio-prompts/
-│   ├── voice_001.wav         # Voice prompt audio files
-│   ├── voice_002.wav
-│   └── voice_003.wav
-└── metadata/
-    ├── voice_001.json        # Voice metadata files
-    └── voice_002.json
+voice-library/  (or your S3_STORAGE_BUCKET_NAME)
+├── voice-recordings/
+│   ├── user/{user_id}/{uuid}.webm    # User voice recordings
+│   ├── stock/{uuid}.webm             # Stock voices
+│   └── ...
+└── audio-prompts/
+    ├── voice_001.wav                 # Voice prompts for synthesis
+    ├── voice_002.wav
+    └── ...
 ```
 
 ### Output Bucket (Write-Only During Synthesis)
 
 ```
-tts-output/
-├── studio/
-│   ├── job_abc123.wav        # Long-term TTS results (projects)
-│   ├── job_abc123.json       # Job metadata
-│   └── job_def456.wav
-└── playground/
-    ├── job_xyz789.wav        # Temporary TTS (24h retention)
-    └── job_xyz789.json
+tts-output/  (or your S3_OUTPUT_BUCKET_NAME)
+├── tts-audio/
+│   ├── studio/
+│   │   ├── job_123.mp3               # Worker uploads TTS results here
+│   │   ├── job_456.mp3
+│   │   └── ...
+│   └── playground/
+│       ├── job_789.mp3               # Temporary TTS (24h retention)
+│       └── ...
+└── thumbnails/
+    └── ...
 ```
+
+**Path Format Standard**:
+- Studio TTS: `tts-audio/studio/{job_id}.mp3` (not `studio/{job_id}.wav`)
+- Playground TTS: `tts-audio/playground/{job_id}.mp3` (not `playground/{job_id}.wav`)
 
 ## Worker Behavior
 
@@ -125,9 +141,9 @@ tts-output/
    - No S3 access during synthesis
 
 3. **Upload phase** (to output bucket):
-   - Uploads result: `{studio|playground}/{job_id}.wav`
+   - Formats path from template: `tts-audio/studio/{job_id}.mp3`
+   - Uploads result: `tts-audio/studio/{job_id}.mp3` or `tts-audio/playground/{job_id}.mp3`
    - Uses `bucket_type="output"` parameter
-   - Uploads metadata: `{studio|playground}/{job_id}.json`
 
 ### Bucket Routing Logic
 
@@ -155,14 +171,14 @@ s3_client.upload_file(
 S3_STORAGE_ENDPOINT_URL=https://abcdef.supabase.co/storage/v1/s3
 S3_STORAGE_ACCESS_KEY_ID=supabase_key_123
 S3_STORAGE_SECRET_ACCESS_KEY=supabase_secret_xyz
-S3_STORAGE_BUCKET_NAME=voice-library
+S3_STORAGE_BUCKET_NAME=bucket-name
 S3_STORAGE_REGION=ap-southeast-1
 S3_STORAGE_USE_SSL=true
 
 S3_OUTPUT_ENDPOINT_URL=https://abcdef.supabase.co/storage/v1/s3
 S3_OUTPUT_ACCESS_KEY_ID=supabase_key_123
 S3_OUTPUT_SECRET_ACCESS_KEY=supabase_secret_xyz
-S3_OUTPUT_BUCKET_NAME=tts-output
+S3_OUTPUT_BUCKET_NAME=bucket-name
 S3_OUTPUT_REGION=ap-southeast-1
 S3_OUTPUT_USE_SSL=true
 ```
@@ -176,7 +192,7 @@ S3_OUTPUT_USE_SSL=true
 S3_STORAGE_ENDPOINT_URL=https://s3.ap-southeast-1.amazonaws.com
 S3_STORAGE_ACCESS_KEY_ID=aws_key_123
 S3_STORAGE_SECRET_ACCESS_KEY=aws_secret_xyz
-S3_STORAGE_BUCKET_NAME=voice-library
+S3_STORAGE_BUCKET_NAME=bucket-name
 S3_STORAGE_REGION=ap-southeast-1
 S3_STORAGE_USE_SSL=true
 
@@ -198,7 +214,7 @@ S3_OUTPUT_USE_SSL=true
 S3_STORAGE_ENDPOINT_URL=http://127.0.0.1:9000
 S3_STORAGE_ACCESS_KEY_ID=minioadmin
 S3_STORAGE_SECRET_ACCESS_KEY=minioadmin
-S3_STORAGE_BUCKET_NAME=voice-library
+S3_STORAGE_BUCKET_NAME=bucket-name
 S3_STORAGE_REGION=us-east-1
 S3_STORAGE_USE_SSL=false
 
@@ -206,7 +222,7 @@ S3_STORAGE_USE_SSL=false
 S3_OUTPUT_ENDPOINT_URL=http://127.0.0.1:9000
 S3_OUTPUT_ACCESS_KEY_ID=minioadmin
 S3_OUTPUT_SECRET_ACCESS_KEY=minioadmin
-S3_OUTPUT_BUCKET_NAME=tts-output
+S3_OUTPUT_BUCKET_NAME=bucket-name
 S3_OUTPUT_REGION=us-east-1
 S3_OUTPUT_USE_SSL=false
 ```
@@ -383,12 +399,12 @@ Ensure bucket names match between worker and backend:
 
 ```bash
 # Worker .env
-S3_STORAGE_BUCKET_NAME=voice-library
-S3_OUTPUT_BUCKET_NAME=tts-output
+S3_STORAGE_BUCKET_NAME=bucket-name
+S3_OUTPUT_BUCKET_NAME=bucket-name
 
 # Backend .env (should match)
-S3_STORAGE_BUCKET_NAME=voice-library
-S3_OUTPUT_BUCKET_NAME=tts-output
+S3_STORAGE_BUCKET_NAME=bucket-name
+S3_OUTPUT_BUCKET_NAME=bucket-name
 ```
 
 If bucket names don't match, worker won't find voice prompts or backend won't find TTS results.
@@ -454,4 +470,3 @@ url = s3_client.generate_presigned_url(
 - `services/s3_config.py` - S3 client implementation
 - `services/idempotent_upload.py` - Upload integrity verification
 - `services/circuit_breaker.py` - Resilience patterns
-- Studio Backend `docs/S3_DUAL_BUCKET_GUIDE.md` - Backend-side configuration

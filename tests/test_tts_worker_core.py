@@ -278,7 +278,7 @@ class TestJobProcessingFlow:
         # Mock synthesis
         worker._download_audio_prompt = Mock(return_value="/tmp/prompt.wav")
         worker._synthesize_audio = Mock(return_value="/tmp/output.wav")
-        worker._upload_to_s3_idempotent = Mock(return_value="tts-output/studio/job-123.wav")
+        worker._upload_to_s3_idempotent = Mock(return_value="tts-audio/studio/job-123.wav")
         worker._get_audio_duration = Mock(return_value=15.5)
         worker._cleanup_local_files = Mock()
         
@@ -303,7 +303,7 @@ class TestJobProcessingFlow:
         # Verify result structure
         assert result['job_id'] == 'job-123'
         assert result['status'] == 'completed'
-        assert result['audio_path'] == 'tts-output/studio/job-123.wav'
+        assert result['audio_path'] == 'tts-audio/studio/job-123.wav'
         assert result['audio_duration_seconds'] == 15.5
         assert 'synthesis_duration_seconds' in result
         assert result['retry_count'] == 0

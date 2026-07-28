@@ -59,12 +59,12 @@ Each bucket can have:
 ### S3 Storage Structure
 
 ```
-Storage Bucket (e.g., "voice-library"):
+Storage Bucket:
 ├── audio-prompts/
 │   ├── {voice_id}.wav               # Worker reads voice prompts
 │   └── {voice_id}.json              # Voice metadata
 
-Output Bucket (e.g., "tts-output"):
+Output Bucket:
 ├── tts-audio/
 │   ├── studio/{job_id}.mp3          # Worker uploads studio TTS results (long-term)
 │   └── playground/{job_id}.mp3      # Worker uploads playground TTS (temporary, 30d retention)
@@ -91,7 +91,7 @@ RABBITMQ_HOST=localhost                 # For startup logs
 S3_STORAGE_ENDPOINT_URL=https://storage-provider.com/s3
 S3_STORAGE_ACCESS_KEY_ID=storage-key
 S3_STORAGE_SECRET_ACCESS_KEY=storage-secret
-S3_STORAGE_BUCKET_NAME=voice-library
+S3_STORAGE_BUCKET_NAME=bucket-name
 S3_STORAGE_REGION=ap-southeast-1
 S3_STORAGE_USE_SSL=true
 
@@ -99,7 +99,7 @@ S3_STORAGE_USE_SSL=true
 S3_OUTPUT_ENDPOINT_URL=https://output-provider.com/s3
 S3_OUTPUT_ACCESS_KEY_ID=output-key
 S3_OUTPUT_SECRET_ACCESS_KEY=output-secret
-S3_OUTPUT_BUCKET_NAME=tts-output
+S3_OUTPUT_BUCKET_NAME=bucket-name
 S3_OUTPUT_REGION=us-east-1
 S3_OUTPUT_USE_SSL=true
 ```
