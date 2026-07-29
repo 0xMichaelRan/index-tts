@@ -383,5 +383,52 @@ class TestCircuitBreakerIntegration:
         # This is tested implicitly through the circuit breaker's internal state
 
 
+class TestCleanupFix:
+    """Test cleanup of None paths."""
+
+    @patch('services.tts_worker.S3Client')
+    def test_cleanup_local_files_handles_none(self, mock_s3):
+        """Test that _cleanup_local_files handles None paths without raising error."""
+        worker = IndexTTSWorker()
+        # Should not raise TypeError when passed None
+        worker._cleanup_local_files("non_existent_file.wav", None)
+
+    @patch('services.tts_worker.S3Client')
+    @patch('services.tts_worker.IdempotentUploader')
+    @patch('services.tts_worker.platform.system')
+    @patch('services.tts_worker.create_tts_engine')
+    def test_infer_fast_not_called_with_language(self, mock_create_engine, mock_platform, mock_uploader, mock_s3):
+        """Test that language kwarg is NOT passed to IndexTTS.infer_fast (it auto-detects from text)."""
+        mock_platform.return_value = "Linux"
+        mock_tts_engine = Mock()
+        mock_create_engine.return_value = mock_tts_engine
+
+        worker = IndexTTSWorker()
+        worker.s3_client = Mock()
+        worker.uploader = Mock()
+        worker.tts.infer_fast = Mock(return_value="/fake/output.wav")
+        worker.tts.infer = Mock(return_value="/fake/output.wav")
+        worker._download_audio_prompt = Mock(return_value="/fake/prompt.wav")
+        worker._upload_to_s3_idempotent = Mock(return_value="s3://bucket/output.wav")
+        worker._get_audio_duration = Mock(return_value=5.0)
+        worker._cleanup_local_files = Mock()
+
+        job_data = {
+            "job_id": "lang-test",
+            "text": "Hello world",
+            "audio_prompt_path": "audio-prompts/voice.wav",
+            "language": "zh",
+            "job_type": "studio",
+            "output_path_template": "tts-audio/studio/{job_id}.mp3",
+        }
+        worker.process_job(job_data)
+
+        # Verify infer_fast was called and language was NOT passed as a kwarg
+        assert worker.tts.infer_fast.called
+        call_kwargs = worker.tts.infer_fast.call_args[1]
+        assert "language" not in call_kwargs, "language should NOT be passed to IndexTTS.infer_fast"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+

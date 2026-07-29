@@ -538,12 +538,11 @@ class IndexTTSWorker:
                 language=language,
             )
         else:
-            # IndexTTS GPU inference
+            # IndexTTS GPU inference — language is auto-detected from text
             self.tts.infer_fast(
                 audio_prompt=audio_prompt,
                 text=text,
                 output_path=output_path,
-                language=language,
             )
 
         logger.info(f"[JOB {job_id}] Synthesis complete: {output_path}")
@@ -641,6 +640,8 @@ class IndexTTSWorker:
     def _cleanup_local_files(self, *paths: str):
         """Remove local temporary files."""
         for path in paths:
+            if not path:
+                continue
             try:
                 if os.path.exists(path):
                     os.remove(path)
