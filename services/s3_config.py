@@ -80,7 +80,6 @@ class S3ConfigError(Exception):
     """Raised when S3 configuration or operation fails."""
 
 
-
 class S3Client:
     """
     Dual-bucket S3-compatible storage client.
@@ -327,7 +326,7 @@ class S3Client:
             content_type = self._get_content_type(local_path)
 
         extra_args = {"ContentType": content_type}
-        
+
         # NOTE: Filebase and some S3 services don't support S3 user-defined metadata
         # on PUT operations. Do NOT add empty/None metadata to extra_args to avoid
         # parameter validation errors in boto3.
@@ -349,7 +348,9 @@ class S3Client:
             return remote_path
 
         except (ClientError, BotoCoreError) as e:
-            error_msg = f"Failed to upload {local_path} to {bucket_name}/{remote_path}: {e!s}"
+            error_msg = (
+                f"Failed to upload {local_path} to {bucket_name}/{remote_path}: {e!s}"
+            )
             logger.error(error_msg)
             raise S3ConfigError(error_msg) from e
 
@@ -380,7 +381,7 @@ class S3Client:
         # - S3 object tags (via separate API call)
         # - Encoded in the object key/path
         # - Stored in a separate database/metadata service
-        
+
         # For now, just upload without metadata
         return self.upload_file(
             local_path=local_path,

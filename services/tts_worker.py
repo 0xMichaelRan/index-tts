@@ -94,7 +94,7 @@ class IndexTTSWorker:
             self.rabbitmq_password = rabbitmq_password
 
         self.platform = platform.system()
-        
+
         # S3 bucket names (will be set by S3Client during initialization)
         self.s3_storage_bucket = None
         self.s3_output_bucket = None
@@ -819,7 +819,7 @@ class IndexTTSWorker:
 if __name__ == "__main__":
     # Read RabbitMQ URL from environment (supports CloudAMQP URLs)
     rabbitmq_url = os.getenv("RABBITMQ_URL")
-    
+
     worker = IndexTTSWorker(
         rabbitmq_url=rabbitmq_url,
         rabbitmq_host=os.getenv("RABBITMQ_HOST", "localhost"),

@@ -15,7 +15,7 @@ Queue Architecture:
 
 Usage:
     from services.rabbitmq_config import configure_queues
-    
+
     # Configure all queues (idempotent)
     configure_queues(
         rabbitmq_url="amqp://guest:guest@localhost:5672/"
@@ -30,6 +30,7 @@ from urllib.parse import urlparse
 
 try:
     import pika
+
     PIKA_AVAILABLE = True
 except ImportError:
     PIKA_AVAILABLE = False
@@ -83,32 +84,33 @@ QUEUE_CONFIGS = {
 
 class RabbitMQConnectionError(Exception):
     """Raised when RabbitMQ connection fails."""
+
     pass
 
 
 def _parse_rabbitmq_url(url: str) -> Dict[str, Any]:
     """
     Parse RabbitMQ connection URL.
-    
+
     Args:
         url: RabbitMQ URL (e.g., "amqp://user:pass@host:port/vhost")
-        
+
     Returns:
         Connection parameters dictionary
-        
+
     Raises:
         ValueError: If URL format is invalid
     """
     try:
         parsed = urlparse(url)
-        
+
         # Default values
         host = parsed.hostname or "localhost"
         port = parsed.port or 5672
         username = parsed.username or "guest"
         password = parsed.password or "guest"
         vhost = parsed.path.lstrip("/") or "/"
-        
+
         return {
             "host": host,
             "port": port,
@@ -126,15 +128,15 @@ def _connect_with_retry(
 ) -> pika.BlockingConnection:
     """
     Connect to RabbitMQ with exponential backoff retry.
-    
+
     Args:
         connection_params: Pika connection parameters
         max_retries: Maximum number of retry attempts
         retry_delay: Initial retry delay in seconds
-        
+
     Returns:
         Active RabbitMQ connection
-        
+
     Raises:
         RabbitMQConnectionError: If connection fails after all retries
     """
@@ -149,7 +151,7 @@ def _connect_with_retry(
                 raise RabbitMQConnectionError(
                     f"Failed to connect to RabbitMQ after {max_retries} attempts: {str(e)}"
                 ) from e
-            
+
             delay = retry_delay * (2 ** (attempt - 1))  # Exponential backoff
             logger.warning(
                 f"Connection failed: {str(e)}. Retrying in {delay} seconds..."
@@ -164,9 +166,9 @@ def configure_queue(
 ) -> None:
     """
     Configure a single queue with the specified parameters.
-    
+
     This function is idempotent - it can be safely called multiple times.
-    
+
     Args:
         channel: RabbitMQ channel
         queue_name: Name of the queue to configure
@@ -179,12 +181,12 @@ def configure_queue(
             arguments=config.get("arguments", {}),
         )
         logger.info(f"✓ Queue '{queue_name}' configured successfully")
-        
+
         # Log queue arguments for debugging
         if config.get("arguments"):
             for key, value in config["arguments"].items():
                 logger.debug(f"  {key}: {value}")
-                
+
     except Exception as e:
         logger.error(f"✗ Failed to configure queue '{queue_name}': {str(e)}")
         raise
@@ -197,23 +199,23 @@ def configure_queues(
 ) -> None:
     """
     Configure all RabbitMQ queues for the TTS service.
-    
+
     This function is idempotent and can be safely run multiple times.
     It will create or update the following queues:
     - tts_jobs (main job queue with DLQ)
     - tts_results (result queue with DLQ)
     - tts_jobs_dlq (dead-letter queue for failed jobs)
     - tts_results_dlq (dead-letter queue for failed results)
-    
+
     Args:
         rabbitmq_url: RabbitMQ connection URL (default: from RABBITMQ_URL env var)
         max_retries: Maximum connection retry attempts
         retry_delay: Initial retry delay in seconds
-        
+
     Raises:
         ImportError: If pika is not installed
         RabbitMQConnectionError: If connection fails after retries
-        
+
     Example:
         >>> configure_queues("amqp://guest:guest@localhost:5672/")
         >>> # Or use environment variable
@@ -225,7 +227,7 @@ def configure_queues(
             "pika is required for RabbitMQ configuration. "
             "Install it with: pip install pika"
         )
-    
+
     # Get RabbitMQ URL from parameter or environment
     url = rabbitmq_url or os.getenv("RABBITMQ_URL")
     if not url:
@@ -233,35 +235,37 @@ def configure_queues(
             "RabbitMQ URL not provided. Set RABBITMQ_URL environment variable "
             "or pass rabbitmq_url parameter."
         )
-    
+
     logger.info("=" * 70)
     logger.info("Starting RabbitMQ Queue Configuration")
     logger.info("=" * 70)
-    
+
     connection = None
     try:
         # Parse URL and create connection parameters
         conn_params_dict = _parse_rabbitmq_url(url)
         connection_params = pika.ConnectionParameters(**conn_params_dict)
-        
-        logger.info(f"RabbitMQ Host: {conn_params_dict['host']}:{conn_params_dict['port']}")
+
+        logger.info(
+            f"RabbitMQ Host: {conn_params_dict['host']}:{conn_params_dict['port']}"
+        )
         logger.info(f"Virtual Host: {conn_params_dict['virtual_host']}")
-        
+
         # Connect with retry logic
         connection = _connect_with_retry(connection_params, max_retries, retry_delay)
         channel = connection.channel()
-        
+
         # Configure each queue
         logger.info("\nConfiguring queues...")
         logger.info("-" * 70)
-        
+
         for queue_name, config in QUEUE_CONFIGS.items():
             configure_queue(channel, queue_name, config)
-        
+
         logger.info("-" * 70)
         logger.info("✓ All queues configured successfully")
         logger.info("=" * 70)
-        
+
     except RabbitMQConnectionError:
         logger.error("Failed to connect to RabbitMQ")
         raise
@@ -277,33 +281,33 @@ def configure_queues(
 def get_queue_info(rabbitmq_url: Optional[str] = None) -> Dict[str, Any]:
     """
     Get information about configured queues.
-    
+
     Args:
         rabbitmq_url: RabbitMQ connection URL (default: from RABBITMQ_URL env var)
-        
+
     Returns:
         Dictionary with queue information
-        
+
     Raises:
         ImportError: If pika is not installed
         RabbitMQConnectionError: If connection fails
     """
     if not PIKA_AVAILABLE:
         raise ImportError("pika is required. Install it with: pip install pika")
-    
+
     url = rabbitmq_url or os.getenv("RABBITMQ_URL")
     if not url:
         raise ValueError("RabbitMQ URL not provided")
-    
+
     connection = None
     queue_info = {}
-    
+
     try:
         conn_params_dict = _parse_rabbitmq_url(url)
         connection_params = pika.ConnectionParameters(**conn_params_dict)
         connection = pika.BlockingConnection(connection_params)
         channel = connection.channel()
-        
+
         for queue_name in QUEUE_CONFIGS.keys():
             try:
                 # Passive declare to get queue info without creating it
@@ -316,9 +320,9 @@ def get_queue_info(rabbitmq_url: Optional[str] = None) -> Dict[str, Any]:
                 queue_info[queue_name] = {"exists": False}
                 # Reopen channel after error
                 channel = connection.channel()
-        
+
         return queue_info
-        
+
     finally:
         if connection and not connection.is_closed:
             connection.close()
@@ -327,10 +331,10 @@ def get_queue_info(rabbitmq_url: Optional[str] = None) -> Dict[str, Any]:
 def main():
     """CLI entry point for queue configuration."""
     import sys
-    
+
     # Parse command line arguments
     rabbitmq_url = sys.argv[1] if len(sys.argv) > 1 else None
-    
+
     try:
         configure_queues(rabbitmq_url)
         print("\n✓ Queue configuration completed successfully")

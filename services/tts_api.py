@@ -133,5 +133,5 @@ async def infer(audio_prompt: UploadFile = File(None), text: str = Form(...)):
 if __name__ == "__main__":
     import uvicorn
 
-    print(f"Access the API at http://127.0.0.1:8848/docs#/")
+    print("Access the API at http://127.0.0.1:8848/docs#/")
     uvicorn.run(app, host="0.0.0.0", port=8848)

@@ -6,7 +6,6 @@ Usage: uv run monitor.py
 """
 
 import os
-import json
 import time
 import logging
 from datetime import datetime
@@ -48,8 +47,10 @@ class WorkerMonitor:
     def connect_rabbitmq(self):
         """Connect to RabbitMQ."""
         try:
-            rabbitmq_url = os.getenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
-            logger.info(f"Connecting to RabbitMQ...")
+            rabbitmq_url = os.getenv(
+                "RABBITMQ_URL", "amqp://guest:guest@localhost:5672/"
+            )
+            logger.info("Connecting to RabbitMQ...")
 
             parsed = urlparse(rabbitmq_url)
 
@@ -92,13 +93,17 @@ class WorkerMonitor:
         """Get current queue status from RabbitMQ."""
         try:
             # Get queue stats
-            method, properties, body = self.channel.basic_get(queue="tts_jobs", auto_ack=False)
+            method, properties, body = self.channel.basic_get(
+                queue="tts_jobs", auto_ack=False
+            )
             if method:
                 self.channel.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
 
             # Declare passive to get stats without modifying
             tts_jobs_method = self.channel.queue_declare(queue="tts_jobs", passive=True)
-            tts_results_method = self.channel.queue_declare(queue="tts_results", passive=True)
+            tts_results_method = self.channel.queue_declare(
+                queue="tts_results", passive=True
+            )
 
             status = {
                 "tts_jobs_pending": tts_jobs_method.method.message_count,
@@ -118,7 +123,9 @@ class WorkerMonitor:
     def print_status(self, status: Dict[str, Any]):
         """Pretty print the status."""
         print("\n" + "=" * 70)
-        print(f"📊 WORKER STATUS MONITOR - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print(
+            f"📊 WORKER STATUS MONITOR - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        )
         print("=" * 70)
 
         if "error" in status:
@@ -128,14 +135,14 @@ class WorkerMonitor:
             tts_results = status.get("tts_results_pending", 0)
 
             # Queue status
-            print(f"\n📋 Queue Status:")
+            print("\n📋 Queue Status:")
             print(f"   TTS Jobs (pending):   {tts_jobs:>5}")
             print(f"   TTS Results (pending):{tts_results:>5}")
 
             # Visual indicators
-            print(f"\n📈 Queue Health:")
+            print("\n📈 Queue Health:")
             if tts_jobs == 0:
-                print(f"   ✓ TTS Jobs queue is empty (worker is idle)")
+                print("   ✓ TTS Jobs queue is empty (worker is idle)")
             elif tts_jobs < 5:
                 print(f"   ⚠️  {tts_jobs} jobs queued (light load)")
             elif tts_jobs < 20:
@@ -147,7 +154,7 @@ class WorkerMonitor:
                 print(f"   ℹ️  {tts_results} results pending delivery")
 
             # Throughput (basic estimate)
-            print(f"\n⏱️  Metrics:")
+            print("\n⏱️  Metrics:")
             print(f"   Last check: {status.get('timestamp', 'N/A')}")
 
     def disconnect(self):

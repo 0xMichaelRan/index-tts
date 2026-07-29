@@ -1,13 +1,12 @@
-
 import platform
-import os
 from setuptools import find_packages, setup
 
 # add fused `anti_alias_activation` cuda extension if CUDA is available
 anti_alias_activation_cuda_ext = None
-if  platform.system() != "Darwin":
+if platform.system() != "Darwin":
     try:
         from torch.utils import cpp_extension
+
         if cpp_extension.CUDA_HOME is not None:
             anti_alias_activation_cuda_ext = cpp_extension.CUDAExtension(
                 name="indextts.BigVGAN.alias_free_activation.cuda.anti_alias_activation_cuda",
@@ -29,7 +28,9 @@ if  platform.system() != "Darwin":
                 },
             )
         else:
-            print("CUDA_HOME is not set. Skipping anti_alias_activation CUDA extension.")
+            print(
+                "CUDA_HOME is not set. Skipping anti_alias_activation CUDA extension."
+            )
     except ImportError:
         print("PyTorch is not installed. Skipping torch extension.")
 
@@ -61,8 +62,12 @@ setup(
     extras_require={
         "webui": ["gradio"],
     },
-    ext_modules=[anti_alias_activation_cuda_ext] if anti_alias_activation_cuda_ext else [],
-    cmdclass={"build_ext": cpp_extension.BuildExtension} if anti_alias_activation_cuda_ext else {},
+    ext_modules=[anti_alias_activation_cuda_ext]
+    if anti_alias_activation_cuda_ext
+    else [],
+    cmdclass={"build_ext": cpp_extension.BuildExtension}
+    if anti_alias_activation_cuda_ext
+    else {},
     entry_points={
         "console_scripts": [
             "indextts = indextts.cli:main",

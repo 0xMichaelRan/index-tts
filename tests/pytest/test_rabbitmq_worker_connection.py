@@ -1,4 +1,5 @@
 """Test to verify RabbitMQ worker connection."""
+
 import os
 from pathlib import Path
 from urllib.parse import urlparse
@@ -34,10 +35,7 @@ class TestRabbitMQWorkerConnection:
     @pytest.fixture
     def rabbitmq_url(self):
         """Get RabbitMQ URL from environment."""
-        return os.getenv(
-            "RABBITMQ_URL",
-            "amqp://guest:guest@localhost:5672/"
-        )
+        return os.getenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
 
     @pytest.fixture
     def connection_params(self, rabbitmq_url):
@@ -91,7 +89,7 @@ class TestRabbitMQWorkerConnection:
     def test_connection_details_parsed_correctly(self, rabbitmq_url):
         """Test that RabbitMQ URL is parsed correctly."""
         params = parse_rabbitmq_url(rabbitmq_url)
-        
+
         assert params["host"] is not None, "Host should be parsed"
         assert params["port"] is not None, "Port should be parsed"
         assert params["username"] is not None, "Username should be parsed"

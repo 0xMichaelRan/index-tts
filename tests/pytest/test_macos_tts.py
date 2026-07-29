@@ -24,8 +24,8 @@ class TestMacOSTTS:
         except RuntimeError as e:
             if "macOS native TTS" in str(e):
                 pytest.skip(
-                    f"macOS TTS dependencies not installed. "
-                    f"Install with: pip install 'indextts-worker[mac]'"
+                    "macOS TTS dependencies not installed. "
+                    "Install with: pip install 'indextts-worker[mac]'"
                 )
             raise
 
