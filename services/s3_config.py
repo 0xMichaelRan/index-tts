@@ -388,6 +388,7 @@ class S3Client:
             remote_path=remote_path,
             bucket_type=bucket_type,
             metadata=None,  # Disable metadata for Filebase compatibility
+            # metadata=metadata,
             content_type="audio/wav",
         )
 

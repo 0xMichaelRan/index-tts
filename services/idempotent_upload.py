@@ -272,14 +272,12 @@ class IdempotentUploader:
                 )
 
                 # Upload file to output bucket (TTS results)
-                # NOTE: metadata parameter is deliberately NOT passed to avoid
-                # AccessDenied errors on S3 services that don't support metadata
                 self.s3_client.upload_audio(
                     local_path=local_path,
                     remote_path=remote_path,
                     bucket_type=bucket_type,
                     job_id=job_id,
-                    metadata=None,  # Disable metadata to support Filebase
+                    metadata=metadata.to_dict(),
                 )
 
                 logger.info(
