@@ -6,7 +6,26 @@ IndexTTS Worker is a 24/7 background service that processes TTS synthesis jobs f
 
 ## Environment & Package Management
 
-**Important**: Always use `uv` (not `pip` or `python` directly) for running commands in this project.
+**Important**: On Windows, always activate the conda environment first before running any Python commands.
+
+### Windows Setup
+
+Before running any Python commands, activate the conda environment:
+
+```powershell
+conda activate index-tts
+```
+
+Then you can run Python commands normally:
+
+```bash
+python -m services.tts_worker
+python -m pytest tests/pytest/test_tts_worker_core.py
+```
+
+**Note**: Do NOT use `uv` on Windows. The project uses conda for environment management on Windows.
+
+### Package manager
 
 - **Package manager**: `uv` (see https://docs.astral.sh/uv/getting-started/installation/)
 - **Python version**: 3.12+ (specified in `.python-version`)
@@ -23,10 +42,10 @@ uv run ruff check .       # Lint code
 ```
 
 Never use:
-- `python -m pytest` → use `uv run pytest` instead
-- `python script.py` → use `uv run python script.py` instead
+- `python -m pytest` → use `uv run pytest` instead (on non-Windows)
+- `python script.py` → use `uv run python script.py` instead (on non-Windows)
 - `pip install ...` → use `uv add ...` instead
-- `python -m py_compile` → use `uv run python -m py_compile` instead
+- `python -m py_compile` → use `uv run python -m py_compile` instead (on non-Windows)
 
 ## Architecture
 

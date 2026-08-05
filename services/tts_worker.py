@@ -159,6 +159,12 @@ class IndexTTSWorker:
 
         # Graceful shutdown support
         self._shutdown_requested = False
+        
+        # Reconnection tracking
+        self._reconnect_delay = 5  # Initial reconnection delay in seconds
+        self._max_reconnect_delay = 300  # Maximum delay (5 minutes)
+        self._reconnect_attempts = 0
+        
         self._setup_signal_handlers()
 
     def _init_tts_engine(self):
@@ -202,6 +208,7 @@ class IndexTTSWorker:
         """
         Connect to RabbitMQ using the configured URL or individual parameters.
         Supports CloudAMQP and standard RabbitMQ URLs.
+        Implements automatic reconnection with exponential backoff.
         """
         try:
             # Use URL if provided, otherwise construct from individual parameters
@@ -260,10 +267,66 @@ class IndexTTSWorker:
             self.channel.queue_declare(queue="tts_jobs", durable=True)
 
             logger.success("Connected to RabbitMQ")
+            
+            # Reset reconnection tracking on successful connection
+            self._reconnect_attempts = 0
+            self._reconnect_delay = 5
 
         except Exception as e:
             logger.failure(f"Failed to connect to RabbitMQ: {e!s}")
             raise
+    
+    def _is_connection_open(self) -> bool:
+        """Check if RabbitMQ connection is open and healthy."""
+        try:
+            return (
+                self.connection is not None
+                and self.connection.is_open
+                and self.channel is not None
+                and self.channel.is_open
+            )
+        except Exception:
+            return False
+    
+    def _reconnect_with_backoff(self) -> bool:
+        """
+        Attempt to reconnect to RabbitMQ with exponential backoff.
+        
+        Returns:
+            True if reconnection successful, False if shutdown requested
+        """
+        while not self._shutdown_requested:
+            self._reconnect_attempts += 1
+            
+            logger.warning(
+                f"Attempting to reconnect to RabbitMQ "
+                f"(attempt {self._reconnect_attempts}, waiting {self._reconnect_delay}s)..."
+            )
+            
+            time.sleep(self._reconnect_delay)
+            
+            try:
+                # Close old connection if it exists
+                self.disconnect_rabbitmq()
+                
+                # Attempt new connection
+                self.connect_rabbitmq()
+                
+                logger.success(
+                    f"Successfully reconnected to RabbitMQ after {self._reconnect_attempts} attempts"
+                )
+                return True
+                
+            except Exception as e:
+                logger.error(f"Reconnection attempt {self._reconnect_attempts} failed: {e}")
+                
+                # Exponential backoff with maximum delay
+                self._reconnect_delay = min(
+                    self._reconnect_delay * 2,
+                    self._max_reconnect_delay
+                )
+        
+        return False
 
     def disconnect_rabbitmq(self):
         """Safely close RabbitMQ connection."""
@@ -672,6 +735,12 @@ class IndexTTSWorker:
 
         while retry_count < max_retries:
             try:
+                # Check connection health before publishing
+                if not self._is_connection_open():
+                    logger.warning(f"[JOB {job_id}] Connection closed, attempting to reconnect before publishing...")
+                    if not self._reconnect_with_backoff():
+                        raise Exception("Failed to reconnect to RabbitMQ")
+                
                 self.channel.basic_publish(
                     exchange="",
                     routing_key="tts_results",
@@ -684,6 +753,32 @@ class IndexTTSWorker:
                 logger.info(f"✓ Published result for job {job_id}")
                 return
 
+            except (
+                pika.exceptions.ConnectionClosedByBroker,
+                pika.exceptions.AMQPConnectionError,
+                pika.exceptions.StreamLostError,
+            ) as e:
+                # Connection errors - attempt reconnect
+                retry_count += 1
+                if retry_count < max_retries:
+                    delay = 2**retry_count
+                    logger.warning(
+                        f"[JOB {job_id}] Connection error publishing result (attempt {retry_count}/{max_retries}): {e}. "
+                        f"Retrying in {delay}s..."
+                    )
+                    time.sleep(delay)
+                    # Try to reconnect
+                    try:
+                        if not self._reconnect_with_backoff():
+                            raise Exception("Reconnection failed")
+                    except Exception as reconnect_error:
+                        logger.error(f"[JOB {job_id}] Reconnection failed: {reconnect_error}")
+                else:
+                    logger.critical(
+                        f"[JOB {job_id}] ✗ Failed to publish result after {max_retries} attempts: {e}"
+                    )
+                    self._handle_publish_failure(job_id, result, e)
+                    
             except Exception as e:
                 retry_count += 1
                 if retry_count < max_retries:
@@ -694,126 +789,162 @@ class IndexTTSWorker:
                     )
                     time.sleep(delay)
                 else:
-                    # All retries exhausted - check for partial failure scenario
                     logger.critical(
                         f"[JOB {job_id}] ✗ Failed to publish result after {max_retries} attempts: {e}"
                     )
-
-                    # If result contains audio_path, S3 upload likely succeeded
-                    if result.get("status") == "completed" and result.get("audio_path"):
-                        logger.critical(
-                            f"[JOB {job_id}] PARTIAL FAILURE DETECTED: "
-                            f"S3 upload succeeded but RabbitMQ publish failed"
-                        )
-
-                        # Trigger recovery for partial failure
-                        if self.uploader:
-                            recovery_data = self.uploader.handle_partial_failure(
-                                job_id=job_id,
-                                remote_path=result.get("audio_path"),
-                                error=e,
-                            )
-                            logger.critical(
-                                f"Recovery data: {json.dumps(recovery_data, indent=2)}"
-                            )
-
-                    # Do not raise - we've done our best, avoid requeueing the original message
-
-    def start(self):
-        """Start the worker and begin consuming jobs from RabbitMQ."""
-        try:
-            self.connect_rabbitmq()
-
-            # Log connection summary
-            logger.subsection("CONNECTIONS")
-            logger.info(f"S3 Storage Bucket:   {self.s3_storage_bucket}")
-            logger.info(f"S3 Output Bucket:    {self.s3_output_bucket}")
-            logger.info("")
-
-            # Log circuit breaker status
-            cb_stats = get_all_circuit_breaker_stats()
-            log_startup_summary(
-                logger,
-                platform=self.platform,
-                s3_storage_bucket=self.s3_storage_bucket,
-                s3_output_bucket=self.s3_output_bucket,
-                rabbitmq_host=self.rabbitmq_host,
-                stats_dict=cb_stats,
+                    self._handle_publish_failure(job_id, result, e)
+    
+    def _handle_publish_failure(self, job_id: str, result: dict[str, Any], error: Exception):
+        """Handle failure to publish result after all retries exhausted."""
+        # If result contains audio_path, S3 upload likely succeeded
+        if result.get("status") == "completed" and result.get("audio_path"):
+            logger.critical(
+                f"[JOB {job_id}] PARTIAL FAILURE DETECTED: "
+                f"S3 upload succeeded but RabbitMQ publish failed"
             )
 
-            def callback(ch, method, properties, body):
-                """Handle incoming job message."""
-                # Check for shutdown request before processing
-                if self._shutdown_requested:
-                    logger.info("Shutdown requested, rejecting new message")
-                    ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
-                    return
-
-                job_data = None
-                try:
-                    job_data = json.loads(body)
-                    job_id = job_data.get("job_id")
-                    logger.info(f"[JOB {job_id}] Received from queue")
-
-                    result = self.process_job(job_data)
-                    self.publish_result(result)
-
-                    # Acknowledge message only after successful processing
-                    ch.basic_ack(delivery_tag=method.delivery_tag)
-                    logger.info(f"[JOB {job_id}] Acknowledged")
-
-                except json.JSONDecodeError as e:
-                    logger.error(f"Invalid JSON in message: {e!s}")
-                    # Reject without requeue - invalid messages go to DLQ
-                    ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
-
-                except CircuitBreakerError as e:
-                    logger.error(f"Circuit breaker open: {e!s}")
-                    # Requeue when circuit breaker is open - might succeed later
-                    ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
-
-                except Exception as e:
-                    logger.error(f"Error processing job: {e!s}")
-                    if job_data:
-                        job_id = job_data.get("job_id")
-                        logger.error(
-                            f"[JOB {job_id}] Processing failed, sending to DLQ"
-                        )
-                    # Reject without requeue - failed jobs go to DLQ after retries
-                    ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
-
-            # Set QoS to process one message at a time
-            self.channel.basic_qos(prefetch_count=1)
-
-            # Set up consumer
-            self.channel.basic_consume(
-                queue="tts_jobs",
-                on_message_callback=callback,
-                auto_ack=False,
-            )
-
-            # Start consuming
-            self.channel.start_consuming()
-
-        except KeyboardInterrupt:
-            logger.info("\nShutting down worker (KeyboardInterrupt)...")
-            self._shutdown_requested = True
-
-        except Exception as e:
-            logger.failure(f"Fatal error: {e!s}")
-            self._shutdown_requested = True
-
-        finally:
-            # Graceful shutdown: Print statistics
-            if self._shutdown_requested:
-                cb_stats = get_all_circuit_breaker_stats()
-                log_shutdown_summary(
-                    logger,
-                    processed_count=len(self._processed_jobs),
-                    stats_dict=cb_stats,
+            # Trigger recovery for partial failure
+            if self.uploader:
+                recovery_data = self.uploader.handle_partial_failure(
+                    job_id=job_id,
+                    remote_path=result.get("audio_path"),
+                    error=error,
+                )
+                logger.critical(
+                    f"Recovery data: {json.dumps(recovery_data, indent=2)}"
                 )
 
-            self.disconnect_rabbitmq()
+        # Do not raise - we've done our best, avoid requeueing the original message
+
+    def start(self):
+        """
+        Start the worker and begin consuming jobs from RabbitMQ.
+        Implements automatic reconnection on connection loss.
+        """
+        # Initial connection
+        try:
+            self.connect_rabbitmq()
+        except Exception as e:
+            logger.failure(f"Initial connection failed: {e}")
+            logger.info("Will attempt to reconnect...")
+            if not self._reconnect_with_backoff():
+                logger.failure("Failed to establish initial connection, exiting")
+                return
+
+        # Log connection summary
+        logger.subsection("CONNECTIONS")
+        logger.info(f"S3 Storage Bucket:   {self.s3_storage_bucket}")
+        logger.info(f"S3 Output Bucket:    {self.s3_output_bucket}")
+        logger.info("")
+
+        # Log circuit breaker status
+        cb_stats = get_all_circuit_breaker_stats()
+        log_startup_summary(
+            logger,
+            platform=self.platform,
+            s3_storage_bucket=self.s3_storage_bucket,
+            s3_output_bucket=self.s3_output_bucket,
+            rabbitmq_host=self.rabbitmq_host,
+            stats_dict=cb_stats,
+        )
+
+        def callback(ch, method, properties, body):
+            """Handle incoming job message."""
+            # Check for shutdown request before processing
+            if self._shutdown_requested:
+                logger.info("Shutdown requested, rejecting new message")
+                ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
+                return
+
+            job_data = None
+            try:
+                job_data = json.loads(body)
+                job_id = job_data.get("job_id")
+                logger.info(f"[JOB {job_id}] Received from queue")
+
+                result = self.process_job(job_data)
+                self.publish_result(result)
+
+                # Acknowledge message only after successful processing
+                ch.basic_ack(delivery_tag=method.delivery_tag)
+                logger.info(f"[JOB {job_id}] Acknowledged")
+
+            except json.JSONDecodeError as e:
+                logger.error(f"Invalid JSON in message: {e!s}")
+                # Reject without requeue - invalid messages go to DLQ
+                ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+
+            except CircuitBreakerError as e:
+                logger.error(f"Circuit breaker open: {e!s}")
+                # Requeue when circuit breaker is open - might succeed later
+                ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
+
+            except Exception as e:
+                logger.error(f"Error processing job: {e!s}")
+                if job_data:
+                    job_id = job_data.get("job_id")
+                    logger.error(
+                        f"[JOB {job_id}] Processing failed, sending to DLQ"
+                    )
+                # Reject without requeue - failed jobs go to DLQ after retries
+                ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+
+        # Main consumption loop with automatic reconnection
+        while not self._shutdown_requested:
+            try:
+                # Ensure connection is healthy
+                if not self._is_connection_open():
+                    logger.warning("Connection is not open, attempting to reconnect...")
+                    if not self._reconnect_with_backoff():
+                        break
+
+                # Set QoS to process one message at a time
+                self.channel.basic_qos(prefetch_count=1)
+
+                # Set up consumer
+                self.channel.basic_consume(
+                    queue="tts_jobs",
+                    on_message_callback=callback,
+                    auto_ack=False,
+                )
+
+                # Start consuming
+                logger.info("Starting message consumption...")
+                self.channel.start_consuming()
+
+            except KeyboardInterrupt:
+                logger.info("\nShutting down worker (KeyboardInterrupt)...")
+                self._shutdown_requested = True
+                break
+
+            except (
+                pika.exceptions.ConnectionClosedByBroker,
+                pika.exceptions.AMQPConnectionError,
+                pika.exceptions.StreamLostError,
+            ) as e:
+                # Connection errors - attempt to reconnect
+                logger.error(f"Connection lost: {e!s}")
+                if not self._shutdown_requested:
+                    logger.info("Connection lost, attempting to reconnect...")
+                    if not self._reconnect_with_backoff():
+                        break
+
+            except Exception as e:
+                logger.failure(f"Unexpected error: {e!s}")
+                if not self._shutdown_requested:
+                    logger.info("Attempting to reconnect after unexpected error...")
+                    if not self._reconnect_with_backoff():
+                        break
+
+        # Graceful shutdown: Print statistics
+        cb_stats = get_all_circuit_breaker_stats()
+        log_shutdown_summary(
+            logger,
+            processed_count=len(self._processed_jobs),
+            stats_dict=cb_stats,
+        )
+
+        self.disconnect_rabbitmq()
 
 
 if __name__ == "__main__":
