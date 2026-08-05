@@ -6,7 +6,6 @@ build-backend = "setuptools.build_meta"
 name = "indextts-worker"
 version = "1.0.0"
 description = "Personal TTS Worker: FastAPI + RabbitMQ integration for IndexTTS-1.5 zero-shot text-to-speech"
-readme = "README.md"
 requires-python = "==3.10.*"
 license = {text = "Apache-2.0"}
 authors = [
@@ -113,13 +112,6 @@ all-mac = [
 all = [
     "indextts-worker[cuda,webui,dev]",
 ]
-
-[project.urls]
-Homepage = "https://github.com/0xmichaelran/indexTTS-worker"
-Repository = "https://github.com/0xmichaelran/indexTTS-worker"
-Documentation = "https://github.com/0xmichaelran/indexTTS-worker/blob/main/README.md"
-Issues = "https://github.com/0xmichaelran/indexTTS-worker/issues"
-"Source (Original IndexTTS)" = "https://github.com/index-tts/index-tts"
 
 [project.scripts]
 indextts = "indextts.cli:main"

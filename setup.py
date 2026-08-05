@@ -39,7 +39,7 @@ setup(
     version="0.1.4",
     author="Index SpeechTeam",
     author_email="xuanwu@bilibili.com",
-    long_description=open("README.md", encoding="utf8").read(),
+    long_description=open("indextts/README.md", encoding="utf8").read(),
     long_description_content_type="text/markdown",
     description="An Industrial-Level Controllable and Efficient Zero-Shot Text-To-Speech System",
     url="https://github.com/index-tts/index-tts",

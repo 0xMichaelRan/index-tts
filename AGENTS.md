@@ -300,8 +300,7 @@ logger.error("Job processing failed")
 - `DUAL_BUCKET_GUIDE.md` - Dual-bucket S3 configuration guide
 - `LOGGING_REFACTOR.md` - Details on new structured logging system
 - `WORKER_QUICKSTART.md` - Quick start guide
-- `README.md` - Project overview
-- `docs/` - Additional documentation
+- `docs/` - documentation
 
 ## Performance Considerations
 
