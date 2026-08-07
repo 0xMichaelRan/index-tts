@@ -2,6 +2,10 @@
 
 Simple scripts to run and monitor the IndexTTS RabbitMQ worker.
 
+**For installation and setup**, see: **[WORKER_SETUP.md](./WORKER_SETUP.md)**
+
+---
+
 ## Running the Worker
 
 ### Start the Worker

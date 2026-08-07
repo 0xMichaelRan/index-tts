@@ -296,7 +296,7 @@ logger.error("Job processing failed")
 ## Documentation
 
 - `DUAL_BUCKET_GUIDE.md` - Dual-bucket S3 configuration guide
-- `WORKER_QUICKSTART.md` - Quick start guide
+- `WORKER_SETUP.md` - Complete worker setup and installation guide
 - `docs/` - documentation
 
 ## Performance Considerations

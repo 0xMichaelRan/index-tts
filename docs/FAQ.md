@@ -8,7 +8,7 @@
 **A:** Python 3.10 is required:
 - Python 3.10: Fully tested and stable (REQUIRED)
 
-See [Installation Guide](./INSTALLATION.md) for details.
+See [Worker Setup Guide](./WORKER_SETUP.md) for details.
 
 ---
 
@@ -58,7 +58,7 @@ huggingface-cli download IndexTeam/IndexTTS \
   --local-dir checkpoints
 ```
 
-Models are ~2GB total. See [Installation Guide](./INSTALLATION.md) for more details.
+Models are ~2GB total. See [Worker Setup Guide](./WORKER_SETUP.md) for more details.
 
 ---
 
@@ -85,7 +85,7 @@ Models are ~2GB total. See [Installation Guide](./INSTALLATION.md) for more deta
    tts.infer("reference.wav", "Hello", "output.wav")
    ```
 
-See [Quick Start](./QUICKSTART.md) for examples.
+See [Worker Setup Guide](./WORKER_SETUP.md) for examples.
 
 ---
 
@@ -483,8 +483,7 @@ Yes! See [Contributing Guide](./CONTRIBUTING.md)
 ## More Help
 
 - **Documentation**: Start with [docs/README.md](./README.md)
-- **Installation Issues**: [Installation Guide](./INSTALLATION.md)
-- **Usage Examples**: [Quick Start](./QUICKSTART.md)
+- **Setup & Installation**: [Worker Setup Guide](./WORKER_SETUP.md)
 - **API Details**: [API Reference](./API.md)
 - **Deployment**: [Deployment Guide](./DEPLOYMENT.md)
 - **GitHub Issues**: https://github.com/0xmichaelran/indexTTS-worker/issues
