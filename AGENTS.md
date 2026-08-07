@@ -73,8 +73,6 @@ Each bucket can have:
 
 **Example**: Use AWS S3 for voices (premium, reliable) and DigitalOcean Spaces for TTS output (cheaper, high throughput).
 
-**Backwards Compatible**: Legacy single-bucket mode (using `S3_*` vars) still works if you don't set `S3_STORAGE_*` and `S3_OUTPUT_*`.
-
 ### S3 Storage Structure
 
 ```
@@ -298,7 +296,6 @@ logger.error("Job processing failed")
 ## Documentation
 
 - `DUAL_BUCKET_GUIDE.md` - Dual-bucket S3 configuration guide
-- `LOGGING_REFACTOR.md` - Details on new structured logging system
 - `WORKER_QUICKSTART.md` - Quick start guide
 - `docs/` - documentation
 
@@ -310,6 +307,10 @@ logger.error("Job processing failed")
 - **Exponential backoff**: 2, 4, 8 seconds for retries
 - **Idempotent checks**: Prevent re-uploading same audio for same job
 - **One-at-a-time processing**: RabbitMQ `prefetch_count=1` ensures stability
+- **Automatic reconnection**: RabbitMQ connection automatically reconnects with exponential backoff (5s → 300s)
+  - Initial delay: 5 seconds
+  - Maximum delay: 300 seconds (5 minutes)
+  - Infinite retries with graceful shutdown support
 
 ## Debugging Tips
 

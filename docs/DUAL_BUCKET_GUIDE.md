@@ -409,22 +409,6 @@ S3_OUTPUT_BUCKET_NAME=bucket-name
 
 If bucket names don't match, worker won't find voice prompts or backend won't find TTS results.
 
-## Migration from Single-Bucket (Legacy)
-
-**Note**: The worker no longer supports legacy single-bucket mode. You must configure dual-bucket mode.
-
-If migrating from an older version:
-
-1. Create two S3 buckets (or use existing bucket as one of them)
-2. Set all `S3_STORAGE_*` and `S3_OUTPUT_*` environment variables
-3. Optionally migrate existing files to appropriate buckets:
-   - `audio-prompts/*` → Storage bucket
-   - `tts-output/*` → Output bucket
-4. Update `.env` file
-5. Restart worker
-
-The worker will fail to start if dual-bucket variables are not set, preventing accidental misconfiguration.
-
 ## Quick Reference
 
 ### Download Voice Prompt (Storage Bucket)
