@@ -371,12 +371,13 @@ class IndexTTSWorker:
         language = job_data.get("language", "en")
         job_type = job_data.get("job_type", "studio")
         output_path_template = job_data.get("output_path_template")
+        ratio = job_data.get("ratio", 1.0)  # Extract ratio with default 1.0
 
         retry_count = 0
         max_retries = 3
 
         logger.info(
-            f"[JOB {job_id}] Processing TTS request (type: {job_type}, language: {language})"
+            f"[JOB {job_id}] Processing TTS request (type: {job_type}, language: {language}, ratio: {ratio})"
         )
 
         # Check for duplicate processing
@@ -420,7 +421,7 @@ class IndexTTSWorker:
                 try:
                     with self.tts_breaker:
                         local_output = self._synthesize_audio(
-                            job_id, text, local_audio_prompt, language
+                            job_id, text, local_audio_prompt, language, ratio
                         )
                 except CircuitBreakerError:
                     error_msg = "IndexTTS circuit breaker is open - service unavailable"
@@ -566,6 +567,7 @@ class IndexTTSWorker:
         text: str,
         audio_prompt: str | None,
         language: str,
+        ratio: float = 1.0,
     ) -> str:
         """
         Synthesize audio using TTS engine.
@@ -575,6 +577,7 @@ class IndexTTSWorker:
             text: Text to synthesize
             audio_prompt: Local path to audio prompt file
             language: Language code
+            ratio: Speech rate ratio (0.5=slow, 1.0=normal, 2.0=fast)
 
         Returns:
             Local path to synthesized audio
@@ -589,7 +592,7 @@ class IndexTTSWorker:
         output_filename = f"{job_id}_{timestamp}.wav"
         output_path = os.path.join(output_dir, output_filename)
 
-        logger.info(f"[JOB {job_id}] Synthesizing to {output_path}")
+        logger.info(f"[JOB {job_id}] Synthesizing to {output_path} (ratio: {ratio})")
 
         # Platform-specific synthesis
         if platform.system() == "Darwin":
@@ -598,6 +601,7 @@ class IndexTTSWorker:
                 audio_prompt=None,
                 text=text,
                 output_path=output_path,
+                ratio=ratio,
                 language=language,
             )
         else:
@@ -606,6 +610,7 @@ class IndexTTSWorker:
                 audio_prompt=audio_prompt,
                 text=text,
                 output_path=output_path,
+                ratio=ratio,
             )
 
         logger.info(f"[JOB {job_id}] Synthesis complete: {output_path}")

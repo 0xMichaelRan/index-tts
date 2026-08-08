@@ -111,7 +111,7 @@ class MacOSTTS:
         audio_prompt: str | None,
         text: str,
         output_path: str,
-        rate: float = 0.5,
+        ratio: float = 1.0,
         pitch: float = 1.0,
         volume: float = 1.0,
         **kwargs,
@@ -126,7 +126,7 @@ class MacOSTTS:
             audio_prompt: Reference audio path (ignored for macOS TTS).
             text: Text to synthesize.
             output_path: Output audio file path (will be saved as .aiff, then converted to .wav).
-            rate: Speech rate (0.0 = slow, 1.0 = fast). Default 0.5 (normal).
+            ratio: Speech rate ratio (0.5 = slow, 1.0 = normal, 2.0 = fast). Default 1.0.
             pitch: Voice pitch multiplier (0.5-2.0). Default 1.0 (NOTE: say command doesn't support pitch).
             volume: Volume (0.0-1.0). Default 1.0 (NOTE: say command doesn't support volume).
             **kwargs: Additional parameters (ignored for compatibility).
@@ -158,9 +158,10 @@ class MacOSTTS:
         if not output_path.endswith(".wav"):
             output_path = os.path.splitext(output_path)[0] + ".wav"
 
-        # Convert rate (0.0-1.0) to words per minute (100-300 wpm)
+        # Convert ratio (0.5-2.0) to words per minute (100-300 wpm)
         # say command expects wpm, typical range is 100-300
-        wpm = int(100 + (rate * 200))
+        # ratio=0.5 -> 100wpm (slow), ratio=1.0 -> 200wpm (normal), ratio=2.0 -> 300wpm (fast)
+        wpm = int(100 + (ratio * 100))
 
         # Get voice name (say command uses voice name, not identifier)
         voice_name = self.voice.name() if self.voice else "Samantha"
@@ -210,7 +211,7 @@ class MacOSTTS:
     def infer_to_system_audio(
         self,
         text: str,
-        rate: float = 0.5,
+        ratio: float = 1.0,
         pitch: float = 1.0,
         volume: float = 1.0,
     ):
@@ -219,13 +220,16 @@ class MacOSTTS:
 
         Args:
             text: Text to synthesize.
-            rate: Speech rate (0.0 = slow, 1.0 = fast). Default 0.5.
+            ratio: Speech rate ratio (0.5 = slow, 1.0 = normal, 2.0 = fast). Default 1.0.
             pitch: Voice pitch multiplier (0.5-2.0). Default 1.0.
             volume: Volume (0.0-1.0). Default 1.0.
         """
         utterance = AVSpeechUtterance.speechUtteranceWithString_(text)
         utterance.setVoice_(self.voice)
-        utterance.setRate_(rate)
+        # AVSpeechUtterance uses rate in range 0.0-1.0 where 0.5 is normal
+        # Convert our ratio (0.5-2.0, 1.0=normal) to AVSpeech rate (0.0-1.0, 0.5=normal)
+        av_rate = ratio * 0.5
+        utterance.setRate_(av_rate)
         utterance.setPitchMultiplier_(pitch)
         utterance.setVolume_(volume)
 
@@ -271,7 +275,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--language", default="en-US", help="Language code (default: en-US)"
     )
-    parser.add_argument("--rate", type=float, default=0.5, help="Speech rate (0.0-1.0)")
+    parser.add_argument("--ratio", type=float, default=1.0, help="Speech ratio (0.5-2.0, 1.0=normal)")
     parser.add_argument("--output", help="Output file path (experimental)")
 
     args = parser.parse_args()
@@ -284,6 +288,6 @@ if __name__ == "__main__":
             print(f"  {v['identifier']} ({v['name']}, {v['language']})")
 
     if args.output:
-        tts.infer(None, args.text, args.output, rate=args.rate)
+        tts.infer(None, args.text, args.output, ratio=args.ratio)
     else:
-        tts.infer_to_system_audio(args.text, rate=args.rate)
+        tts.infer_to_system_audio(args.text, ratio=args.ratio)
