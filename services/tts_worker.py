@@ -421,7 +421,7 @@ class IndexTTSWorker:
                 try:
                     with self.tts_breaker:
                         local_output = self._synthesize_audio(
-                            job_id, text, local_audio_prompt, language, ratio
+                            job_id, text, local_audio_prompt, audio_prompt_path, language, ratio
                         )
                 except CircuitBreakerError:
                     error_msg = "IndexTTS circuit breaker is open - service unavailable"
@@ -566,6 +566,7 @@ class IndexTTSWorker:
         job_id: str,
         text: str,
         audio_prompt: str | None,
+        audio_prompt_s3_path: str | None,
         language: str,
         ratio: float = 1.0,
     ) -> str:
@@ -576,6 +577,7 @@ class IndexTTSWorker:
             job_id: Job identifier
             text: Text to synthesize
             audio_prompt: Local path to audio prompt file
+            audio_prompt_s3_path: S3 source path (for cache key)
             language: Language code
             ratio: Speech ratio (0.5=slow, 1.0=normal, 2.0=fast)
 
@@ -606,12 +608,49 @@ class IndexTTSWorker:
             )
         else:
             # IndexTTS GPU inference — language is auto-detected from text
-            self.tts.infer_fast(
-                audio_prompt=audio_prompt,
-                text=text,
-                output_path=output_path,
-                ratio=ratio,
-            )
+            # Voice caching strategy:
+            # - We track S3 paths at the worker level for cache hit detection
+            # - But we let infer_fast use local paths for its internal cache comparison
+            # - After each inference, we keep the S3 path for next job's comparison
+            
+            if audio_prompt_s3_path:
+                # Check if this is the same voice as previous job (by S3 path)
+                is_same_voice = (self.tts.cache_audio_prompt == audio_prompt_s3_path)
+                
+                if not is_same_voice:
+                    # New voice - need to clear cache and load audio
+                    logger.info(f"[JOB {job_id}] Loading new voice (S3: {audio_prompt_s3_path})")
+                    self.tts.cache_audio_prompt = None
+                    self.tts.cache_cond_mel = None
+                    # Now infer_fast will load the audio and cache it
+                else:
+                    # Same voice - trick infer_fast into thinking this is the same file
+                    # by temporarily setting cache_audio_prompt to the current local path
+                    logger.info(f"[JOB {job_id}] Reusing cached voice (S3: {audio_prompt_s3_path})")
+                    # Override the comparison: make infer_fast think the local path matches cache
+                    self.tts.cache_audio_prompt = audio_prompt
+                
+                # Run inference - it will either load audio (if cache was cleared) or reuse (if paths match)
+                self.tts.infer_fast(
+                    audio_prompt=audio_prompt,
+                    text=text,
+                    output_path=output_path,
+                    ratio=ratio,
+                )
+                
+                # CRITICAL: Store S3 path as cache key for next job comparison
+                # This allows the NEXT job to detect if it's using the same voice
+                self.tts.cache_audio_prompt = audio_prompt_s3_path
+                # cache_cond_mel is already set by infer_fast, we keep it
+            else:
+                # Fallback for jobs without S3 path metadata
+                logger.warning(f"[JOB {job_id}] No S3 path provided, voice caching disabled")
+                self.tts.infer_fast(
+                    audio_prompt=audio_prompt,
+                    text=text,
+                    output_path=output_path,
+                    ratio=ratio,
+                )
 
         logger.info(f"[JOB {job_id}] Synthesis complete: {output_path}")
         return output_path

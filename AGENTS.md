@@ -89,6 +89,20 @@ Output Bucket:
 
 **Note**: Both buckets are logged clearly in startup summary.
 
+### Voice Caching
+
+The worker implements **S3-path-based voice caching** to avoid regenerating mel-spectrograms for the same voice:
+
+- **Cache Key**: S3 path (e.g., `voice-recordings/user/123/english.wav`) instead of local temp path
+- **Benefits**: Eliminates redundant `cond_mel` generation (saves ~2-5s per job with same voice)
+- **Scope**: Worker instance (cleared on restart)
+- **Behavior**:
+  - First job with a voice: Generates and caches `cond_mel`
+  - Subsequent jobs with same S3 path: Reuses cached `cond_mel`
+  - Different voice: Clears cache and generates new `cond_mel`
+
+See `docs/VOICE_CACHING_FIX.md` for implementation details.
+
 ## Configuration
 
 ### Environment Variables
