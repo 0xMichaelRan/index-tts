@@ -689,8 +689,8 @@ class IndexTTSWorker:
         try:
             with wave.open(audio_path, "r") as audio_file:
                 frames = audio_file.getnframes()
-                rate = audio_file.getframerate()
-                duration = frames / float(rate)
+                sample_rate = audio_file.getframerate()
+                duration = frames / float(sample_rate)
                 return duration
         except wave.Error as e:
             raise ValueError(f"Invalid WAV file {audio_path}: {e}")

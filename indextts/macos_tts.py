@@ -173,7 +173,7 @@ class MacOSTTS:
             # Build say command to generate AIFF
             cmd_say = ["say", "-v", voice_name, "-r", str(wpm), "-o", temp_aiff, text]
 
-            print(f"Generating audio: voice={voice_name}, rate={wpm}wpm")
+            print(f"Generating audio: voice={voice_name}, words_per_minute={wpm}")
             subprocess.run(cmd_say, check=True, capture_output=True, text=True)
 
             # Convert AIFF to WAV using afconvert (built into macOS)

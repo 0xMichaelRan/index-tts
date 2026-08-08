@@ -78,7 +78,7 @@ async def infer(audio_prompt: UploadFile = File(None), text: str = Form(...)):
                 audio_prompt=None,
                 text=text,
                 output_path=output_path,
-                rate=0.5,
+                ratio=1.0,  # Speech rate ratio (0.5-2.0, default 1.0)
                 pitch=1.0,
                 volume=1.0,
             )
