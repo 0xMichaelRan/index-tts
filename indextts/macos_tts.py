@@ -126,7 +126,7 @@ class MacOSTTS:
             audio_prompt: Reference audio path (ignored for macOS TTS).
             text: Text to synthesize.
             output_path: Output audio file path (will be saved as .aiff, then converted to .wav).
-            ratio: Speech rate ratio (0.5 = slow, 1.0 = normal, 2.0 = fast). Default 1.0.
+            ratio: Speech ratio (0.5 = slow, 1.0 = normal, 2.0 = fast). Default 1.0.
             pitch: Voice pitch multiplier (0.5-2.0). Default 1.0 (NOTE: say command doesn't support pitch).
             volume: Volume (0.0-1.0). Default 1.0 (NOTE: say command doesn't support volume).
             **kwargs: Additional parameters (ignored for compatibility).
@@ -220,7 +220,7 @@ class MacOSTTS:
 
         Args:
             text: Text to synthesize.
-            ratio: Speech rate ratio (0.5 = slow, 1.0 = normal, 2.0 = fast). Default 1.0.
+            ratio: Speech ratio (0.5 = slow, 1.0 = normal, 2.0 = fast). Default 1.0.
             pitch: Voice pitch multiplier (0.5-2.0). Default 1.0.
             volume: Volume (0.0-1.0). Default 1.0.
         """

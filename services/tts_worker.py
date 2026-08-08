@@ -577,7 +577,7 @@ class IndexTTSWorker:
             text: Text to synthesize
             audio_prompt: Local path to audio prompt file
             language: Language code
-            ratio: Speech rate ratio (0.5=slow, 1.0=normal, 2.0=fast)
+            ratio: Speech ratio (0.5=slow, 1.0=normal, 2.0=fast)
 
         Returns:
             Local path to synthesized audio

@@ -65,7 +65,7 @@ async def infer(
     Args:
         audio_prompt: Audio file for voice cloning (required on Windows/Linux, optional on macOS)
         text: Text to synthesize
-        ratio: Speech rate ratio (0.5=slow, 1.0=normal, 2.0=fast)
+        ratio: Speech ratio (0.5=slow, 1.0=normal, 2.0=fast)
 
     On macOS: Uses native AVFoundation TTS (audio_prompt is optional/ignored)
     On Windows/Linux: Uses GPU-based IndexTTS with audio_prompt for voice cloning

@@ -329,7 +329,7 @@ Primary method - synthesizes and plays to system speakers.
 ```python
 tts.infer_to_system_audio(
     text: str,
-    rate: float = 0.5,
+    ratio: float = 1.0,
     pitch: float = 1.0,
     volume: float = 1.0,
     voice: str = None
@@ -338,7 +338,7 @@ tts.infer_to_system_audio(
 
 **Parameters:**
 - `text`: Text to synthesize and speak
-- `rate`: Speaking rate (0.0-2.0, default: 0.5)
+- `ratio`: Speaking rate (0.0-2.0, default: 1.0)
 - `pitch`: Pitch adjustment (0.5-2.0, default: 1.0)
 - `volume`: Volume level (0.0-1.0, default: 1.0)
 - `voice`: Override voice for this utterance
