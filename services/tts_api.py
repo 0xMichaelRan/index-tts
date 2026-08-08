@@ -54,9 +54,18 @@ async def health():
 
 
 @app.post("/infer/")
-async def infer(audio_prompt: UploadFile = File(None), text: str = Form(...)):
+async def infer(
+    audio_prompt: UploadFile = File(None),
+    text: str = Form(...),
+    ratio: float = Form(1.0)
+):
     """
     Text-to-speech inference endpoint.
+
+    Args:
+        audio_prompt: Audio file for voice cloning (required on Windows/Linux, optional on macOS)
+        text: Text to synthesize
+        ratio: Speech rate ratio (0.5=slow, 1.0=normal, 2.0=fast)
 
     On macOS: Uses native AVFoundation TTS (audio_prompt is optional/ignored)
     On Windows/Linux: Uses GPU-based IndexTTS with audio_prompt for voice cloning
@@ -78,7 +87,7 @@ async def infer(audio_prompt: UploadFile = File(None), text: str = Form(...)):
                 audio_prompt=None,
                 text=text,
                 output_path=output_path,
-                ratio=1.0,  # Speech rate ratio (0.5-2.0, default 1.0)
+                ratio=ratio,  # Use ratio parameter from request
                 pitch=1.0,
                 volume=1.0,
             )
@@ -112,6 +121,7 @@ async def infer(audio_prompt: UploadFile = File(None), text: str = Form(...)):
                 audio_prompt=temp_audio_path,
                 text=text,
                 output_path=output_path,
+                ratio=ratio,  # Use ratio parameter from request
                 verbose=False,
             )
 

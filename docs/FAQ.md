@@ -126,7 +126,7 @@ tts.infer_to_system_audio("Hello")
 ```python
 tts.infer_to_system_audio(
     "Hello world",
-    rate=0.5,   # Slow down
+    ratio=0.7,  # Slow down (0.5-2.0, 1.0=normal)
     pitch=1.2,  # Higher pitch
     volume=1.0  # Maximum volume
 )

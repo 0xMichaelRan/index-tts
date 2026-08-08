@@ -137,7 +137,7 @@ class MacOSTTS:
     def infer(self, audio_prompt, text, output_path, **kwargs):
         """Synthesize to file (API compatibility)"""
     
-    def infer_to_system_audio(self, text, rate=0.5, pitch=1.0, volume=1.0):
+    def infer_to_system_audio(self, text, ratio=1.0, pitch=1.0, volume=1.0):
         """Speak to system audio output (primary method)"""
 ```
 

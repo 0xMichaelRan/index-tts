@@ -62,7 +62,7 @@ class TestMacOSTTSPlatform:
         print(f"\n  Speaking: '{test_text}'")
         print("  (You should hear audio from your Mac speakers)")
 
-        macos_tts.infer_to_system_audio(test_text, rate=0.5)
+        macos_tts.infer_to_system_audio(test_text, ratio=1.0)
         print("✓ Speech synthesis completed")
 
 

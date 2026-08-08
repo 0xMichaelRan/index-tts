@@ -56,7 +56,7 @@ class TestMacOSTTS:
         )
 
         # Should not raise any exceptions
-        tts_engine.infer_to_system_audio(test_text, rate=0.5, pitch=1.0, volume=1.0)
+        tts_engine.infer_to_system_audio(test_text, ratio=1.0, pitch=1.0, volume=1.0)
         print("✓ Speech synthesis to system audio completed")
 
     def test_file_output(self, tts_engine, tmp_path):
@@ -67,7 +67,7 @@ class TestMacOSTTS:
             audio_prompt=None,
             text="This is a test of file output.",
             output_path=str(output_path),
-            rate=0.5,
+            ratio=1.0,
         )
 
         assert output_path.exists(), f"Output file not created at {output_path}"

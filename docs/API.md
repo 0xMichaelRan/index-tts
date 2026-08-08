@@ -353,7 +353,7 @@ tts.infer_to_system_audio("Hello, world!")
 # With adjustments
 tts.infer_to_system_audio(
     "This is important!",
-    rate=0.3,      # Slow down
+    ratio=0.6,     # Slow down (0.5-2.0, 1.0=normal)
     pitch=1.2,     # Higher pitch
     volume=1.0     # Maximum volume
 )
@@ -660,7 +660,7 @@ tts.infer_to_system_audio("Hello, I am speaking from your Mac!")
 tts.infer_to_system_audio(
     "This is a different voice",
     voice="Daniel",
-    rate=0.5
+    ratio=1.0  # Normal speed (0.5-2.0)
 )
 ```
 
