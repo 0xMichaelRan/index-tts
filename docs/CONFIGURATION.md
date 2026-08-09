@@ -118,8 +118,8 @@ tts.infer(
     
     # Optional parameters
     language="en",
-    temperature=1.0,              # Higher = more creative (0.5-2.0)
-    top_p=0.8,                   # Nucleus sampling (0.0-1.0)
+    temperature=1.0,              # Higher = more creative/variation; Lower = more stable (0.5-2.0)
+    top_p=0.8,                   # Nucleus sampling, Lower = more focused (0.0-1.0)
     top_k=30,                    # Top-k sampling
     repetition_penalty=10.0,     # Penalty for repeating tokens
     max_text_tokens_per_sentence=120,
