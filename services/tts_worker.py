@@ -653,7 +653,61 @@ class IndexTTSWorker:
                 )
 
         logger.info(f"[JOB {job_id}] Synthesis complete: {output_path}")
+        
+        # Apply time-stretching if ratio is not 1.0
+        if ratio != 1.0:
+            logger.info(f"[JOB {job_id}] Applying time stretch (ratio: {ratio})")
+            self._apply_time_stretch_to_file(output_path, ratio, job_id)
+        
         return output_path
+
+    def _apply_time_stretch_to_file(self, audio_path: str, ratio: float, job_id: str):
+        """
+        Apply time-stretching to audio file in-place.
+        
+        Uses librosa's time_stretch to adjust playback speed while preserving pitch.
+        This implements the ratio parameter for TTS synthesis:
+        - ratio > 1.0: Speed up (e.g., 2.0 = 2x faster, half duration)
+        - ratio = 1.0: No change (normal speed)
+        - ratio < 1.0: Slow down (e.g., 0.5 = 2x slower, double duration)
+        
+        Args:
+            audio_path: Path to audio file (WAV format)
+            ratio: Time stretch ratio (0.5=slow, 1.0=normal, 2.0=fast)
+            job_id: Job identifier for logging
+        
+        Raises:
+            Exception: If time-stretching fails
+        """
+        import librosa
+        import soundfile as sf
+        
+        try:
+            # Load audio file
+            audio, sr = librosa.load(audio_path, sr=None)
+            
+            # Calculate original duration
+            original_duration = len(audio) / sr
+            
+            # Apply time stretching (ratio > 1.0 speeds up, < 1.0 slows down)
+            stretched = librosa.effects.time_stretch(audio, rate=ratio)
+            
+            # Calculate new duration
+            new_duration = len(stretched) / sr
+            
+            # Save back to the same file (in-place modification)
+            sf.write(audio_path, stretched, sr)
+            
+            logger.info(
+                f"[JOB {job_id}] Time stretch applied successfully "
+                f"(original: {original_duration:.2f}s → new: {new_duration:.2f}s)"
+            )
+            
+        except Exception as e:
+            logger.error(f"[JOB {job_id}] Time stretching failed: {e}")
+            # Don't raise - continue with unstretched audio
+            # This ensures the job doesn't fail completely if time-stretching fails
+            logger.warning(f"[JOB {job_id}] Continuing with original audio (no time stretch)")
 
     def _upload_to_s3_idempotent(
         self,
