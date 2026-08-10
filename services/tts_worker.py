@@ -37,6 +37,15 @@ from services.logging_config import (
 )
 from services.s3_config import S3Client, S3ConfigError
 
+# Import cache components
+try:
+    from app.database import DatabaseSession, check_db_connection
+    from app.cache_service import TTSCacheService
+    CACHE_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"Cache dependencies not available: {e}")
+    CACHE_AVAILABLE = False
+
 # Load environment variables from .env file
 env_file = Path(__file__).parent.parent / ".env"
 if env_file.exists():
@@ -156,6 +165,20 @@ class IndexTTSWorker:
 
         # Tracking for idempotent operations
         self._processed_jobs = set()  # Track completed job IDs for deduplication
+
+        # Cache configuration
+        self.cache_enabled = CACHE_AVAILABLE and os.getenv("TTS_CACHE_ENABLED", "true").lower() == "true"
+        self.cache_max_entries = int(os.getenv("TTS_CACHE_MAX_ENTRIES", "10000"))
+        self.cache_eviction_threshold = int(os.getenv("TTS_CACHE_EVICTION_THRESHOLD", "9000"))
+        self.cache_dir = os.getenv("TTS_CACHE_LOCAL_DIR", "outputs/tts_cache")
+        
+        if self.cache_enabled:
+            logger.info("TTS synthesis cache: ENABLED")
+            logger.info(f"  Max entries: {self.cache_max_entries}")
+            logger.info(f"  Eviction threshold: {self.cache_eviction_threshold}")
+            logger.info(f"  Cache directory: {self.cache_dir}")
+        else:
+            logger.warning("TTS synthesis cache: DISABLED")
 
         # Graceful shutdown support
         self._shutdown_requested = False
@@ -339,7 +362,12 @@ class IndexTTSWorker:
 
     def process_job(self, job_data: dict[str, Any]) -> dict[str, Any]:
         """
-        Process a single TTS job with circuit breaker protection.
+        Process a single TTS job with synthesis caching and circuit breaker protection.
+
+        Cache Strategy:
+        - Lookup: Check if (text, voice) already synthesized
+        - Cache Hit: Copy base audio + time-stretch if ratio != 1.0
+        - Cache Miss: Full synthesis at ratio=1.0, store in cache, then time-stretch if needed
 
         Args:
             job_data: Job message containing:
@@ -349,14 +377,16 @@ class IndexTTSWorker:
                 - language: Language code
                 - job_type: "studio" or "playground"
                 - output_path_template: S3 output path template (e.g., "tts-audio/studio/{job_id}.mp3")
+                - ratio: Speech speed ratio (0.5=slow, 1.0=normal, 2.0=fast)
 
         Returns:
             Result dictionary with:
                 - job_id: Original job ID
                 - status: "completed" or "failed"
-                - audio_path: S3 path to generated audio (e.g., "tts-audio/studio/123.mp3")
+                - audio_path: S3 path to generated audio
                 - audio_duration_seconds: Duration of synthesized audio
                 - synthesis_duration_seconds: Time taken for synthesis
+                - cache_hit: Whether cache was used
                 - error_code: Error code (if failed)
                 - error: Error message (if failed)
                 - retry_count: Number of retries attempted
@@ -371,7 +401,7 @@ class IndexTTSWorker:
         language = job_data.get("language", "en")
         job_type = job_data.get("job_type", "studio")
         output_path_template = job_data.get("output_path_template")
-        ratio = job_data.get("ratio", 1.0)  # Extract ratio with default 1.0
+        ratio = job_data.get("ratio", 1.0)
 
         retry_count = 0
         max_retries = 3
@@ -393,47 +423,116 @@ class IndexTTSWorker:
         synthesis_start = time.time()
         local_audio_prompt = None
         local_output = None
+        cache_hit = False
 
         # Retry loop for transient failures
         while retry_count < max_retries:
             try:
-                # Step 1: Download audio prompt from S3 with circuit breaker
-                logger.info(f"[JOB {job_id}] Downloading audio prompt from S3...")
-                try:
-                    with self.s3_breaker:
-                        local_audio_prompt = self._download_audio_prompt(
-                            job_id, audio_prompt_path
-                        )
-                except CircuitBreakerError:
-                    error_msg = "S3 circuit breaker is open - service unavailable"
-                    logger.error(f"[JOB {job_id}] {error_msg}")
-                    return {
-                        "job_id": job_id,
-                        "status": "failed",
-                        "error_code": "S3_CIRCUIT_OPEN",
-                        "error_message": error_msg,
-                        "retry_count": retry_count,
-                        "timestamp": datetime.now().isoformat(),
-                    }
+                # Step 1: Check synthesis cache (if enabled)
+                cached_audio_path = None
+                if self.cache_enabled:
+                    try:
+                        async with DatabaseSession() as db_session:
+                            cache_service = TTSCacheService(db_session, self.cache_dir)
+                            cache_entry = await cache_service.lookup(text, audio_prompt_path)
+                            
+                            if cache_entry:
+                                # Cache HIT - reuse base audio
+                                cache_hit = True
+                                logger.success(f"[JOB {job_id}] Cache HIT - reusing base audio")
+                                
+                                if ratio != 1.0:
+                                    # Apply time-stretching to cached audio
+                                    cached_audio_path = self._apply_ratio_to_cached_audio(
+                                        cache_entry.base_audio_local_path, ratio, job_id
+                                    )
+                                else:
+                                    # Just copy cached audio
+                                    cached_audio_path = self._copy_cached_audio(
+                                        cache_entry.base_audio_local_path, job_id
+                                    )
+                                
+                                local_output = cached_audio_path
+                                
+                                # Check for eviction (in background, doesn't affect this job)
+                                await cache_service.evict_old_entries(
+                                    max_entries=self.cache_max_entries,
+                                    evict_count=self.cache_eviction_threshold
+                                )
+                    except Exception as e:
+                        logger.warning(f"[JOB {job_id}] Cache lookup failed: {e}, falling back to full synthesis")
+                        cache_hit = False
 
-                # Step 2: Synthesize audio with circuit breaker
-                logger.info(f"[JOB {job_id}] Synthesizing audio...")
-                try:
-                    with self.tts_breaker:
-                        local_output = self._synthesize_audio(
-                            job_id, text, local_audio_prompt, audio_prompt_path, language, ratio
+                # Step 2: If no cache hit, perform full synthesis
+                if not cache_hit:
+                    # Download audio prompt from S3
+                    logger.info(f"[JOB {job_id}] Downloading audio prompt from S3...")
+                    try:
+                        with self.s3_breaker:
+                            local_audio_prompt = self._download_audio_prompt(
+                                job_id, audio_prompt_path
+                            )
+                    except CircuitBreakerError:
+                        error_msg = "S3 circuit breaker is open - service unavailable"
+                        logger.error(f"[JOB {job_id}] {error_msg}")
+                        return {
+                            "job_id": job_id,
+                            "status": "failed",
+                            "error_code": "S3_CIRCUIT_OPEN",
+                            "error_message": error_msg,
+                            "retry_count": retry_count,
+                            "timestamp": datetime.now().isoformat(),
+                        }
+
+                    # Synthesize audio
+                    logger.info(f"[JOB {job_id}] Synthesizing audio...")
+                    try:
+                        with self.tts_breaker:
+                            # Synthesize base audio at ratio=1.0 for caching
+                            base_audio_path = self._synthesize_audio(
+                                job_id, text, local_audio_prompt, audio_prompt_path, 
+                                language, ratio=1.0  # Always 1.0 for cache
+                            )
+                    except CircuitBreakerError:
+                        error_msg = "IndexTTS circuit breaker is open - service unavailable"
+                        logger.error(f"[JOB {job_id}] {error_msg}")
+                        return {
+                            "job_id": job_id,
+                            "status": "failed",
+                            "error_code": "TTS_CIRCUIT_OPEN",
+                            "error_message": error_msg,
+                            "retry_count": retry_count,
+                            "timestamp": datetime.now().isoformat(),
+                        }
+
+                    # Store in cache (if enabled)
+                    if self.cache_enabled:
+                        try:
+                            async with DatabaseSession() as db_session:
+                                cache_service = TTSCacheService(db_session, self.cache_dir)
+                                audio_duration = self._get_audio_duration(base_audio_path)
+                                synthesis_duration = time.time() - synthesis_start
+                                
+                                await cache_service.store(
+                                    text=text,
+                                    audio_prompt_path=audio_prompt_path,
+                                    base_audio_local_path=base_audio_path,
+                                    audio_duration_seconds=audio_duration,
+                                    synthesis_duration_ms=int(synthesis_duration * 1000),
+                                    language=language,
+                                )
+                                
+                                logger.success(f"[JOB {job_id}] Base audio cached for future reuse")
+                        except Exception as e:
+                            logger.warning(f"[JOB {job_id}] Failed to cache synthesis: {e}")
+
+                    # Apply time-stretching if ratio != 1.0
+                    if ratio != 1.0:
+                        local_output = self._apply_ratio_to_cached_audio(
+                            base_audio_path, ratio, job_id
                         )
-                except CircuitBreakerError:
-                    error_msg = "IndexTTS circuit breaker is open - service unavailable"
-                    logger.error(f"[JOB {job_id}] {error_msg}")
-                    return {
-                        "job_id": job_id,
-                        "status": "failed",
-                        "error_code": "TTS_CIRCUIT_OPEN",
-                        "error_message": error_msg,
-                        "retry_count": retry_count,
-                        "timestamp": datetime.now().isoformat(),
-                    }
+                    else:
+                        local_output = base_audio_path
 
                 # Step 3: Upload to S3 with idempotent retry
                 logger.info(f"[JOB {job_id}] Uploading to S3...")
@@ -471,11 +570,14 @@ class IndexTTSWorker:
                     "audio_path": audio_path,
                     "audio_duration_seconds": audio_duration,
                     "synthesis_duration_seconds": round(synthesis_duration, 2),
+                    "cache_hit": cache_hit,
                     "retry_count": retry_count,
                     "timestamp": datetime.now().isoformat(),
                 }
-                logger.info(
-                    f"[JOB {job_id}] Job completed successfully in {synthesis_duration:.2f}s"
+                
+                cache_status = "cache HIT" if cache_hit else "full synthesis"
+                logger.success(
+                    f"[JOB {job_id}] Completed in {synthesis_duration:.2f}s ({cache_status})"
                 )
                 return result
 
@@ -517,9 +619,12 @@ class IndexTTSWorker:
                 }
 
             finally:
-                # Always clean up local files
-                if local_audio_prompt or local_output:
-                    self._cleanup_local_files(local_audio_prompt, local_output)
+                # Always clean up temporary files (but NOT cached base audio)
+                if local_audio_prompt:
+                    self._cleanup_local_files(local_audio_prompt)
+                # Only clean up output if it's not in cache directory
+                if local_output and not local_output.startswith(str(Path(self.cache_dir))):
+                    self._cleanup_local_files(local_output)
 
     def _download_audio_prompt(
         self,
@@ -573,26 +678,41 @@ class IndexTTSWorker:
         """
         Synthesize audio using TTS engine.
 
+        NOTE: When called from process_job() for caching, ratio is ALWAYS 1.0.
+        Time-stretching is applied separately after synthesis.
+
         Args:
             job_id: Job identifier
             text: Text to synthesize
             audio_prompt: Local path to audio prompt file
             audio_prompt_s3_path: S3 source path (for cache key)
             language: Language code
-            ratio: Speech ratio (0.5=slow, 1.0=normal, 2.0=fast)
+            ratio: Speech ratio (always 1.0 for caching)
 
         Returns:
-            Local path to synthesized audio
+            Local path to synthesized base audio (ratio=1.0)
 
         Raises:
             Exception: If synthesis fails
         """
-        output_dir = os.path.join("outputs", "tts_output", job_id)
-        os.makedirs(output_dir, exist_ok=True)
-
-        timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-        output_filename = f"{job_id}_{timestamp}.wav"
-        output_path = os.path.join(output_dir, output_filename)
+        # Create cache directory for base audio (deterministic naming for cache)
+        if ratio == 1.0 and self.cache_enabled:
+            # Store in cache directory with deterministic filename
+            from app.cache_service import TTSCacheService
+            cache_key = TTSCacheService.generate_cache_key(text, audio_prompt_s3_path or "")
+            cache_dir = Path(self.cache_dir)
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            
+            output_filename = f"{cache_key[:16]}.wav"
+            output_path = str(cache_dir / output_filename)
+        else:
+            # Non-cacheable output (custom ratio)
+            output_dir = os.path.join("outputs", "tts_output", job_id)
+            os.makedirs(output_dir, exist_ok=True)
+            
+            timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+            output_filename = f"{job_id}_{timestamp}.wav"
+            output_path = os.path.join(output_dir, output_filename)
 
         logger.info(f"[JOB {job_id}] Synthesizing to {output_path} (ratio: {ratio})")
 
@@ -631,11 +751,12 @@ class IndexTTSWorker:
                     self.tts.cache_audio_prompt = audio_prompt
                 
                 # Run inference - it will either load audio (if cache was cleared) or reuse (if paths match)
+                # NOTE: ratio parameter is NOT used by IndexTTS - we handle time-stretching separately
                 self.tts.infer_fast(
                     audio_prompt=audio_prompt,
                     text=text,
                     output_path=output_path,
-                    ratio=ratio,
+                    ratio=1.0,  # Always 1.0 for base audio
                 )
                 
                 # CRITICAL: Store S3 path as cache key for next job comparison
@@ -649,16 +770,65 @@ class IndexTTSWorker:
                     audio_prompt=audio_prompt,
                     text=text,
                     output_path=output_path,
-                    ratio=ratio,
+                    ratio=1.0,  # Always 1.0 for base audio
                 )
 
         logger.info(f"[JOB {job_id}] Synthesis complete: {output_path}")
-        
-        # Apply time-stretching if ratio is not 1.0
-        if ratio != 1.0:
-            logger.info(f"[JOB {job_id}] Applying time stretch (ratio: {ratio})")
-            self._apply_time_stretch_to_file(output_path, ratio, job_id)
-        
+        return output_path
+    
+    def _copy_cached_audio(self, base_audio_path: str, job_id: str) -> str:
+        """
+        Copy cached base audio to job-specific location.
+
+        Used when ratio=1.0 (no time-stretching needed).
+
+        Args:
+            base_audio_path: Path to cached base audio
+            job_id: Job identifier
+
+        Returns:
+            Path to copied audio file
+        """
+        output_dir = os.path.join("outputs", "tts_output", job_id)
+        os.makedirs(output_dir, exist_ok=True)
+
+        timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+        output_path = os.path.join(output_dir, f"{job_id}_{timestamp}.wav")
+
+        shutil.copy(base_audio_path, output_path)
+        logger.info(f"[JOB {job_id}] Copied cached audio (ratio=1.0)")
+
+        return output_path
+
+    def _apply_ratio_to_cached_audio(
+        self, base_audio_path: str, ratio: float, job_id: str
+    ) -> str:
+        """
+        Apply time-stretching to cached base audio.
+
+        Creates a copy of base audio and applies time-stretching.
+
+        Args:
+            base_audio_path: Path to cached base audio
+            ratio: Time stretch ratio (0.5=slow, 2.0=fast)
+            job_id: Job identifier
+
+        Returns:
+            Path to time-stretched audio file
+        """
+        output_dir = os.path.join("outputs", "tts_output", job_id)
+        os.makedirs(output_dir, exist_ok=True)
+
+        timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+        output_path = os.path.join(output_dir, f"{job_id}_{timestamp}.wav")
+
+        # Copy base file
+        shutil.copy(base_audio_path, output_path)
+
+        # Apply time-stretching in-place
+        logger.info(f"[JOB {job_id}] Applying time stretch to cached audio (ratio={ratio})")
+        self._apply_time_stretch_to_file(output_path, ratio, job_id)
+
         return output_path
 
     def _apply_time_stretch_to_file(self, audio_path: str, ratio: float, job_id: str):
