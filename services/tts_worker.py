@@ -1278,12 +1278,11 @@ class IndexTTSWorker:
 if __name__ == "__main__":
     # Read RabbitMQ URL from environment (supports CloudAMQP URLs)
     rabbitmq_url = os.getenv("RABBITMQ_URL")
+    if not rabbitmq_url:
+        raise ValueError(
+            "RABBITMQ_URL environment variable is required. "
+            "See .env.example for configuration template."
+        )
 
-    worker = IndexTTSWorker(
-        rabbitmq_url=rabbitmq_url,
-        rabbitmq_host=os.getenv("RABBITMQ_HOST", "localhost"),
-        rabbitmq_port=int(os.getenv("RABBITMQ_PORT", 5672)),
-        rabbitmq_user=os.getenv("RABBITMQ_USER", "guest"),
-        rabbitmq_password=os.getenv("RABBITMQ_PASSWORD", "guest"),
-    )
+    worker = IndexTTSWorker(rabbitmq_url=rabbitmq_url)
     worker.start()
