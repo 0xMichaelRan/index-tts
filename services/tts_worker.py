@@ -167,6 +167,14 @@ class IndexTTSWorker:
         else:
             logger.warning("TTS synthesis cache: DISABLED")
 
+        # Audio normalization configuration
+        self.normalization_enabled = os.getenv("TTS_NORMALIZATION_ENABLED", "true").lower() == "true"
+        self.normalization_target_lufs = float(os.getenv("TTS_NORMALIZATION_TARGET_LUFS", "-16.0"))
+        
+        logger.info(f"Audio normalization: {'ENABLED' if self.normalization_enabled else 'DISABLED'}")
+        if self.normalization_enabled:
+            logger.info(f"  Target LUFS: {self.normalization_target_lufs:.1f} dB")
+
         # Graceful shutdown support
         self._shutdown_requested = False
         
@@ -817,6 +825,8 @@ class IndexTTSWorker:
                     text=text,
                     output_path=output_path,
                     ratio=1.0,  # Always 1.0 for base audio
+                    enable_normalization=self.normalization_enabled,
+                    target_lufs=self.normalization_target_lufs,
                 )
                 
                 # CRITICAL: Store S3 path as cache key for next job comparison
@@ -831,6 +841,8 @@ class IndexTTSWorker:
                     text=text,
                     output_path=output_path,
                     ratio=1.0,  # Always 1.0 for base audio
+                    enable_normalization=self.normalization_enabled,
+                    target_lufs=self.normalization_target_lufs,
                 )
 
         logger.info(f"[JOB {job_id}] Synthesis complete: {output_path}")

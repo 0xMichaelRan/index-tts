@@ -53,9 +53,11 @@ if PYTORCH_AVAILABLE:
     from indextts.utils.checkpoint import load_checkpoint
     from indextts.utils.feature_extractors import MelSpectrogramFeatures
     from indextts.utils.front import TextNormalizer, TextTokenizer
+    from indextts.utils.audio_normalization import normalize_loudness
 else:
     TextNormalizer = None
     TextTokenizer = None
+    normalize_loudness = None
 
 
 class IndexTTS:
@@ -310,7 +312,7 @@ class IndexTTS:
             self.gr_progress(value, desc=desc)
 
     # 快速推理：对于“多句长文本”，可实现至少 2~10 倍以上的速度提升~ （First modified by sunnyboxs 2025-04-16）
-    def infer_fast(self, audio_prompt, text, output_path, ratio=1.0, verbose=False, max_text_tokens_per_sentence=100, sentences_bucket_max_size=4, **generation_kwargs):
+    def infer_fast(self, audio_prompt, text, output_path, ratio=1.0, verbose=False, max_text_tokens_per_sentence=100, sentences_bucket_max_size=4, enable_normalization=True, target_lufs=-16.0, **generation_kwargs):
         """
         Args:
             ``max_text_tokens_per_sentence``: 分句的最大token数，默认``100``，可以根据GPU硬件情况调整
@@ -319,6 +321,8 @@ class IndexTTS:
             ``sentences_bucket_max_size``: 分句分桶的最大容量，默认``4``，可以根据GPU内存调整
                 - 越大，bucket数量越少，batch越多，推理速度越*快*，占用内存更多，可能影响质量
                 - 越小，bucket数量越多，batch越少，推理速度越*慢*，占用内存和质量更接近于非快速推理
+            ``enable_normalization``: Enable LUFS loudness normalization (default: True)
+            ``target_lufs``: Target loudness in LUFS (default: -16.0 dB for TTS)
         """
         print(">> start fast inference...")
         
@@ -521,6 +525,32 @@ class IndexTTS:
 
         # save audio
         wav = wav.cpu()  # to cpu
+        
+        # Apply loudness normalization
+        if enable_normalization and normalize_loudness is not None:
+            norm_start_time = time.perf_counter()
+            try:
+                wav_normalized, norm_metrics = normalize_loudness(
+                    audio=wav,
+                    sample_rate=sampling_rate,
+                    target_lufs=target_lufs,
+                    enable_normalization=True,
+                    verbose=verbose
+                )
+                norm_time = time.perf_counter() - norm_start_time
+                
+                if norm_metrics['method'] != 'disabled':
+                    wav = wav_normalized
+                    print(f">> Loudness normalization applied ({norm_metrics['method']})")
+                    if norm_metrics['original_lufs'] is not None:
+                        print(f"   Original LUFS: {norm_metrics['original_lufs']:.2f} dB")
+                        print(f"   Target LUFS: {norm_metrics['target_lufs']:.2f} dB")
+                        print(f"   Gain applied: {norm_metrics['gain_db']:.2f} dB")
+                    print(f">> Normalization time: {norm_time:.2f} seconds")
+            except Exception as e:
+                print(f">> Warning: Loudness normalization failed: {e}")
+                print(f">> Continuing with non-normalized audio")
+        
         if output_path:
             # 直接保存音频到指定路径中
             os.makedirs(os.path.dirname(output_path), exist_ok=True)
@@ -534,7 +564,7 @@ class IndexTTS:
             return (sampling_rate, wav_data)
 
     # 原始推理模式
-    def infer(self, audio_prompt, text, output_path, ratio=1.0, verbose=False, max_text_tokens_per_sentence=120, **generation_kwargs):
+    def infer(self, audio_prompt, text, output_path, ratio=1.0, verbose=False, max_text_tokens_per_sentence=120, enable_normalization=True, target_lufs=-16.0, **generation_kwargs):
         print(">> start inference...")
         self._set_gr_progress(0, "start inference...")
         if verbose:
@@ -682,6 +712,32 @@ class IndexTTS:
 
         # save audio
         wav = wav.cpu()  # to cpu
+        
+        # Apply loudness normalization
+        if enable_normalization and normalize_loudness is not None:
+            norm_start_time = time.perf_counter()
+            try:
+                wav_normalized, norm_metrics = normalize_loudness(
+                    audio=wav,
+                    sample_rate=sampling_rate,
+                    target_lufs=target_lufs,
+                    enable_normalization=True,
+                    verbose=verbose
+                )
+                norm_time = time.perf_counter() - norm_start_time
+                
+                if norm_metrics['method'] != 'disabled':
+                    wav = wav_normalized
+                    print(f">> Loudness normalization applied ({norm_metrics['method']})")
+                    if norm_metrics['original_lufs'] is not None:
+                        print(f"   Original LUFS: {norm_metrics['original_lufs']:.2f} dB")
+                        print(f"   Target LUFS: {norm_metrics['target_lufs']:.2f} dB")
+                        print(f"   Gain applied: {norm_metrics['gain_db']:.2f} dB")
+                    print(f">> Normalization time: {norm_time:.2f} seconds")
+            except Exception as e:
+                print(f">> Warning: Loudness normalization failed: {e}")
+                print(f">> Continuing with non-normalized audio")
+        
         if output_path:
             # 直接保存音频到指定路径中
             if os.path.isfile(output_path):
