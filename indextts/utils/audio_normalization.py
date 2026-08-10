@@ -15,6 +15,9 @@ Key Features:
 - Graceful fallback to simple peak normalization if pyloudnorm unavailable
 - Support for both torch tensors and numpy arrays
 - Comprehensive error handling and logging
+
+NOTE: Audio input is expected to be in int16 range (after TTS generation).
+The function preserves this range in the output to avoid truncation on int16 conversion.
 """
 
 import warnings
@@ -41,10 +44,13 @@ def normalize_loudness(
     """
     Normalize audio to target LUFS level using ITU-R BS.1770-4 standard.
     
+    IMPORTANT: Audio input is expected to be in int16 range (e.g., -32767 to 32767).
+    This is the standard format after TTS generation. The output will preserve this range.
+    
     Args:
-        audio: Input audio as numpy array or torch tensor.
+        audio: Input audio in int16 range as numpy array or torch tensor.
                Shape: (samples,) for mono or (channels, samples) for multi-channel
-               Expected dtype: float32 or int16
+               Expected range: [-32767, 32767] (int16 range)
         sample_rate: Audio sample rate in Hz (e.g., 24000, 22050, 44100)
         target_lufs: Target integrated loudness in LUFS (default: -16.0)
                      Common values:
@@ -59,19 +65,18 @@ def normalize_loudness(
     
     Returns:
         Tuple of (normalized_audio, metrics_dict):
-        - normalized_audio: Same type/shape as input
+        - normalized_audio: Same type/shape as input, in int16 range
         - metrics_dict: Contains 'original_lufs', 'target_lufs', 'gain_db', 'method'
     
     Raises:
         ValueError: If audio is empty, sample_rate invalid, or audio format unsupported
     
     Examples:
-        >>> # Normalize torch tensor audio
-        >>> normalized, metrics = normalize_loudness(wav_tensor, 24000, target_lufs=-16.0)
-        >>> print(f"Applied {metrics['gain_db']:.2f} dB gain")
-        
-        >>> # Disable normalization for comparison
-        >>> original, _ = normalize_loudness(wav, 24000, enable_normalization=False)
+        >>> # Normalize torch tensor audio (int16 range)
+        >>> wav = torch.clamp(32767 * output, -32767, 32767)  # TTS output
+        >>> normalized, metrics = normalize_loudness(wav, 24000, target_lufs=-16.0)
+        >>> # Output is also in int16 range, safe to save with .type(torch.int16)
+        >>> torchaudio.save("output.wav", normalized.type(torch.int16), 24000)
     """
     # Validation
     if audio is None or (hasattr(audio, 'numel') and audio.numel() == 0) or \
@@ -126,12 +131,11 @@ def normalize_loudness(
     else:
         raise ValueError(f"Unsupported audio shape: {original_shape}. Expected 1D or 2D array.")
     
-    # Normalize audio range to [-1.0, 1.0] if it's in int16 range
-    audio_max = np.abs(audio_np).max()
-    if audio_max > 10.0:  # Likely int16 format
-        audio_np = audio_np / 32767.0
-        if verbose:
-            print(f">> Converted audio from int16-like range (max: {audio_max:.0f}) to float32 [-1, 1]")
+    # Convert from int16 range to [-1.0, 1.0] for processing
+    # Audio is expected to be in int16 range after TTS generation
+    audio_np = audio_np / 32767.0
+    if verbose:
+        print(f">> Converted audio from int16 range to float32 [-1, 1]")
     
     try:
         # Measure current loudness
@@ -152,6 +156,9 @@ def normalize_loudness(
             # Restore original shape if needed
             if audio_np.ndim == 2 and original_shape[0] < original_shape[1]:
                 audio_np = audio_np.T
+            
+            # Scale back to int16 range
+            audio_np = np.clip(audio_np * 32767.0, -32767.0, 32767.0)
             
             if is_torch:
                 import torch
@@ -189,6 +196,11 @@ def normalize_loudness(
         if audio_np.ndim == 2 and original_shape[0] < original_shape[1]:
             normalized_audio = normalized_audio.T
         
+        # Scale back to int16 range for output
+        normalized_audio = np.clip(normalized_audio * 32767.0, -32767.0, 32767.0)
+        if verbose:
+            print(f">> Scaled back to int16 range (max: {np.abs(normalized_audio).max():.0f})")
+        
         # Convert back to original type
         if is_torch:
             import torch
@@ -210,6 +222,9 @@ def normalize_loudness(
         if audio_np.ndim == 2 and original_shape[0] < original_shape[1]:
             audio_np = audio_np.T
         
+        # Scale back to int16 range before fallback
+        audio_np = np.clip(audio_np * 32767.0, -32767.0, 32767.0)
+        
         if is_torch:
             import torch
             audio_fallback = torch.from_numpy(audio_np).to(original_device).to(original_dtype)
@@ -228,10 +243,10 @@ def _fallback_peak_normalize(
     Simple peak normalization fallback when LUFS normalization is unavailable.
     
     This is NOT perceptually accurate but prevents clipping and provides
-    consistent peak levels.
+    consistent peak levels. Audio is expected to be in int16 range.
     
     Args:
-        audio: Input audio (numpy array or torch tensor)
+        audio: Input audio in int16 range (torch tensor or numpy array)
         target_peak: Target peak level in dBFS (default: -3.0)
         verbose: Enable logging
     
@@ -240,30 +255,37 @@ def _fallback_peak_normalize(
     """
     is_torch = hasattr(audio, 'cpu')
     
+    # Convert from int16 range to [-1, 1] for processing
     if is_torch:
-        peak = audio.abs().max().item()
-        if peak > 0:
-            target_amplitude = 10 ** (target_peak / 20.0)
-            gain = target_amplitude / peak
-            normalized = audio * gain
-        else:
-            normalized = audio
-            gain = 1.0
+        import torch
+        audio_normalized = audio / 32767.0
+        peak = audio_normalized.abs().max().item()
     else:
-        peak = np.abs(audio).max()
-        if peak > 0:
-            target_amplitude = 10 ** (target_peak / 20.0)
-            gain = target_amplitude / peak
-            normalized = audio * gain
-        else:
-            normalized = audio
-            gain = 1.0
+        audio_normalized = audio / 32767.0
+        peak = np.abs(audio_normalized).max()
+    
+    # Apply peak normalization
+    if peak > 0:
+        target_amplitude = 10 ** (target_peak / 20.0)
+        gain = target_amplitude / peak
+        normalized = audio_normalized * gain
+    else:
+        normalized = audio_normalized
+        gain = 1.0
+    
+    # Scale back to int16 range
+    if is_torch:
+        import torch
+        normalized = torch.clamp(normalized * 32767.0, -32767.0, 32767.0)
+    else:
+        normalized = np.clip(normalized * 32767.0, -32767.0, 32767.0)
     
     gain_db = 20 * np.log10(gain) if gain > 0 else 0.0
     
     if verbose:
         print(f">> Fallback: Peak normalization to {target_peak:.1f} dBFS")
         print(f">> Applied gain: {gain_db:.2f} dB")
+        print(f">> Scaled back to int16 range (max: {np.abs(normalized).max() if not is_torch else normalized.abs().max():.0f})")
     
     return normalized, {
         'original_lufs': None,

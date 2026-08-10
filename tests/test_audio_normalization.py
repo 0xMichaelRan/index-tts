@@ -167,7 +167,7 @@ class TestNormalizeLoudness:
         """Test normalization with audio in int16 range (not normalized to [-1, 1])."""
         audio, sample_rate = sample_audio_numpy
         
-        # Scale to int16-like range
+        # Scale to int16-like range (simulating actual TTS output)
         audio_int16_like = audio * 16000
         
         normalized, metrics = normalize_loudness(
@@ -181,6 +181,23 @@ class TestNormalizeLoudness:
         # Should handle conversion internally
         assert isinstance(normalized, np.ndarray)
         assert metrics['method'] in ['lufs_bs1770', 'skipped_silent', 'peak_fallback']
+        
+        # CRITICAL: Output should remain in int16 range (not converted to [-1, 1])
+        # This ensures audio doesn't get muted when saved with .type(torch.int16)
+        assert np.abs(normalized).max() > 10.0, (
+            f"Normalized audio should remain in int16 range but got max={np.abs(normalized).max():.4f}. "
+            "This would cause audio to be muted when saved!"
+        )
+        
+        # Verify audio would survive int16 conversion (simulating torchaudio.save)
+        if TORCH_AVAILABLE:
+            import torch
+            normalized_torch = torch.from_numpy(normalized)
+            as_int16 = normalized_torch.type(torch.int16)
+            # Should have meaningful amplitude after int16 conversion
+            assert as_int16.abs().max() > 100, (
+                f"Audio is muted after int16 conversion! max={as_int16.abs().max()}"
+            )
     
     def test_multichannel_audio(self):
         """Test normalization with multichannel audio."""
@@ -338,6 +355,18 @@ class TestFallbackBehavior:
 class TestEdgeCases:
     """Test edge cases and boundary conditions."""
     
+    @pytest.fixture
+    def sample_audio_numpy(self):
+        """Create sample audio as numpy array (1 second at 24kHz)."""
+        sample_rate = 24000
+        duration = 1.0
+        frequency = 440.0  # A4 note
+        
+        t = np.linspace(0, duration, int(sample_rate * duration))
+        audio = np.sin(2 * np.pi * frequency * t).astype(np.float32) * 0.5
+        
+        return audio, sample_rate
+    
     def test_extremely_loud_audio(self):
         """Test normalization on clipped/extremely loud audio."""
         sample_rate = 24000
@@ -407,6 +436,18 @@ class TestEdgeCases:
 
 class TestConsistency:
     """Test consistency and reproducibility of normalization."""
+    
+    @pytest.fixture
+    def sample_audio_numpy(self):
+        """Create sample audio as numpy array (1 second at 24kHz)."""
+        sample_rate = 24000
+        duration = 1.0
+        frequency = 440.0  # A4 note
+        
+        t = np.linspace(0, duration, int(sample_rate * duration))
+        audio = np.sin(2 * np.pi * frequency * t).astype(np.float32) * 0.5
+        
+        return audio, sample_rate
     
     def test_normalization_reproducibility(self, sample_audio_numpy):
         """Test that normalization produces consistent results."""
