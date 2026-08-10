@@ -12,19 +12,13 @@ import os
 from services.tts_worker import IndexTTSWorker
 
 if __name__ == "__main__":
-    # RabbitMQ configuration
-    # Support both RABBITMQ_URL and individual parameters
+    # RabbitMQ configuration via RABBITMQ_URL
     rabbitmq_url = os.getenv("RABBITMQ_URL")
-    rabbitmq_host = os.getenv("RABBITMQ_HOST", "localhost")
-    rabbitmq_port = int(os.getenv("RABBITMQ_PORT", "5672"))
-    rabbitmq_user = os.getenv("RABBITMQ_USER", "guest")
-    rabbitmq_password = os.getenv("RABBITMQ_PASSWORD", "guest")
+    if not rabbitmq_url:
+        raise ValueError(
+            "RABBITMQ_URL environment variable is required. "
+            "See .env.example for configuration template."
+        )
 
-    worker = IndexTTSWorker(
-        rabbitmq_url=rabbitmq_url,
-        rabbitmq_host=rabbitmq_host,
-        rabbitmq_port=rabbitmq_port,
-        rabbitmq_user=rabbitmq_user,
-        rabbitmq_password=rabbitmq_password,
-    )
+    worker = IndexTTSWorker(rabbitmq_url=rabbitmq_url)
     worker.start()

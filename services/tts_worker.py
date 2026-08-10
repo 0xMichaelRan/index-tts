@@ -66,44 +66,28 @@ logger = get_logger(__name__)
 class IndexTTSWorker:
     """Worker for processing TTS jobs from RabbitMQ queue."""
 
-    def __init__(
-        self,
-        rabbitmq_url: str | None = None,
-        rabbitmq_host: str = "localhost",
-        rabbitmq_port: int = 5672,
-        rabbitmq_user: str = "guest",
-        rabbitmq_password: str = "guest",
-    ):
+    def __init__(self, rabbitmq_url: str):
         """
         Initialize the TTS worker.
 
         Args:
             rabbitmq_url: RabbitMQ connection URL (e.g., amqp://user:pass@host:5672/)
-            rabbitmq_host: RabbitMQ server hostname (fallback if rabbitmq_url not provided)
-            rabbitmq_port: RabbitMQ server port (fallback)
-            rabbitmq_user: RabbitMQ username (fallback)
-            rabbitmq_password: RabbitMQ password (fallback)
 
         Note: S3 configuration is read from environment variables by S3Client.
               See .env.example for required S3_STORAGE_* and S3_OUTPUT_* variables.
         """
         # RabbitMQ configuration
-        if rabbitmq_url:
-            self.rabbitmq_url = rabbitmq_url
-            # Parse URL to extract host for logging
-            try:
-                from urllib.parse import urlparse
-
-                parsed = urlparse(rabbitmq_url)
-                self.rabbitmq_host = parsed.hostname or rabbitmq_host
-            except Exception:
-                self.rabbitmq_host = rabbitmq_host
-        else:
-            self.rabbitmq_url = None
-            self.rabbitmq_host = rabbitmq_host
-            self.rabbitmq_port = rabbitmq_port
-            self.rabbitmq_user = rabbitmq_user
-            self.rabbitmq_password = rabbitmq_password
+        if not rabbitmq_url:
+            raise ValueError("RABBITMQ_URL is required")
+        
+        self.rabbitmq_url = rabbitmq_url
+        
+        # Parse URL to extract host for logging
+        try:
+            parsed = urlparse(rabbitmq_url)
+            self.rabbitmq_host = parsed.hostname or "localhost"
+        except Exception:
+            self.rabbitmq_host = "localhost"
 
         self.platform = platform.system()
 
@@ -232,59 +216,36 @@ class IndexTTSWorker:
 
     def connect_rabbitmq(self):
         """
-        Connect to RabbitMQ using the configured URL or individual parameters.
+        Connect to RabbitMQ using the configured URL.
         Supports CloudAMQP and standard RabbitMQ URLs.
         Implements automatic reconnection with exponential backoff.
         """
         try:
-            # Use URL if provided, otherwise construct from individual parameters
-            if self.rabbitmq_url:
-                rabbitmq_url = self.rabbitmq_url
-                host_display = (
-                    rabbitmq_url.split("@")[1]
-                    if "@" in rabbitmq_url
-                    else self.rabbitmq_host
-                )
-                logger.subsection(f"Connecting to RabbitMQ ({host_display})")
+            host_display = (
+                self.rabbitmq_url.split("@")[1]
+                if "@" in self.rabbitmq_url
+                else self.rabbitmq_host
+            )
+            logger.subsection(f"Connecting to RabbitMQ ({host_display})")
 
-                # Parse the URL manually to extract components
-                parsed = urlparse(rabbitmq_url)
+            # Parse the URL to extract components
+            parsed = urlparse(self.rabbitmq_url)
 
-                credentials = pika.PlainCredentials(
-                    username=parsed.username or "guest",
-                    password=parsed.password or "guest",
-                )
+            credentials = pika.PlainCredentials(
+                username=parsed.username or "guest",
+                password=parsed.password or "guest",
+            )
 
-                connection_params = pika.ConnectionParameters(
-                    host=parsed.hostname or "localhost",
-                    port=parsed.port or 5672,
-                    virtual_host=parsed.path.lstrip("/") or "/",
-                    credentials=credentials,
-                    connection_attempts=3,
-                    retry_delay=2,
-                    heartbeat=600,
-                    blocked_connection_timeout=300,
-                )
-            else:
-                # Use individual parameters
-                logger.subsection(
-                    f"Connecting to RabbitMQ ({self.rabbitmq_host}:{self.rabbitmq_port})"
-                )
-
-                credentials = pika.PlainCredentials(
-                    username=self.rabbitmq_user,
-                    password=self.rabbitmq_password,
-                )
-
-                connection_params = pika.ConnectionParameters(
-                    host=self.rabbitmq_host,
-                    port=self.rabbitmq_port,
-                    credentials=credentials,
-                    connection_attempts=3,
-                    retry_delay=2,
-                    heartbeat=600,
-                    blocked_connection_timeout=300,
-                )
+            connection_params = pika.ConnectionParameters(
+                host=parsed.hostname or "localhost",
+                port=parsed.port or 5672,
+                virtual_host=parsed.path.lstrip("/") or "/",
+                credentials=credentials,
+                connection_attempts=3,
+                retry_delay=2,
+                heartbeat=600,
+                blocked_connection_timeout=300,
+            )
 
             self.connection = pika.BlockingConnection([connection_params])
             self.channel = self.connection.channel()
