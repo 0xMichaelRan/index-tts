@@ -145,6 +145,86 @@ python scripts/test_cache_service.py
 pytest tests/test_cache_service.py -v
 ```
 
+### Audio Loudness Normalization ✅ IMPLEMENTED
+
+**Status**: Fully implemented and tested
+
+The worker implements **LUFS loudness normalization** using the ITU-R BS.1770-4 standard to ensure consistent perceived loudness across all generated TTS audio:
+
+- **Standard**: ITU-R BS.1770-4 (industry-standard LUFS measurement)
+- **Library**: `pyloudnorm` (BS.1770 compliant)
+- **Default Target**: -16.0 LUFS (optimized for TTS/voice content)
+- **Performance**: ~50ms overhead per audio file
+- **Fallback**: Peak normalization if pyloudnorm unavailable
+
+**Why LUFS?**
+- LUFS (Loudness Units relative to Full Scale) measures **perceived loudness**, not just peak amplitude
+- Used by all major streaming platforms (Spotify, YouTube, Apple Music)
+- Prevents "loudness war" issues where different audio has inconsistent volume
+- Ensures comfortable listening experience without manual volume adjustment
+
+**Target LUFS Guidelines**:
+- **-14.0 LUFS**: Streaming platforms (Spotify, YouTube, Apple Music)
+- **-16.0 LUFS**: TTS/Voice content (default, good balance for speech clarity)
+- **-18.0 to -20.0 LUFS**: Quiet content (podcasts, audiobooks)
+- **-23.0 LUFS**: Broadcasting (EBU R128 standard)
+
+**Configuration** (`.env`):
+```bash
+# Enable/disable loudness normalization
+TTS_NORMALIZATION_ENABLED=true
+
+# Target loudness in LUFS
+TTS_NORMALIZATION_TARGET_LUFS=-16.0
+```
+
+**Features**:
+- ✅ Automatic normalization on all TTS output
+- ✅ True peak limiting to prevent clipping
+- ✅ Silent audio detection (skips normalization for very quiet audio)
+- ✅ Supports both torch tensors and numpy arrays
+- ✅ Fallback to peak normalization if pyloudnorm unavailable
+- ✅ Comprehensive error handling
+- ✅ Detailed logging of normalization metrics
+
+**Normalization Metrics** (logged for each job):
+```
+>> Loudness normalization applied (lufs_bs1770)
+   Original LUFS: -22.35 dB
+   Target LUFS: -16.00 dB
+   Gain applied: +6.35 dB
+>> Normalization time: 0.05 seconds
+```
+
+**Module Location**: `indextts/utils/audio_normalization.py`
+
+**API Usage**:
+```python
+from indextts.utils.audio_normalization import normalize_loudness
+
+# Normalize audio to -16 LUFS
+normalized, metrics = normalize_loudness(
+    audio=wav_tensor,           # torch.Tensor or np.ndarray
+    sample_rate=24000,
+    target_lufs=-16.0,
+    enable_normalization=True,
+    verbose=False
+)
+
+# Check metrics
+print(f"Gain applied: {metrics['gain_db']:.2f} dB")
+print(f"Method: {metrics['method']}")  # 'lufs_bs1770', 'peak_fallback', or 'disabled'
+```
+
+**Testing**:
+```bash
+# Run normalization unit tests
+uv run pytest tests/test_audio_normalization.py -v
+
+# Test with various audio types
+uv run pytest tests/test_audio_normalization.py::TestNormalizeLoudness -v
+```
+
 ## Configuration
 
 ### Environment Variables
