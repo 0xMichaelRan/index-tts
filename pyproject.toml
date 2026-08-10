@@ -32,6 +32,7 @@ dependencies = [
     # Audio processing utilities
     "ffmpeg-python==0.2.0",
     "librosa",
+    "pyloudnorm>=0.1.0",  # For LUFS loudness normalization
     "soundfile",  # For time-stretching audio in ratio parameter
     "sentencepiece",
     
