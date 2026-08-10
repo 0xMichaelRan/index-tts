@@ -160,8 +160,9 @@ async def check_db_connection() -> bool:
         return False
 
     try:
+        from sqlalchemy import text
         async with engine.connect() as conn:
-            await conn.execute("SELECT 1")
+            await conn.execute(text("SELECT 1"))
         logger.info("Database connection check: OK")
         return True
     except Exception as e:
