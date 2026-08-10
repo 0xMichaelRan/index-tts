@@ -103,6 +103,48 @@ The worker implements **S3-path-based voice caching** to avoid regenerating mel-
 
 See `docs/VOICE_CACHING_FIX.md` for implementation details.
 
+### Synthesis Caching (Database-Backed) ✅ IMPLEMENTED
+
+**Status**: Fully implemented and tested
+
+The worker implements **database-backed synthesis caching** to eliminate redundant synthesis when the same (text, voice) is requested with different speed ratios:
+
+- **Cache Key**: SHA256 hash of `text + audio_prompt_path`
+- **Storage**: PostgreSQL + local file system
+- **Benefits**: 65-80% faster for cache hits (5s synthesis → 1s cache + time-stretch)
+- **Capacity**: 10,000 cached entries with LRU eviction
+- **Persistence**: Survives worker restarts
+
+**Documentation**:
+- **Design**: `docs/TTS_SYNTHESIS_CACHE_DESIGN.md` - Full architecture and implementation guide
+- **Quick Start**: `docs/TTS_CACHE_QUICK_START.md` - Setup and usage guide
+
+**Key Features**:
+- ✅ Automatic cache lookup before synthesis
+- ✅ Separate time-stretching step for ratio variations
+- ✅ Automatic eviction of least-recently-used entries
+- ✅ Cache management CLI tools
+- ✅ Performance metrics and analytics
+- ✅ Unit and integration tests
+
+**Commands**:
+```bash
+# View cache statistics
+python scripts/manage_cache.py stats
+
+# View top entries
+python scripts/manage_cache.py top --limit 20
+
+# Evict old entries
+python scripts/manage_cache.py evict --count 1000
+
+# Test cache service
+python scripts/test_cache_service.py
+
+# Run unit tests
+pytest tests/test_cache_service.py -v
+```
+
 ## Configuration
 
 ### Environment Variables

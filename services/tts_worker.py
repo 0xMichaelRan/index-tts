@@ -7,6 +7,7 @@ IndexTTS RabbitMQ Worker
 - Updates status back to RabbitMQ
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -360,6 +361,73 @@ class IndexTTSWorker:
         except Exception as e:
             logger.warning_icon(f"Error disconnecting from RabbitMQ: {e!s}")
 
+    async def _process_cache_lookup(
+        self, job_id: str, text: str, audio_prompt_path: str, ratio: float
+    ) -> tuple[bool, str | None]:
+        """
+        Async helper to lookup and process cache hit.
+        
+        Returns:
+            (cache_hit, cached_audio_path) tuple
+        """
+        try:
+            async with DatabaseSession() as db_session:
+                cache_service = TTSCacheService(db_session, self.cache_dir)
+                cache_entry = await cache_service.lookup(text, audio_prompt_path)
+                
+                if cache_entry:
+                    # Cache HIT - reuse base audio
+                    logger.success(f"[JOB {job_id}] Cache HIT - reusing base audio")
+                    
+                    if ratio != 1.0:
+                        # Apply time-stretching to cached audio
+                        cached_audio_path = self._apply_ratio_to_cached_audio(
+                            cache_entry.base_audio_local_path, ratio, job_id
+                        )
+                    else:
+                        # Just copy cached audio
+                        cached_audio_path = self._copy_cached_audio(
+                            cache_entry.base_audio_local_path, job_id
+                        )
+                    
+                    # Check for eviction (in background, doesn't affect this job)
+                    await cache_service.evict_old_entries(
+                        max_entries=self.cache_max_entries,
+                        evict_count=self.cache_eviction_threshold
+                    )
+                    
+                    return (True, cached_audio_path)
+        except Exception as e:
+            logger.warning(f"[JOB {job_id}] Cache lookup failed: {e}, falling back to full synthesis")
+        
+        return (False, None)
+
+    async def _process_cache_store(
+        self, job_id: str, text: str, audio_prompt_path: str, 
+        base_audio_path: str, language: str, synthesis_start: float
+    ) -> None:
+        """
+        Async helper to store synthesis result in cache.
+        """
+        try:
+            async with DatabaseSession() as db_session:
+                cache_service = TTSCacheService(db_session, self.cache_dir)
+                audio_duration = self._get_audio_duration(base_audio_path)
+                synthesis_duration = time.time() - synthesis_start
+                
+                await cache_service.store(
+                    text=text,
+                    audio_prompt_path=audio_prompt_path,
+                    base_audio_local_path=base_audio_path,
+                    audio_duration_seconds=audio_duration,
+                    synthesis_duration_ms=int(synthesis_duration * 1000),
+                    language=language,
+                )
+                
+                logger.success(f"[JOB {job_id}] Base audio cached for future reuse")
+        except Exception as e:
+            logger.warning(f"[JOB {job_id}] Failed to cache synthesis: {e}")
+
     def process_job(self, job_data: dict[str, Any]) -> dict[str, Any]:
         """
         Process a single TTS job with synthesis caching and circuit breaker protection.
@@ -431,37 +499,11 @@ class IndexTTSWorker:
                 # Step 1: Check synthesis cache (if enabled)
                 cached_audio_path = None
                 if self.cache_enabled:
-                    try:
-                        async with DatabaseSession() as db_session:
-                            cache_service = TTSCacheService(db_session, self.cache_dir)
-                            cache_entry = await cache_service.lookup(text, audio_prompt_path)
-                            
-                            if cache_entry:
-                                # Cache HIT - reuse base audio
-                                cache_hit = True
-                                logger.success(f"[JOB {job_id}] Cache HIT - reusing base audio")
-                                
-                                if ratio != 1.0:
-                                    # Apply time-stretching to cached audio
-                                    cached_audio_path = self._apply_ratio_to_cached_audio(
-                                        cache_entry.base_audio_local_path, ratio, job_id
-                                    )
-                                else:
-                                    # Just copy cached audio
-                                    cached_audio_path = self._copy_cached_audio(
-                                        cache_entry.base_audio_local_path, job_id
-                                    )
-                                
-                                local_output = cached_audio_path
-                                
-                                # Check for eviction (in background, doesn't affect this job)
-                                await cache_service.evict_old_entries(
-                                    max_entries=self.cache_max_entries,
-                                    evict_count=self.cache_eviction_threshold
-                                )
-                    except Exception as e:
-                        logger.warning(f"[JOB {job_id}] Cache lookup failed: {e}, falling back to full synthesis")
-                        cache_hit = False
+                    cache_hit, cached_audio_path = asyncio.run(
+                        self._process_cache_lookup(job_id, text, audio_prompt_path, ratio)
+                    )
+                    if cache_hit and cached_audio_path:
+                        local_output = cached_audio_path
 
                 # Step 2: If no cache hit, perform full synthesis
                 if not cache_hit:
@@ -507,24 +549,12 @@ class IndexTTSWorker:
 
                     # Store in cache (if enabled)
                     if self.cache_enabled:
-                        try:
-                            async with DatabaseSession() as db_session:
-                                cache_service = TTSCacheService(db_session, self.cache_dir)
-                                audio_duration = self._get_audio_duration(base_audio_path)
-                                synthesis_duration = time.time() - synthesis_start
-                                
-                                await cache_service.store(
-                                    text=text,
-                                    audio_prompt_path=audio_prompt_path,
-                                    base_audio_local_path=base_audio_path,
-                                    audio_duration_seconds=audio_duration,
-                                    synthesis_duration_ms=int(synthesis_duration * 1000),
-                                    language=language,
-                                )
-                                
-                                logger.success(f"[JOB {job_id}] Base audio cached for future reuse")
-                        except Exception as e:
-                            logger.warning(f"[JOB {job_id}] Failed to cache synthesis: {e}")
+                        asyncio.run(
+                            self._process_cache_store(
+                                job_id, text, audio_prompt_path, base_audio_path,
+                                language, synthesis_start
+                            )
+                        )
 
                     # Apply time-stretching if ratio != 1.0
                     if ratio != 1.0:
