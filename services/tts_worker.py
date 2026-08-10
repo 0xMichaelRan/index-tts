@@ -443,6 +443,9 @@ class IndexTTSWorker:
     ) -> None:
         """
         Async helper to store synthesis result in cache.
+        
+        Note: All cached audio is stored at ratio=1.0 (base speed).
+        Time-stretching is applied separately when needed.
         """
         try:
             async with DatabaseSession() as db_session:
@@ -469,6 +472,9 @@ class IndexTTSWorker:
     ) -> None:
         """
         Synchronous wrapper for cache storage using thread + new event loop.
+        
+        Note: All cached audio is stored at ratio=1.0 (base speed).
+        Time-stretching is applied separately when needed.
         """
         def run_async():
             """Run in separate thread with its own event loop"""
@@ -785,15 +791,18 @@ class IndexTTSWorker:
         Raises:
             Exception: If synthesis fails
         """
-        # Create cache directory for base audio (deterministic naming for cache)
+        # Create cache directory for base audio (semantic naming for cache)
         if ratio == 1.0 and self.cache_enabled:
-            # Store in cache directory with deterministic filename
+            # Store in cache directory with semantic filename
             from app.cache_service import TTSCacheService
-            cache_key = TTSCacheService.generate_cache_key(text, audio_prompt_s3_path or "")
             cache_dir = Path(self.cache_dir)
             cache_dir.mkdir(parents=True, exist_ok=True)
             
-            output_filename = f"{cache_key[:16]}.wav"
+            # Generate semantic filename for better debugging
+            # Format: {text_preview}_{voice_id}.wav (e.g., "hello_world_001.wav")
+            output_filename = TTSCacheService.generate_semantic_filename(
+                text, audio_prompt_s3_path or ""
+            )
             output_path = str(cache_dir / output_filename)
         else:
             # Non-cacheable output (custom ratio)

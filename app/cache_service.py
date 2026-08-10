@@ -17,6 +17,7 @@ Cache Strategy:
 
 import hashlib
 import os
+import re
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -45,6 +46,91 @@ class TTSCacheService:
         self.db = db_session
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
+
+    @staticmethod
+    def extract_voice_id(audio_prompt_path: str) -> str:
+        """
+        Extract voice identifier from S3 path.
+
+        Examples:
+            "audio-prompts/voice_001.wav" → "voice_001"
+            "audio-prompts/user/123/english.wav" → "english"
+            "voice.wav" → "voice"
+
+        Args:
+            audio_prompt_path: S3 path to voice prompt
+
+        Returns:
+            Voice identifier (filename without extension)
+        """
+        # Get the filename without extension
+        filename = Path(audio_prompt_path).stem
+        # Remove common prefixes for cleaner IDs
+        cleaned = re.sub(r"^(voice_|voice-)", "", filename)
+        return cleaned or "unknown"
+
+    @staticmethod
+    def sanitize_text_for_filename(text: str, max_length: int = 20) -> str:
+        """
+        Sanitize text for use in filename.
+
+        Removes special characters, converts to lowercase, keeps only alphanumeric + spaces.
+
+        Examples:
+            "Hello, World!" → "hello_world"
+            "What's your name?" → "whats_your_name"
+            "Test (v2) [edit]" → "test_v2_edit"
+
+        Args:
+            text: Text to sanitize
+            max_length: Maximum length of output
+
+        Returns:
+            Safe filename-compatible string
+        """
+        # Convert to lowercase
+        text = text.lower()
+        # Keep only alphanumeric, spaces, hyphens
+        text = re.sub(r"[^a-z0-9\s\-]", "", text)
+        # Replace spaces with underscores
+        text = re.sub(r"\s+", "_", text)
+        # Remove multiple underscores
+        text = re.sub(r"_+", "_", text)
+        # Trim to max length and remove trailing underscore
+        text = text[:max_length].rstrip("_")
+        return text or "text"
+
+    @staticmethod
+    def generate_semantic_filename(
+        text: str, audio_prompt_path: str
+    ) -> str:
+        """
+        Generate semantic filename for cached audio.
+
+        Format: {text_preview}_{voice_id}.wav
+
+        Examples:
+            text="Hello world", voice="audio-prompts/voice_001.wav"
+            → "hello_world_001.wav"
+
+            text="This is a test", voice="audio-prompts/mary.wav"
+            → "this_is_a_test_mary.wav"
+
+        Args:
+            text: Synthesized text (preview extracted)
+            audio_prompt_path: S3 path to voice prompt
+
+        Returns:
+            Meaningful filename with .wav extension
+        """
+        # Extract components
+        text_preview = TTSCacheService.sanitize_text_for_filename(text, max_length=20)
+        voice_id = TTSCacheService.extract_voice_id(audio_prompt_path)
+
+        # Build filename (no ratio suffix - always 1.0 for cached base audio)
+        filename = f"{text_preview}_{voice_id}.wav"
+
+        return filename
 
     @staticmethod
     def generate_cache_key(text: str, audio_prompt_path: str) -> str:
@@ -137,7 +223,6 @@ class TTSCacheService:
         audio_duration_seconds: float,
         synthesis_duration_ms: int,
         language: Optional[str] = None,
-        base_audio_s3_path: Optional[str] = None,
     ) -> TTSSynthesisCache:
         """
         Store new synthesis in cache.
@@ -149,13 +234,19 @@ class TTSCacheService:
             audio_duration_seconds: Duration of audio
             synthesis_duration_ms: Time taken to synthesize
             language: Language code (e.g., 'en', 'zh')
-            base_audio_s3_path: Optional S3 backup path
 
         Returns:
             Created cache entry
 
         Raises:
             Exception: If file doesn't exist or database error
+
+        Note:
+            All cached audio is stored at ratio=1.0 (base speed).
+            Time-stretching is applied separately when needed.
+            base_audio_s3_path is intentionally not used. The cache is local-filesystem
+            based for performance (avoid S3 latency on every synthesis lookup). S3 upload
+            is handled separately by the worker/backend if backup is needed.
         """
         cache_key = self.generate_cache_key(text, audio_prompt_path)
         text_hash = self.generate_text_hash(text)
@@ -169,6 +260,11 @@ class TTSCacheService:
         # Get file size
         file_size_bytes = os.path.getsize(base_audio_local_path)
 
+        # Generate semantic filename for easier debugging
+        semantic_filename = self.generate_semantic_filename(
+            text, audio_prompt_path
+        )
+
         # Create cache entry
         entry = TTSSynthesisCache(
             cache_key=cache_key,
@@ -176,7 +272,7 @@ class TTSCacheService:
             audio_prompt_path=audio_prompt_path,
             text_hash=text_hash,
             base_audio_local_path=base_audio_local_path,
-            base_audio_s3_path=base_audio_s3_path,
+            base_audio_s3_path=None,  # S3 backup not used; cache is local-based for speed
             audio_duration_seconds=audio_duration_seconds,
             synthesis_duration_ms=synthesis_duration_ms,
             file_size_bytes=file_size_bytes,
@@ -188,7 +284,7 @@ class TTSCacheService:
         await self.db.refresh(entry)
 
         logger.success(
-            f"Cache STORED: {cache_key[:16]}... (duration={audio_duration_seconds:.2f}s, "
+            f"Cache STORED: {semantic_filename} (duration={audio_duration_seconds:.2f}s, "
             f"size={file_size_bytes / 1024:.1f}KB)"
         )
 

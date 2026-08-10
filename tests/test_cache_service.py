@@ -91,6 +91,93 @@ class TestCacheKeyGeneration:
         assert len(hash1) == 64
 
 
+class TestSemanticFilename:
+    """Test semantic filename generation."""
+    
+    def test_extract_voice_id_basic(self):
+        """Test extracting voice ID from standard S3 path."""
+        path = "audio-prompts/voice_001.wav"
+        voice_id = TTSCacheService.extract_voice_id(path)
+        assert voice_id == "001"
+    
+    def test_extract_voice_id_with_prefix(self):
+        """Test extracting voice ID with voice_ prefix removal."""
+        path = "audio-prompts/voice-mary.wav"
+        voice_id = TTSCacheService.extract_voice_id(path)
+        assert voice_id == "mary"
+    
+    def test_extract_voice_id_nested_path(self):
+        """Test extracting voice ID from nested path."""
+        path = "audio-prompts/user/123/english.wav"
+        voice_id = TTSCacheService.extract_voice_id(path)
+        assert voice_id == "english"
+    
+    def test_extract_voice_id_simple(self):
+        """Test extracting voice ID from simple filename."""
+        path = "voice.wav"
+        voice_id = TTSCacheService.extract_voice_id(path)
+        assert voice_id == "voice"
+    
+    def test_sanitize_text_basic(self):
+        """Test sanitizing text with punctuation."""
+        text = "Hello, World!"
+        sanitized = TTSCacheService.sanitize_text_for_filename(text)
+        assert sanitized == "hello_world"
+    
+    def test_sanitize_text_special_chars(self):
+        """Test sanitizing text with special characters."""
+        text = "What's your name?"
+        sanitized = TTSCacheService.sanitize_text_for_filename(text)
+        assert sanitized == "whats_your_name"
+    
+    def test_sanitize_text_parentheses(self):
+        """Test sanitizing text with parentheses and brackets."""
+        text = "Test (v2) [edit]"
+        sanitized = TTSCacheService.sanitize_text_for_filename(text)
+        assert sanitized == "test_v2_edit"
+    
+    def test_sanitize_text_max_length(self):
+        """Test sanitizing text with max length."""
+        text = "This is a very long text that should be truncated"
+        sanitized = TTSCacheService.sanitize_text_for_filename(text, max_length=20)
+        assert len(sanitized) <= 20
+        assert sanitized == "this_is_a_very_long"
+    
+    def test_sanitize_text_multiple_spaces(self):
+        """Test sanitizing text with multiple spaces."""
+        text = "Hello    world  test"
+        sanitized = TTSCacheService.sanitize_text_for_filename(text)
+        assert sanitized == "hello_world_test"
+    
+    def test_generate_semantic_filename_basic(self):
+        """Test generating semantic filename."""
+        text = "Hello world"
+        voice = "audio-prompts/voice_001.wav"
+        filename = TTSCacheService.generate_semantic_filename(text, voice)
+        assert filename == "hello_world_001.wav"
+    
+    def test_generate_semantic_filename_with_different_voice(self):
+        """Test generating semantic filename with different voice."""
+        text = "This is a test"
+        voice = "audio-prompts/mary.wav"
+        filename = TTSCacheService.generate_semantic_filename(text, voice)
+        assert filename == "this_is_a_test_mary.wav"
+    
+    def test_generate_semantic_filename_different_text(self):
+        """Test generating semantic filename with different text."""
+        text = "Slow speech"
+        voice = "audio-prompts/voice_slow.wav"
+        filename = TTSCacheService.generate_semantic_filename(text, voice)
+        assert filename == "slow_speech_slow.wav"
+    
+    def test_generate_semantic_filename_nested_voice_path(self):
+        """Test generating semantic filename with nested voice path."""
+        text = "Testing nested paths"
+        voice = "audio-prompts/user/123/english.wav"
+        filename = TTSCacheService.generate_semantic_filename(text, voice)
+        assert filename == "testing_nested_paths_english.wav"
+
+
 class TestCacheLookup:
     """Test cache lookup operations."""
     
