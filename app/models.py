@@ -56,7 +56,7 @@ class TTSSynthesisCache(Base):
 
     # File locations
     base_audio_local_path = Column(String(1024), nullable=False, comment="Local filesystem path to cached WAV file")
-    base_audio_s3_path = Column(String(1024), nullable=True, comment="Optional S3 backup path")
+    base_audio_s3_path = Column(String(1024), nullable=True, comment="[UNUSED] Reserved for future S3 backup (cache is currently local-filesystem based for performance)")
 
     # Audio metadata
     audio_duration_seconds = Column(Float, nullable=False, comment="Duration of base audio in seconds")
