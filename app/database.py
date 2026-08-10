@@ -39,14 +39,11 @@ if DATABASE_URL:
     engine = create_async_engine(
         DATABASE_URL,
         echo=False,  # Set to True for SQL query logging (debugging)
-        pool_size=5,  # Number of connections to maintain in the pool
-        max_overflow=10,  # Maximum number of connections above pool_size
+        poolclass=NullPool,  # No pooling - safer for sync/async bridge in worker
         pool_pre_ping=True,  # Verify connections before using (handles stale connections)
         pool_recycle=3600,  # Recycle connections after 1 hour
-        # Use NullPool for testing to avoid connection state issues
-        # poolclass=NullPool,  # Uncomment for testing
     )
-    logger.info("Database engine initialized successfully")
+    logger.info("Database engine initialized successfully (NullPool mode)")
 else:
     logger.warning("Database engine not initialized - cache disabled")
 

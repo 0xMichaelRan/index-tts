@@ -12,7 +12,9 @@ import json
 import logging
 import os
 import platform
+import shutil
 import signal
+import threading
 import time
 import wave
 from datetime import datetime
@@ -361,7 +363,7 @@ class IndexTTSWorker:
         except Exception as e:
             logger.warning_icon(f"Error disconnecting from RabbitMQ: {e!s}")
 
-    async def _process_cache_lookup(
+    async def _process_cache_lookup_async(
         self, job_id: str, text: str, audio_prompt_path: str, ratio: float
     ) -> tuple[bool, str | None]:
         """
@@ -402,7 +404,40 @@ class IndexTTSWorker:
         
         return (False, None)
 
-    async def _process_cache_store(
+    def _process_cache_lookup(
+        self, job_id: str, text: str, audio_prompt_path: str, ratio: float
+    ) -> tuple[bool, str | None]:
+        """
+        Synchronous wrapper for cache lookup using thread + new event loop.
+        Avoids event loop attachment issues.
+        """
+        result_container = {}
+        
+        def run_async():
+            """Run in separate thread with its own event loop"""
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                result = loop.run_until_complete(
+                    self._process_cache_lookup_async(job_id, text, audio_prompt_path, ratio)
+                )
+                result_container['result'] = result
+            except Exception as e:
+                result_container['error'] = e
+            finally:
+                loop.close()
+        
+        thread = threading.Thread(target=run_async)
+        thread.start()
+        thread.join(timeout=10.0)  # 10 second timeout
+        
+        if 'error' in result_container:
+            logger.warning(f"[JOB {job_id}] Cache lookup failed: {result_container['error']}")
+            return (False, None)
+        
+        return result_container.get('result', (False, None))
+
+    async def _process_cache_store_async(
         self, job_id: str, text: str, audio_prompt_path: str, 
         base_audio_path: str, language: str, synthesis_start: float
     ) -> None:
@@ -427,6 +462,33 @@ class IndexTTSWorker:
                 logger.success(f"[JOB {job_id}] Base audio cached for future reuse")
         except Exception as e:
             logger.warning(f"[JOB {job_id}] Failed to cache synthesis: {e}")
+
+    def _process_cache_store(
+        self, job_id: str, text: str, audio_prompt_path: str, 
+        base_audio_path: str, language: str, synthesis_start: float
+    ) -> None:
+        """
+        Synchronous wrapper for cache storage using thread + new event loop.
+        """
+        def run_async():
+            """Run in separate thread with its own event loop"""
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                loop.run_until_complete(
+                    self._process_cache_store_async(
+                        job_id, text, audio_prompt_path, base_audio_path,
+                        language, synthesis_start
+                    )
+                )
+            except Exception as e:
+                logger.warning(f"[JOB {job_id}] Cache store failed: {e}")
+            finally:
+                loop.close()
+        
+        thread = threading.Thread(target=run_async)
+        thread.start()
+        thread.join(timeout=10.0)  # 10 second timeout
 
     def process_job(self, job_data: dict[str, Any]) -> dict[str, Any]:
         """
@@ -499,8 +561,8 @@ class IndexTTSWorker:
                 # Step 1: Check synthesis cache (if enabled)
                 cached_audio_path = None
                 if self.cache_enabled:
-                    cache_hit, cached_audio_path = asyncio.run(
-                        self._process_cache_lookup(job_id, text, audio_prompt_path, ratio)
+                    cache_hit, cached_audio_path = self._process_cache_lookup(
+                        job_id, text, audio_prompt_path, ratio
                     )
                     if cache_hit and cached_audio_path:
                         local_output = cached_audio_path
@@ -549,11 +611,9 @@ class IndexTTSWorker:
 
                     # Store in cache (if enabled)
                     if self.cache_enabled:
-                        asyncio.run(
-                            self._process_cache_store(
-                                job_id, text, audio_prompt_path, base_audio_path,
-                                language, synthesis_start
-                            )
+                        self._process_cache_store(
+                            job_id, text, audio_prompt_path, base_audio_path,
+                            language, synthesis_start
                         )
 
                     # Apply time-stretching if ratio != 1.0
