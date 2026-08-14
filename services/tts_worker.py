@@ -498,7 +498,9 @@ class IndexTTSWorker:
                 - status: "completed" or "failed"
                 - audio_path: S3 path to generated audio
                 - audio_duration_seconds: Duration of synthesized audio
-                - synthesis_duration_seconds: Time taken for synthesis
+                - synthesis_duration_seconds: Time taken for TTS synthesis (in seconds)
+                - started_at: ISO 8601 timestamp when processing started
+                - completed_at: ISO 8601 timestamp when processing completed
                 - cache_hit: Whether cache was used
                 - error_code: Error code (if failed)
                 - error: Error message (if failed)
@@ -533,7 +535,9 @@ class IndexTTSWorker:
                 "timestamp": datetime.now().isoformat(),
             }
 
-        synthesis_start = time.time()
+        # Track precise timing
+        job_started_at = datetime.now()
+        job_start_time = time.time()  # For calculating total_duration (logging only)
         local_audio_prompt = None
         local_output = None
         cache_hit = False
@@ -568,11 +572,13 @@ class IndexTTSWorker:
                             "error_code": "S3_CIRCUIT_OPEN",
                             "error_message": error_msg,
                             "retry_count": retry_count,
-                            "timestamp": datetime.now().isoformat(),
+                            "started_at": job_started_at.isoformat(),
+                            "completed_at": datetime.now().isoformat(),
                         }
 
                     # Synthesize audio
                     logger.info(f"[JOB {job_id}] Synthesizing audio...")
+                    synthesis_start = time.time()  # Start timing synthesis now
                     try:
                         with self.tts_breaker:
                             # Synthesize base audio at ratio=1.0 for caching
@@ -589,7 +595,8 @@ class IndexTTSWorker:
                             "error_code": "TTS_CIRCUIT_OPEN",
                             "error_message": error_msg,
                             "retry_count": retry_count,
-                            "timestamp": datetime.now().isoformat(),
+                            "started_at": job_started_at.isoformat(),
+                            "completed_at": datetime.now().isoformat(),
                         }
 
                     # Store in cache (if enabled)
@@ -625,13 +632,18 @@ class IndexTTSWorker:
                         "error_code": "S3_UPLOAD_CIRCUIT_OPEN",
                         "error_message": error_msg,
                         "retry_count": retry_count,
-                        "timestamp": datetime.now().isoformat(),
+                        "started_at": job_started_at.isoformat(),
+                        "completed_at": datetime.now().isoformat(),
                     }
 
                 # Step 4: Calculate audio duration
                 audio_duration = self._get_audio_duration(local_output)
 
+                # Calculate synthesis duration (TTS only, excluding I/O and upload)
                 synthesis_duration = time.time() - synthesis_start
+                
+                # Calculate total job duration (for logging)
+                total_duration = time.time() - job_start_time
 
                 # Mark as processed
                 self._processed_jobs.add(job_id)
@@ -643,14 +655,15 @@ class IndexTTSWorker:
                     "audio_path": audio_path,
                     "audio_duration_seconds": audio_duration,
                     "synthesis_duration_seconds": round(synthesis_duration, 2),
+                    "started_at": job_started_at.isoformat(),
+                    "completed_at": datetime.now().isoformat(),
                     "cache_hit": cache_hit,
                     "retry_count": retry_count,
-                    "timestamp": datetime.now().isoformat(),
                 }
                 
                 cache_status = "cache HIT" if cache_hit else "full synthesis"
                 logger.success(
-                    f"[JOB {job_id}] Completed in {synthesis_duration:.2f}s ({cache_status})"
+                    f"[JOB {job_id}] Completed in {total_duration:.2f}s ({cache_status})"
                 )
                 return result
 
@@ -675,7 +688,8 @@ class IndexTTSWorker:
                         "error_code": "RETRYABLE_ERROR_EXHAUSTED",
                         "error_message": str(e),
                         "retry_count": retry_count,
-                        "timestamp": datetime.now().isoformat(),
+                        "started_at": job_started_at.isoformat(),
+                        "completed_at": datetime.now().isoformat(),
                     }
 
             except Exception as e:
@@ -688,7 +702,8 @@ class IndexTTSWorker:
                     "error_code": "NON_RETRYABLE_ERROR",
                     "error_message": str(e),
                     "retry_count": retry_count,
-                    "timestamp": datetime.now().isoformat(),
+                    "started_at": job_started_at.isoformat(),
+                    "completed_at": datetime.now().isoformat(),
                 }
 
             finally:
