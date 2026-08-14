@@ -167,6 +167,14 @@ class IndexTTSWorker:
         else:
             logger.warning("TTS synthesis cache: DISABLED")
 
+        # Inference method configuration (Windows/Linux only)
+        self.use_fast_inference = os.getenv("TTS_USE_FAST_INFERENCE", "true").lower() == "true"
+        if self.platform != "Darwin":
+            inference_method = "infer_fast()" if self.use_fast_inference else "infer()"
+            logger.info(f"TTS inference method: {inference_method}")
+        else:
+            logger.info("TTS inference method: infer() (macOS native)")
+
         # Audio normalization configuration
         self.normalization_enabled = os.getenv("TTS_NORMALIZATION_ENABLED", "true").lower() == "true"
         self.normalization_target_lufs = float(os.getenv("TTS_NORMALIZATION_TARGET_LUFS", "-16.0"))
@@ -798,7 +806,7 @@ class IndexTTSWorker:
             # IndexTTS GPU inference — language is auto-detected from text
             # Voice caching strategy:
             # - We track S3 paths at the worker level for cache hit detection
-            # - But we let infer_fast use local paths for its internal cache comparison
+            # - But we let infer/infer_fast use local paths for its internal cache comparison
             # - After each inference, we keep the S3 path for next job's comparison
             
             if audio_prompt_s3_path:
@@ -810,40 +818,56 @@ class IndexTTSWorker:
                     logger.info(f"[JOB {job_id}] Loading new voice (S3: {audio_prompt_s3_path})")
                     self.tts.cache_audio_prompt = None
                     self.tts.cache_cond_mel = None
-                    # Now infer_fast will load the audio and cache it
+                    # Now infer/infer_fast will load the audio and cache it
                 else:
-                    # Same voice - trick infer_fast into thinking this is the same file
+                    # Same voice - trick infer/infer_fast into thinking this is the same file
                     # by temporarily setting cache_audio_prompt to the current local path
                     logger.info(f"[JOB {job_id}] Reusing cached voice (S3: {audio_prompt_s3_path})")
-                    # Override the comparison: make infer_fast think the local path matches cache
+                    # Override the comparison: make infer/infer_fast think the local path matches cache
                     self.tts.cache_audio_prompt = audio_prompt
                 
                 # Run inference - it will either load audio (if cache was cleared) or reuse (if paths match)
                 # NOTE: ratio parameter is NOT used by IndexTTS - we handle time-stretching separately
-                self.tts.infer_fast(
-                    audio_prompt=audio_prompt,
-                    text=text,
-                    output_path=output_path,
-                    ratio=1.0,  # Always 1.0 for base audio
-                    enable_normalization=self.normalization_enabled,
-                    target_lufs=self.normalization_target_lufs,
-                )
+                if self.use_fast_inference:
+                    self.tts.infer_fast(
+                        audio_prompt=audio_prompt,
+                        text=text,
+                        output_path=output_path,
+                        ratio=1.0,  # Always 1.0 for base audio
+                        enable_normalization=self.normalization_enabled,
+                        target_lufs=self.normalization_target_lufs,
+                    )
+                else:
+                    self.tts.infer(
+                        audio_prompt=audio_prompt,
+                        text=text,
+                        output_path=output_path,
+                        ratio=1.0,  # Always 1.0 for base audio
+                    )
                 
                 # CRITICAL: Store S3 path as cache key for next job comparison
                 # This allows the NEXT job to detect if it's using the same voice
                 self.tts.cache_audio_prompt = audio_prompt_s3_path
-                # cache_cond_mel is already set by infer_fast, we keep it
+                # cache_cond_mel is already set by infer/infer_fast, we keep it
             else:
                 # Fallback for jobs without S3 path metadata
                 logger.warning(f"[JOB {job_id}] No S3 path provided, voice caching disabled")
-                self.tts.infer_fast(
-                    audio_prompt=audio_prompt,
-                    text=text,
-                    output_path=output_path,
-                    ratio=1.0,  # Always 1.0 for base audio
-                    enable_normalization=self.normalization_enabled,
-                    target_lufs=self.normalization_target_lufs,
-                )
+                if self.use_fast_inference:
+                    self.tts.infer_fast(
+                        audio_prompt=audio_prompt,
+                        text=text,
+                        output_path=output_path,
+                        ratio=1.0,  # Always 1.0 for base audio
+                        enable_normalization=self.normalization_enabled,
+                        target_lufs=self.normalization_target_lufs,
+                    )
+                else:
+                    self.tts.infer(
+                        audio_prompt=audio_prompt,
+                        text=text,
+                        output_path=output_path,
+                        ratio=1.0,  # Always 1.0 for base audio
+                    )
 
         logger.info(f"[JOB {job_id}] Synthesis complete: {output_path}")
         return output_path

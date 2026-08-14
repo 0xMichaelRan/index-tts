@@ -103,6 +103,26 @@ The worker implements **S3-path-based voice caching** to avoid regenerating mel-
 
 See `docs/VOICE_CACHING_FIX.md` for implementation details.
 
+### TTS Inference Methods
+
+The worker supports two inference methods for Windows/Linux systems:
+
+- **`infer_fast()`** (default): Optimized for long text with sentence batching
+  - 2-10x faster for multi-sentence text
+  - Higher GPU memory usage
+  - Bucket-based batching with configurable parameters
+  - Best for production with adequate GPU resources
+  
+- **`infer()`**: Sequential processing, sentence by sentence
+  - Slower but more stable
+  - Lower GPU memory usage
+  - More predictable behavior
+  - Best for debugging or memory-constrained environments
+
+**Configuration**: Set `TTS_USE_FAST_INFERENCE=false` in `.env` to use `infer()` instead of `infer_fast()`.
+
+**Note**: macOS always uses `infer()` with native TTS, this setting only affects Windows/Linux GPU inference.
+
 ### Synthesis Caching (Database-Backed) ✅ IMPLEMENTED
 
 **Status**: Fully implemented and tested
@@ -258,6 +278,29 @@ S3_OUTPUT_USE_SSL=true
 ```
 
 **Benefits**: Different providers, regions, credentials, and costs per bucket.
+
+#### Optional Configuration
+
+**TTS Inference Method** (Windows/Linux only):
+```bash
+# Use fast inference mode (default: true)
+TTS_USE_FAST_INFERENCE=true  # infer_fast() - 2-10x faster, higher memory
+# TTS_USE_FAST_INFERENCE=false  # infer() - slower, lower memory, more stable
+```
+
+**TTS Synthesis Cache**:
+```bash
+TTS_CACHE_ENABLED=true
+TTS_CACHE_MAX_ENTRIES=10000
+TTS_CACHE_EVICTION_THRESHOLD=9000
+TTS_CACHE_LOCAL_DIR=outputs/tts_cache
+```
+
+**Audio Normalization**:
+```bash
+TTS_NORMALIZATION_ENABLED=true
+TTS_NORMALIZATION_TARGET_LUFS=-16.0
+```
 
 ### Logging
 
