@@ -538,6 +538,7 @@ class IndexTTSWorker:
         # Track precise timing
         job_started_at = datetime.now()
         job_start_time = time.time()  # For calculating total_duration (logging only)
+        synthesis_start = time.time()  # Initialize for both cache hit and miss paths
         local_audio_prompt = None
         local_output = None
         cache_hit = False
@@ -578,7 +579,7 @@ class IndexTTSWorker:
 
                     # Synthesize audio
                     logger.info(f"[JOB {job_id}] Synthesizing audio...")
-                    synthesis_start = time.time()  # Start timing synthesis now
+                    synthesis_start = time.time()  # Reset timing for actual synthesis
                     try:
                         with self.tts_breaker:
                             # Synthesize base audio at ratio=1.0 for caching
