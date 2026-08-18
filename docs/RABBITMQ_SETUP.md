@@ -102,12 +102,6 @@ docker run -d \
   rabbitmq:3-management
 ```
 
-**macOS (Homebrew)**:
-```bash
-brew install rabbitmq
-brew services start rabbitmq
-```
-
 **Ubuntu/Debian**:
 ```bash
 sudo apt-get update
@@ -134,11 +128,10 @@ pip install -e ".[rabbitmq]"
 ```bash
 # Check service status
 sudo systemctl status rabbitmq-server  # Linux
-brew services list                      # macOS
 docker ps | grep rabbitmq              # Docker
 
 # Access management UI
-open http://localhost:15672            # Default: guest/guest
+http://localhost:15672                 # Default: guest/guest
 ```
 
 ## Configuration
@@ -315,7 +308,6 @@ Set up alerts when:
 1. Check if RabbitMQ is running:
    ```bash
    sudo systemctl status rabbitmq-server  # Linux
-   brew services list                      # macOS
    docker ps                              # Docker
    ```
 

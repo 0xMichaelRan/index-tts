@@ -363,29 +363,6 @@ async def health():
 
 ## Platform-Specific Configuration
 
-### macOS Configuration
-
-```bash
-# .env for macOS
-TTS_ENGINE=macos
-LANGUAGE=en-US
-VOICE=Daniel
-```
-
-```python
-from indextts.macos_tts import MacOSTTS
-
-tts = MacOSTTS(voice="Daniel", language="en-US")
-
-# Adjust voice parameters
-tts.infer_to_system_audio(
-    "Hello world",
-    ratio=1.0,     # Speech ratio (0.5=slow, 1.0=normal, 2.0=fast)
-    pitch=1.0,     # Pitch multiplier (0.5-2.0)
-    volume=1.0     # Volume (0.0-1.0)
-)
-```
-
 ### Windows/Linux GPU Configuration
 
 ```bash

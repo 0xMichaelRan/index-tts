@@ -4,13 +4,6 @@
 
 IndexTTS Worker is a 24/7 background service that processes TTS synthesis jobs from a RabbitMQ queue, generates audio using the IndexTTS engine, and uploads results to S3-compatible storage.
 
-## Environment & Package Management
-
-**Important**: Setup depends on your platform:
-- **Windows**: Use conda (see [WORKER_SETUP.md](./docs/WORKER_SETUP.md))
-- **macOS**: Use `uv` (see [MACOS_SETUP.md](./docs/MACOS_SETUP.md))
-- **Linux**: Use `uv` or conda (see [WORKER_SETUP.md](./docs/WORKER_SETUP.md))
-
 ### Windows Setup
 
 Before running any Python commands, activate the conda environment:
@@ -27,17 +20,6 @@ python -m pytest tests/pytest/test_tts_worker_core.py
 ```
 
 **Note**: Do NOT use `uv` on Windows. The project uses conda for environment management on Windows.
-
-### macOS Setup
-
-For macOS, see the dedicated setup guide: [MACOS_SETUP.md](./docs/MACOS_SETUP.md)
-
-Quick start:
-```bash
-uv sync --extra mac
-uv pip install -e .
-uv run python services/tts_worker.py
-```
 
 ### Package manager
 

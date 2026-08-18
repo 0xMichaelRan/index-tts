@@ -161,11 +161,10 @@ POST /infer/batch
 ```python
 from indextts import create_tts_engine
 
-# Auto-detects platform
+# Auto-detects platform and GPU availability
 tts = create_tts_engine()
 
-# macOS: Uses native TTS (lightweight)
-# Windows/Linux: Uses GPU inference
+# Windows/Linux: Uses GPU inference (CUDA/GPU)
 ```
 
 ### IndexTTS Class (GPU Inference)
@@ -285,131 +284,35 @@ tts.infer_fast(
 
 ---
 
-### MacOSTTS Class (Native macOS)
-
-```python
-from indextts.macos_tts import MacOSTTS
-
-tts = MacOSTTS(
-    voice=None,           # Use default voice
-    language="en-US"      # Language code
-)
-```
-
-**Constructor Parameters:**
-- `voice` (str, optional): Specific voice to use
-- `language` (str): Language code (e.g., "en-US", "zh-CN")
-
-**Methods:**
-
-#### `list_voices()`
-
-```python
-voices = tts.list_voices(language=None)
-```
-
-**Returns:** List of available system voices
-
-**Example:**
-```python
-# List all voices
-all_voices = tts.list_voices()
-print(all_voices)
-
-# List English voices
-en_voices = tts.list_voices(language="en")
-```
-
----
-
-#### `infer_to_system_audio()`
-
-Primary method - synthesizes and plays to system speakers.
-
-```python
-tts.infer_to_system_audio(
-    text: str,
-    ratio: float = 1.0,
-    pitch: float = 1.0,
-    volume: float = 1.0,
-    voice: str = None
-) -> None
-```
-
-**Parameters:**
-- `text`: Text to synthesize and speak
-- `ratio`: Speaking rate (0.0-2.0, default: 1.0)
-- `pitch`: Pitch adjustment (0.5-2.0, default: 1.0)
-- `volume`: Volume level (0.0-1.0, default: 1.0)
-- `voice`: Override voice for this utterance
-
-**Example:**
-```python
-tts = MacOSTTS(language="en-US")
-
-# Simple usage
-tts.infer_to_system_audio("Hello, world!")
-
-# With adjustments
-tts.infer_to_system_audio(
-    "This is important!",
-    ratio=0.6,     # Slow down (0.5-2.0, 1.0=normal)
-    pitch=1.2,     # Higher pitch
-    volume=1.0     # Maximum volume
-)
-```
-
----
-
-#### `infer()`
-
-Save synthesis to file (uses system TTS).
-
-```python
-tts.infer(
-    audio_prompt: str,
-    text: str,
-    output_path: str,
-    **kwargs
-) -> None
-```
-
-**Example:**
-```python
-tts.infer(
-    audio_prompt=None,
-    text="Hello, world!",
-    output_path="output.wav"
-)
-```
-
----
-
 ### Factory Function
 
 ```python
 from indextts import create_tts_engine
 
 tts = create_tts_engine(
-    use_native_macos: bool = None,    # Force engine choice
-    voice: str = None,                 # Voice name (macOS)
-    language: str = "en-US",           # Language
-    **kwargs                           # Additional args
+    cfg_path: str = "checkpoints/config.yaml",
+    model_dir: str = "checkpoints",
+    is_fp16: bool = True,
+    device: str = None,
+    **kwargs
 )
 ```
 
-**Returns:** MacOSTTS (macOS) or IndexTTS (Windows/Linux)
+**Returns:** IndexTTS instance
 
 **Example:**
 ```python
-# Auto-detects platform
-tts = create_tts_engine()
+# Initialize IndexTTS GPU inference
+tts = create_tts_engine(
+    cfg_path="checkpoints/config.yaml",
+    model_dir="checkpoints"
+)
 
-# Force GPU inference even on macOS
-tts_gpu = create_tts_engine(use_native_macos=False, model_dir="checkpoints")
-
-# Use specific voice on macOS
-tts_voice = create_tts_engine(voice="Daniel", language="en-US")
+# Use specific GPU device
+tts_gpu = create_tts_engine(
+    model_dir="checkpoints",
+    device="cuda:0"
+)
 ```
 
 ---
@@ -554,7 +457,6 @@ ValueError: Audio file not found or cannot be read
 **Port already in use:**
 ```bash
 # Find process using port 8848
-lsof -i :8848  # macOS/Linux
 netstat -ano | findstr :8848  # Windows
 
 # Use different port
@@ -641,28 +543,6 @@ tts.infer_fast(
 ```
 
 ---
-
-### Example 4: macOS Native TTS
-
-```python
-from indextts.macos_tts import MacOSTTS
-
-tts = MacOSTTS(language="en-US")
-
-# List available voices
-voices = tts.list_voices(language="en")
-print("Available voices:", voices)
-
-# Speak text
-tts.infer_to_system_audio("Hello, I am speaking from your Mac!")
-
-# Use specific voice
-tts.infer_to_system_audio(
-    "This is a different voice",
-    voice="Daniel",
-    ratio=1.0  # Normal speed (0.5-2.0)
-)
-```
 
 ---
 

@@ -68,11 +68,6 @@ Single sentence:     ~2s (similar to infer_fast)
 - Both methods available
 - Default: `infer_fast()` for optimal performance
 
-### macOS (Native TTS)
-- Always uses `infer()` with native macOS TTS
-- `TTS_USE_FAST_INFERENCE` setting ignored
-- No GPU acceleration available
-
 ## Implementation Details
 
 ### Code Location
@@ -112,17 +107,12 @@ else:
     )
 ```
 
-## Startup Log Output
+### Startup Log Output
 
 The worker logs the selected inference method during startup:
 
 ```
-18:30:45 [INFO    ] TTS synthesis cache: ENABLED
-18:30:45 [INFO    ]   Max entries: 10000
-18:30:45 [INFO    ]   Eviction threshold: 9000
-18:30:45 [INFO    ]   Cache directory: outputs/tts_cache
 18:30:45 [INFO    ] TTS inference method: infer_fast()  ← Shows selected method
-18:30:45 [INFO    ] Audio normalization: ENABLED
 ```
 
 ## Troubleshooting

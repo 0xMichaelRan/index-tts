@@ -19,33 +19,29 @@ IndexTTS is designed with platform-specific optimizations while maintaining a un
                     └─────────────────────┘
                          ↓        ↓
             ┌─────────────────────────────────────┐
-            │     Platform Detection              │
-            │  (platform.system() == "Darwin"?)   │
+            │        Windows/Linux Platform       │
+            │    (GPU Inference with CUDA)        │
             └─────────────────────────────────────┘
-                    ↙           ↘
-    ┌──────────────────────┐   ┌───────────────────────┐
-    │    macOS Path        │   │  Windows/Linux Path   │
-    └──────────────────────┘   └───────────────────────┘
-           ↓                            ↓
-    ┌──────────────────────┐   ┌───────────────────────┐
-    │   MacOSTTS Class     │   │   IndexTTS Class      │
-    │ (macos_tts.py)       │   │  (infer.py)           │
-    ├──────────────────────┤   ├───────────────────────┤
-    │ • AVSpeechSynthesizer│   │ • GPT Model           │
-    │ • System Voices      │   │ • BigVGAN Vocoder     │
-    │ • Real-time TTS      │   │ • GPU Inference       │
-    └──────────────────────┘   └───────────────────────┘
-           ↓                            ↓
-    ┌──────────────────────┐   ┌───────────────────────┐
-    │   Dependencies       │   │   Dependencies        │
-    ├──────────────────────┤   ├───────────────────────┤
-    │ • pyobjc             │   │ • PyTorch             │
-    │ • Foundation         │   │ • torchaudio          │
-    │ • ~10-50MB total     │   │ • transformers        │
-    │                      │   │ • BigVGAN             │
-    │                      │   │ • CUDA libraries      │
-    │                      │   │ • ~5-10GB total       │
-    └──────────────────────┘   └───────────────────────┘
+                            ↓
+                ┌───────────────────────┐
+                │   IndexTTS Class      │
+                │  (infer.py)           │
+                ├───────────────────────┤
+                │ • GPT Model           │
+                │ • BigVGAN Vocoder     │
+                │ • GPU Inference       │
+                └───────────────────────┘
+                            ↓
+                ┌───────────────────────┐
+                │   Dependencies        │
+                ├───────────────────────┤
+                │ • PyTorch             │
+                │ • torchaudio          │
+                │ • transformers        │
+                │ • BigVGAN             │
+                │ • CUDA libraries      │
+                │ • ~5-10GB total       │
+                └───────────────────────┘
 ```
 
 ---
@@ -56,7 +52,6 @@ IndexTTS is designed with platform-specific optimizations while maintaining a un
 indextts/
 ├── __init__.py                    Factory function exports
 ├── infer.py                       GPU inference + factory
-├── macos_tts.py                   Native macOS TTS
 ├── cli.py                         Command-line interface
 ├── BigVGAN/                       Vocoder implementation
 │   ├── bigvgan.py
@@ -81,79 +76,37 @@ indextts/
 ### Factory Function: `create_tts_engine()`
 
 ```python
-def create_tts_engine(use_native_macos=None, voice=None, language="en-US", **kwargs):
+def create_tts_engine(cfg_path="checkpoints/config.yaml", model_dir="checkpoints", is_fp16=True, device=None, **kwargs):
     """
-    Create appropriate TTS engine based on platform
+    Create IndexTTS engine for GPU inference
     
     Args:
-        use_native_macos: Force use of native TTS on macOS (default: None/auto)
-        voice: System voice to use (macOS only)
-        language: Language code (default: "en-US")
-        **kwargs: Additional arguments for IndexTTS
+        cfg_path: Path to model config YAML
+        model_dir: Path to model checkpoints directory
+        is_fp16: Use float16 precision (default: True)
+        device: Device to use (default: auto-detect)
+        **kwargs: Additional arguments
     
     Returns:
-        MacOSTTS or IndexTTS instance
+        IndexTTS instance for GPU inference
     
     Raises:
-        RuntimeError: If platform not supported or dependencies missing
+        RuntimeError: If dependencies missing or models not found
     """
 ```
 
 **Auto-detection logic:**
-1. Platform is macOS?
-   - Yes → Use `MacOSTTS` (unless forced otherwise)
-   - No → Use `IndexTTS` (GPU inference)
-2. Dependencies available?
+1. Dependencies available?
    - No → Raise clear error with installation instructions
-3. Return appropriate engine
+2. Return IndexTTS engine (GPU inference)
 
 **Example:**
 ```python
 from indextts import create_tts_engine
 
-# Auto-detects platform
+# Auto-detects GPU and initializes IndexTTS
 tts = create_tts_engine()
-
-# Or force specific engine
-tts = create_tts_engine(use_native_macos=False)  # Use GPU even on macOS
 ```
-
----
-
-### Class: `MacOSTTS` (macOS Native)
-
-Located in: `indextts/macos_tts.py`
-
-```python
-class MacOSTTS:
-    """Native macOS TTS using AVSpeechSynthesizer"""
-    
-    def __init__(self, voice=None, language="en-US"):
-        """Initialize with optional system voice"""
-    
-    def list_voices(self, language=None):
-        """List available system voices"""
-    
-    def infer(self, audio_prompt, text, output_path, **kwargs):
-        """Synthesize to file (API compatibility)"""
-    
-    def infer_to_system_audio(self, text, ratio=1.0, pitch=1.0, volume=1.0):
-        """Speak to system audio output (primary method)"""
-```
-
-**Key Features:**
-- Lightweight (pyobjc only)
-- Real-time synthesis to system audio
-- System voice selection
-- Multilingual support (English, Chinese, Spanish, etc.)
-- No GPU required
-- Installation time: 30 seconds - 2 minutes
-
-**Use Cases:**
-- Development on macOS laptops
-- Testing and prototyping
-- Integration testing without GPU
-- Audio feedback in applications
 
 ---
 
@@ -193,33 +146,33 @@ class IndexTTS:
 
 ## Data Flow
 
-### macOS TTS Flow
+### IndexTTS Flow
 
 ```
 User Text Input
     ↓
 create_tts_engine()
     ↓
-Platform Detection → "Darwin"
+Initialize IndexTTS Engine
     ↓
-MacOSTTS.__init__()
+Load GPT Model
     ↓
-Load System Voices (AVSpeechSynthesizer)
+Load Reference Audio Features
     ↓
-infer_to_system_audio()
+infer() or infer_fast()
     ↓
-Create AVSpeechUtterance
+Generate Tokens
     ↓
-Synthesizer.speakUtterance_()
+BigVGAN Vocoding
     ↓
-System Audio Output ✓
+Save WAV File ✓
 ```
 
 **Characteristics:**
-- Single-threaded (one utterance at a time)
-- Real-time output
-- No audio file storage required
-- Can play to speakers or pipe to device
+- Batch processing capable
+- GPU-accelerated (CUDA/MPS)
+- Produces high-quality audio
+- File-based storage
 
 ---
 
@@ -266,22 +219,13 @@ Save WAV File ✓
 # In indextts/__init__.py
 import platform
 
-PLATFORM = platform.system()
-
-if PLATFORM == "Darwin":
-    try:
-        from indextts.macos_tts import MacOSTTS
-        MACOS_TTS_AVAILABLE = True
-    except ImportError as e:
-        MACOS_TTS_AVAILABLE = False
-        MACOS_ERROR = str(e)
-else:
-    try:
-        import torch
-        PYTORCH_AVAILABLE = True
-    except ImportError as e:
-        PYTORCH_AVAILABLE = False
-        PYTORCH_ERROR = str(e)
+# GPU inference
+try:
+    import torch
+    PYTORCH_AVAILABLE = True
+except ImportError as e:
+    PYTORCH_AVAILABLE = False
+    PYTORCH_ERROR = str(e)
 ```
 
 ### Graceful Degradation
@@ -292,14 +236,7 @@ else:
 
 ### Platform-Specific Dependencies
 
-**macOS** (`[mac]` extra):
-```toml
-pyobjc-framework-AVFoundation>=10.0
-pyobjc-framework-Cocoa>=10.0
-```
-~10-50MB, no GPU needed
-
-**Windows/Linux** (`[cuda]` extra):
+**Windows/Linux** (GPU Inference):
 ```toml
 torch>=2.1.2
 torchaudio
@@ -390,8 +327,8 @@ tts.infer("reference.wav", "text", "output.wav")
 
 ### Import Errors
 ```
-RuntimeError: "macOS native TTS requires pyobjc-framework-AVFoundation"
 RuntimeError: "IndexTTS GPU inference requires PyTorch"
+RuntimeError: "CUDA support requires torch with CUDA enabled"
 ```
 
 ### Runtime Errors
@@ -406,107 +343,6 @@ FileNotFoundError: "Model checkpoint not found in {model_dir}"
 - Automatic fallback where safe
 - Device fallback: CUDA → MPS → CPU
 - Timeout handling for long inference
-
----
-
-## Testing Strategy
-
-### Unit Tests
-- Import validation
-- Platform detection
-- Error messages
-- Configuration parsing
-
-### Integration Tests
-- macOS TTS: Speaks to system audio
-- GPU inference: Synthesizes with reference audio
-- Factory function: Correct engine selected
-- Batch processing: Multiple texts
-
-### Platform Tests
-- macOS: Python 3.10+ with pyobjc
-- Windows: CUDA-enabled GPU
-- Linux: CUDA-enabled GPU
-
-See `test_platform.py` for verification suite.
-
----
-
-## Performance Characteristics
-
-### macOS Native TTS
-| Metric | Value |
-|--------|-------|
-| Latency | <100ms (real-time) |
-| Memory | ~50MB RAM |
-| CPU | Minimal (system-optimized) |
-| Quality | System TTS quality |
-| Parallelism | Single utterance |
-
-### Windows/Linux GPU Inference
-| Metric | Value |
-|--------|-------|
-| Latency | 2-10s per 10s audio |
-| Real-Time Factor | 0.2-1.0 |
-| Memory | 6-8GB VRAM (FP16) |
-| GPU | NVIDIA CUDA required |
-| Quality | Production zero-shot |
-| Parallelism | Batch processing |
-
----
-
-## Extension Points
-
-### Adding a New Platform
-1. Create `indextts/platform_name_tts.py`
-2. Implement class with `infer()` method
-3. Add to `create_tts_engine()` factory
-4. Add dependencies to `pyproject.toml`
-5. Document in `ARCHITECTURE.md`
-
-### Adding a New Voice Engine
-1. Create class with compatible interface
-2. Implement required methods
-3. Register in factory function
-4. Add tests
-
-### Adding a New Vocoder
-1. Add vocoder class to appropriate module
-2. Update `IndexTTS` to support selection
-3. Update configuration schema
-4. Add performance benchmarks
-
----
-
-## Security Considerations
-
-### Input Validation
-- Text inputs sanitized before synthesis
-- File paths validated before writing
-- Audio prompts checked for existence and format
-
-### Dependency Security
-- Pinned versions in `pyproject.toml`
-- Regular updates recommended
-- No arbitrary code execution
-
-### Platform Safety
-- Native APIs used as intended by OS
-- GPU inference sandboxed by PyTorch
-- No special privileges required
-- Temporary files cleaned up
-
----
-
-## Future Enhancements
-
-### Potential Additions
-1. Linux native TTS (festival, espeak)
-2. GPU optimization (int8 quantization, distillation)
-3. Streaming output (partial audio during inference)
-4. Advanced batch scheduling
-5. REST API caching layer
-6. WebRTC for real-time streaming
 
 ---
 
@@ -528,7 +364,6 @@ Users get the best experience for their platform while maintaining code portabil
 ## References
 
 - **Platform Detection**: `platform` module documentation
-- **macOS APIs**: Apple Developer Documentation for AVFoundation
 - **PyTorch**: https://pytorch.org/docs/stable/
 - **CUDA**: https://docs.nvidia.com/cuda/
 - **Original IndexTTS**: https://github.com/index-tts/index-tts

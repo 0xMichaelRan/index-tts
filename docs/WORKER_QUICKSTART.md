@@ -15,7 +15,7 @@ uv run worker.py
 ```
 
 This will:
-- Initialize the TTS engine (macOS native or IndexTTS GPU)
+- Initialize the TTS engine (IndexTTS GPU)
 - Connect to RabbitMQ
 - Initialize S3 client and circuit breakers
 - Start listening for TTS jobs on the `tts_jobs` queue
@@ -119,7 +119,7 @@ TTS_MODEL_DIR=checkpoints
 │  ┌──────────────────────────────────────────────┐  │
 │  │ Job Processor                                │  │
 │  │ 1. Download audio prompt from S3             │  │
-│  │ 2. Synthesize audio (IndexTTS/macOS)         │  │
+│  │ 2. Synthesize audio (IndexTTS)                   │  │
 │  │ 3. Upload to S3 (idempotent)                 │  │
 │  │ 4. Publish result to tts_results queue       │  │
 │  └──────────────────────────────────────────────┘  │

@@ -7,7 +7,6 @@ Complete setup guide for the 24/7 TTS worker service. Choose your platform below
 ## Table of Contents
 
 - [Windows/Linux Setup (GPU + CUDA)](#windowslinux-setup-gpu--cuda)
-- [macOS Setup](#macos-setup)
 - [Configuration](#configuration)
 - [Running the Worker](#running-the-worker)
 - [Verification](#verification)
@@ -122,26 +121,6 @@ python -c "from indextts.infer import create_tts_engine; print('✓ TTS engine O
 ```
 
 **Total time: 10-15 minutes** (mostly downloading models and CUDA libraries)
-
----
-
-## macOS Setup
-
-**For complete macOS setup instructions, see [MACOS_SETUP.md](./MACOS_SETUP.md).**
-
-The macOS worker uses native text-to-speech synthesis with no GPU required. Key differences from Windows/Linux:
-
-- ✓ No CUDA/GPU dependencies needed
-- ✓ Fast lightweight setup (1-2 minutes)
-- ✓ Uses native macOS TTS engine
-- ✓ Perfect for development and testing
-
-Quick start:
-```bash
-uv sync --extra mac
-uv pip install -e .
-uv run python services/tts_worker.py
-```
 
 ---
 
