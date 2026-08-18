@@ -21,6 +21,7 @@ classifiers = [
     "License :: OSI Approved :: Apache Software License",
     "Development Status :: 4 - Beta",
 ]
+readme = "indextts/README.md"
 
 dependencies = [
     # Cross-platform common dependencies only
@@ -130,7 +131,7 @@ include-package-data = true
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["indextts*"]
+include = ["indextts*", "services*", "app*"]
 exclude = ["tests*"]
 
 [tool.pytest.ini_options]
