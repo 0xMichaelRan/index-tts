@@ -7,7 +7,7 @@ Complete setup guide for the 24/7 TTS worker service. Choose your platform below
 ## Table of Contents
 
 - [Windows/Linux Setup (GPU + CUDA)](#windowslinux-setup-gpu--cuda)
-- [macOS Setup (CPU, Mock TTS)](#macos-setup-cpu-mock-tts)
+- [macOS Setup](#macos-setup)
 - [Configuration](#configuration)
 - [Running the Worker](#running-the-worker)
 - [Verification](#verification)
@@ -125,81 +125,22 @@ python -c "from indextts.infer import create_tts_engine; print('✓ TTS engine O
 
 ---
 
-## macOS Setup (CPU, Mock TTS)
+## macOS Setup
 
-For **development and testing** without GPU requirements. Uses native macOS `say` command instead of IndexTTS models.
+**For complete macOS setup instructions, see [MACOS_SETUP.md](./MACOS_SETUP.md).**
 
-### Prerequisites
+The macOS worker uses native text-to-speech synthesis with no GPU required. Key differences from Windows/Linux:
 
-- macOS 10.13+
-- 8GB+ RAM
-- Python 3.10
+- ✓ No CUDA/GPU dependencies needed
+- ✓ Fast lightweight setup (1-2 minutes)
+- ✓ Uses native macOS TTS engine
+- ✓ Perfect for development and testing
 
-### Quick Setup with uv (Recommended)
-
+Quick start:
 ```bash
-# 1. Install uv (fast Python package manager)
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Restart terminal or add to PATH
-export PATH="$HOME/.cargo/bin:$PATH"
-
-# 2. Clone repository
-git clone https://github.com/0xmichaelran/indexTTS-worker.git
-cd indexTTS-worker
-
-# 3. Create virtual environment with Python 3.10
-uv venv --python 3.10
-source .venv/bin/activate
-
-# 4. Install IndexTTS with macOS native TTS
-uv pip install -e ".[mac,worker]"
-
-# 5. Verify installation
-python -c "from indextts.macos_tts import MacOSTTS; print('✓ macOS TTS Ready')"
-```
-
-**Total time: 1-2 minutes ⚡**
-
-### Alternative Setup (without uv)
-
-```bash
-# 1. Clone repository
-git clone https://github.com/0xmichaelran/indexTTS-worker.git
-cd indexTTS-worker
-
-# 2. Create virtual environment
-python3 -m venv .venv
-source .venv/bin/activate
-
-# 3. Install
-pip install -e ".[mac,worker]"
-```
-
-### Troubleshooting macOS Setup
-
-**uv not found:**
-```bash
-# Restart terminal or add to PATH manually
-export PATH="$HOME/.cargo/bin:$PATH"
-```
-
-**Python 3.10 not available:**
-```bash
-# Install via Homebrew
-brew install python@3.10
-
-# Create venv with specific version
-uv venv --python 3.10
-```
-
-**pyobjc installation fails:**
-```bash
-# Install Xcode Command Line Tools
-xcode-select --install
-
-# Retry installation
-uv pip install -e ".[mac,worker]"
+uv sync --extra mac
+uv pip install -e .
+uv run python services/tts_worker.py
 ```
 
 ---
@@ -275,11 +216,11 @@ conda activate tts_worker
 python -m services.tts_worker
 ```
 
-### macOS (with uv)
+### Linux (with conda)
 
 ```bash
 # Activate environment
-source .venv/bin/activate
+conda activate tts_worker
 
 # Start worker
 python -m services.tts_worker
@@ -293,7 +234,7 @@ python -m services.tts_worker
                               STARTUP
 ═══════════════════════════════════════════════════════════════════════════
 
-18:30:45 [INFO    ] Platform:         Windows / Darwin
+18:30:45 [INFO    ] Platform:         Windows / Linux
 18:30:46 [SUCCESS ] TTS engine initialized
 18:30:46 [SUCCESS ] S3 client initialized
 18:30:46 [SUCCESS ] Idempotent uploader initialized
@@ -530,11 +471,10 @@ Failed to connect to RabbitMQ: [Errno 111] Connection refused
 ```bash
 # Check if RabbitMQ is running
 sudo systemctl status rabbitmq-server  # Linux
-brew services list | grep rabbitmq     # macOS
+systemctl status rabbitmq-server       # Windows with WSL
 
 # Start RabbitMQ
 sudo systemctl start rabbitmq-server   # Linux
-brew services start rabbitmq           # macOS
 ```
 
 ### S3 Access Denied

@@ -6,7 +6,10 @@ IndexTTS Worker is a 24/7 background service that processes TTS synthesis jobs f
 
 ## Environment & Package Management
 
-**Important**: On Windows, always activate the conda environment first before running any Python commands.
+**Important**: Setup depends on your platform:
+- **Windows**: Use conda (see [WORKER_SETUP.md](./docs/WORKER_SETUP.md))
+- **macOS**: Use `uv` (see [MACOS_SETUP.md](./docs/MACOS_SETUP.md))
+- **Linux**: Use `uv` or conda (see [WORKER_SETUP.md](./docs/WORKER_SETUP.md))
 
 ### Windows Setup
 
@@ -25,10 +28,21 @@ python -m pytest tests/pytest/test_tts_worker_core.py
 
 **Note**: Do NOT use `uv` on Windows. The project uses conda for environment management on Windows.
 
+### macOS Setup
+
+For macOS, see the dedicated setup guide: [MACOS_SETUP.md](./docs/MACOS_SETUP.md)
+
+Quick start:
+```bash
+uv sync --extra mac
+uv pip install -e .
+uv run python services/tts_worker.py
+```
+
 ### Package manager
 
-- **Package manager**: `uv` (see https://docs.astral.sh/uv/getting-started/installation/)
-- **Python version**: 3.12+ (specified in `.python-version`)
+- **Package manager**: `uv` on macOS/Linux, `conda` on Windows (see https://docs.astral.sh/uv/getting-started/installation/)
+- **Python version**: 3.10+ (specified in `.python-version`)
 - **Lock file**: `uv.lock` (auto-generated, don't edit manually)
 
 ### Common Commands
