@@ -47,48 +47,73 @@ class TTSSynthesisCache(Base):
     __tablename__ = "tts_synthesis_cache"
 
     # Primary Key
-    cache_key = Column(String(64), primary_key=True, comment="SHA256 hash of text + audio_prompt_path")
+    cache_key = Column(
+        String(64), primary_key=True, comment="SHA256 hash of text + audio_prompt_path"
+    )
 
     # Content identification
     text = Column(Text, nullable=False, comment="Full text that was synthesized")
-    audio_prompt_path = Column(String(512), nullable=False, comment="S3 path to voice prompt file")
-    text_hash = Column(String(64), nullable=False, index=True, comment="SHA256 hash of text only (for indexing)")
+    audio_prompt_path = Column(
+        String(512), nullable=False, comment="S3 path to voice prompt file"
+    )
+    text_hash = Column(
+        String(64),
+        nullable=False,
+        index=True,
+        comment="SHA256 hash of text only (for indexing)",
+    )
 
     # File locations
-    base_audio_local_path = Column(String(1024), nullable=False, comment="Local filesystem path to cached WAV file")
-    base_audio_s3_path = Column(String(1024), nullable=True, comment="[UNUSED] Reserved for future S3 backup (cache is currently local-filesystem based for performance)")
+    base_audio_local_path = Column(
+        String(1024), nullable=False, comment="Local filesystem path to cached WAV file"
+    )
+    base_audio_s3_path = Column(
+        String(1024),
+        nullable=True,
+        comment="[UNUSED] Reserved for future S3 backup (cache is currently local-filesystem based for performance)",
+    )
 
     # Audio metadata
-    audio_duration_seconds = Column(Float, nullable=False, comment="Duration of base audio in seconds")
+    audio_duration_seconds = Column(
+        Float, nullable=False, comment="Duration of base audio in seconds"
+    )
     sample_rate = Column(Integer, default=24000, comment="Audio sample rate (Hz)")
     audio_format = Column(String(10), default="wav", comment="Audio file format")
     file_size_bytes = Column(BigInteger, nullable=True, comment="File size in bytes")
 
     # Performance metrics
-    synthesis_duration_ms = Column(Integer, nullable=False, comment="Time taken to synthesize (milliseconds)")
-    hit_count = Column(Integer, default=0, comment="Number of times this cache entry was reused")
+    synthesis_duration_ms = Column(
+        Integer, nullable=False, comment="Time taken to synthesize (milliseconds)"
+    )
+    hit_count = Column(
+        Integer, default=0, comment="Number of times this cache entry was reused"
+    )
 
     # Timestamps
     last_accessed_at = Column(
         DateTime(timezone=True),
         default=func.now(),
-        comment="Last time this cache entry was accessed"
+        comment="Last time this cache entry was accessed",
     )
     created_at = Column(
         DateTime(timezone=True),
         default=func.now(),
-        comment="When this cache entry was created"
+        comment="When this cache entry was created",
     )
     updated_at = Column(
         DateTime(timezone=True),
         default=func.now(),
         onupdate=func.now(),
-        comment="When this cache entry was last updated"
+        comment="When this cache entry was last updated",
     )
 
     # Optional metadata
-    language = Column(String(10), nullable=True, comment="Language code (e.g., 'en', 'zh')")
-    tts_engine = Column(String(50), default="IndexTTS-1.5", comment="TTS engine version")
+    language = Column(
+        String(10), nullable=True, comment="Language code (e.g., 'en', 'zh')"
+    )
+    tts_engine = Column(
+        String(50), default="IndexTTS-1.5", comment="TTS engine version"
+    )
 
     # Constraints
     __table_args__ = (
@@ -122,7 +147,9 @@ class TTSSynthesisCache(Base):
             "file_size_bytes": self.file_size_bytes,
             "synthesis_duration_ms": self.synthesis_duration_ms,
             "hit_count": self.hit_count,
-            "last_accessed_at": self.last_accessed_at.isoformat() if self.last_accessed_at else None,
+            "last_accessed_at": self.last_accessed_at.isoformat()
+            if self.last_accessed_at
+            else None,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
             "language": self.language,

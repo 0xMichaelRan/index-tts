@@ -101,9 +101,7 @@ class TTSCacheService:
         return text or "text"
 
     @staticmethod
-    def generate_semantic_filename(
-        text: str, audio_prompt_path: str
-    ) -> str:
+    def generate_semantic_filename(text: str, audio_prompt_path: str) -> str:
         """
         Generate semantic filename for cached audio.
 
@@ -187,9 +185,7 @@ class TTSCacheService:
         cache_key = self.generate_cache_key(text, audio_prompt_path)
 
         # Query database
-        stmt = select(TTSSynthesisCache).where(
-            TTSSynthesisCache.cache_key == cache_key
-        )
+        stmt = select(TTSSynthesisCache).where(TTSSynthesisCache.cache_key == cache_key)
         result = await self.db.execute(stmt)
         entry = result.scalar_one_or_none()
 
@@ -261,9 +257,7 @@ class TTSCacheService:
         file_size_bytes = os.path.getsize(base_audio_local_path)
 
         # Generate semantic filename for easier debugging
-        semantic_filename = self.generate_semantic_filename(
-            text, audio_prompt_path
-        )
+        semantic_filename = self.generate_semantic_filename(text, audio_prompt_path)
 
         # Create cache entry
         entry = TTSSynthesisCache(
@@ -300,9 +294,7 @@ class TTSCacheService:
         Note:
             Called automatically by lookup() on cache hit
         """
-        stmt = select(TTSSynthesisCache).where(
-            TTSSynthesisCache.cache_key == cache_key
-        )
+        stmt = select(TTSSynthesisCache).where(TTSSynthesisCache.cache_key == cache_key)
         result = await self.db.execute(stmt)
         entry = result.scalar_one_or_none()
 
@@ -321,9 +313,7 @@ class TTSCacheService:
         Returns:
             True if deleted, False if not found
         """
-        stmt = select(TTSSynthesisCache).where(
-            TTSSynthesisCache.cache_key == cache_key
-        )
+        stmt = select(TTSSynthesisCache).where(TTSSynthesisCache.cache_key == cache_key)
         result = await self.db.execute(stmt)
         entry = result.scalar_one_or_none()
 
@@ -332,9 +322,7 @@ class TTSCacheService:
             try:
                 if os.path.exists(entry.base_audio_local_path):
                     os.remove(entry.base_audio_local_path)
-                    logger.info(
-                        f"Deleted cache file: {entry.base_audio_local_path}"
-                    )
+                    logger.info(f"Deleted cache file: {entry.base_audio_local_path}")
             except Exception as e:
                 logger.warning(f"Failed to delete cache file: {e}")
 
@@ -379,9 +367,7 @@ class TTSCacheService:
             "total_hits": total_hits,
             "total_size_mb": round(total_size_bytes / (1024 * 1024), 2),
             "avg_hits_per_entry": (
-                round(total_hits / max(total_entries, 1), 2)
-                if total_entries > 0
-                else 0
+                round(total_hits / max(total_entries, 1), 2) if total_entries > 0 else 0
             ),
         }
 

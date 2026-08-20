@@ -116,7 +116,9 @@ async def init_db():
         - For testing/development only
     """
     if not engine:
-        raise RuntimeError("Database engine not initialized - check DATABASE_URL in .env")
+        raise RuntimeError(
+            "Database engine not initialized - check DATABASE_URL in .env"
+        )
 
     from app.models import Base
 
@@ -158,6 +160,7 @@ async def check_db_connection() -> bool:
 
     try:
         from sqlalchemy import text
+
         async with engine.connect() as conn:
             await conn.execute(text("SELECT 1"))
         logger.info("Database connection check: OK")

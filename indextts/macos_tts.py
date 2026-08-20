@@ -275,7 +275,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "--language", default="en-US", help="Language code (default: en-US)"
     )
-    parser.add_argument("--ratio", type=float, default=1.0, help="Speech ratio (0.5-2.0, 1.0=normal)")
+    parser.add_argument(
+        "--ratio", type=float, default=1.0, help="Speech ratio (0.5-2.0, 1.0=normal)"
+    )
     parser.add_argument("--output", help="Output file path (experimental)")
 
     args = parser.parse_args()
