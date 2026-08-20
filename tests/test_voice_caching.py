@@ -5,8 +5,6 @@ This test verifies that the worker correctly reuses cached voice data
 when processing multiple jobs with the same audio prompt (S3 path).
 """
 
-import os
-import tempfile
 from unittest.mock import MagicMock, patch
 
 import pytest

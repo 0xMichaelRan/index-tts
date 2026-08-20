@@ -6,7 +6,6 @@ to enable reuse of base audio when the same (text, voice) combination is
 requested with different speed ratios.
 """
 
-from datetime import datetime
 from sqlalchemy import (
     Column,
     String,

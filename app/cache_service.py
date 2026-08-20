@@ -18,12 +18,11 @@ Cache Strategy:
 import hashlib
 import os
 import re
-import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 
-from sqlalchemy import select, delete, func, and_
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import TTSSynthesisCache

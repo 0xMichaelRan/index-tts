@@ -18,11 +18,9 @@ Run:
 import os
 import pytest
 import tempfile
-from pathlib import Path
 
 from app.cache_service import TTSCacheService
 from app.database import AsyncSessionLocal
-from app.models import TTSSynthesisCache
 
 
 @pytest.fixture
