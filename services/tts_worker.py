@@ -44,6 +44,7 @@ from services.s3_config import S3Client, S3ConfigError
 try:
     from app.database import DatabaseSession, check_db_connection
     from app.cache_service import TTSCacheService
+
     CACHE_AVAILABLE = True
 except ImportError as e:
     logger.warning(f"Cache dependencies not available: {e}")
@@ -79,9 +80,9 @@ class IndexTTSWorker:
         # RabbitMQ configuration
         if not rabbitmq_url:
             raise ValueError("RABBITMQ_URL is required")
-        
+
         self.rabbitmq_url = rabbitmq_url
-        
+
         # Parse URL to extract host for logging
         try:
             parsed = urlparse(rabbitmq_url)
@@ -154,11 +155,15 @@ class IndexTTSWorker:
         self._processed_jobs = set()  # Track completed job IDs for deduplication
 
         # Cache configuration
-        self.cache_enabled = CACHE_AVAILABLE and os.getenv("TTS_CACHE_ENABLED", "true").lower() == "true"
+        self.cache_enabled = (
+            CACHE_AVAILABLE and os.getenv("TTS_CACHE_ENABLED", "true").lower() == "true"
+        )
         self.cache_max_entries = int(os.getenv("TTS_CACHE_MAX_ENTRIES", "10000"))
-        self.cache_eviction_threshold = int(os.getenv("TTS_CACHE_EVICTION_THRESHOLD", "9000"))
+        self.cache_eviction_threshold = int(
+            os.getenv("TTS_CACHE_EVICTION_THRESHOLD", "9000")
+        )
         self.cache_dir = os.getenv("TTS_CACHE_LOCAL_DIR", "outputs/tts_cache")
-        
+
         if self.cache_enabled:
             logger.info("TTS synthesis cache: ENABLED")
             logger.info(f"  Max entries: {self.cache_max_entries}")
@@ -168,7 +173,9 @@ class IndexTTSWorker:
             logger.warning("TTS synthesis cache: DISABLED")
 
         # Inference method configuration (Windows/Linux only)
-        self.use_fast_inference = os.getenv("TTS_USE_FAST_INFERENCE", "true").lower() == "true"
+        self.use_fast_inference = (
+            os.getenv("TTS_USE_FAST_INFERENCE", "true").lower() == "true"
+        )
         if self.platform != "Darwin":
             inference_method = "infer_fast()" if self.use_fast_inference else "infer()"
             logger.info(f"TTS inference method: {inference_method}")
@@ -176,21 +183,27 @@ class IndexTTSWorker:
             logger.info("TTS inference method: infer() (macOS native)")
 
         # Audio normalization configuration
-        self.normalization_enabled = os.getenv("TTS_NORMALIZATION_ENABLED", "true").lower() == "true"
-        self.normalization_target_lufs = float(os.getenv("TTS_NORMALIZATION_TARGET_LUFS", "-16.0"))
-        
-        logger.info(f"Audio normalization: {'ENABLED' if self.normalization_enabled else 'DISABLED'}")
+        self.normalization_enabled = (
+            os.getenv("TTS_NORMALIZATION_ENABLED", "true").lower() == "true"
+        )
+        self.normalization_target_lufs = float(
+            os.getenv("TTS_NORMALIZATION_TARGET_LUFS", "-16.0")
+        )
+
+        logger.info(
+            f"Audio normalization: {'ENABLED' if self.normalization_enabled else 'DISABLED'}"
+        )
         if self.normalization_enabled:
             logger.info(f"  Target LUFS: {self.normalization_target_lufs:.1f} dB")
 
         # Graceful shutdown support
         self._shutdown_requested = False
-        
+
         # Reconnection tracking
         self._reconnect_delay = 5  # Initial reconnection delay in seconds
         self._max_reconnect_delay = 300  # Maximum delay (5 minutes)
         self._reconnect_attempts = 0
-        
+
         self._setup_signal_handlers()
 
     def _init_tts_engine(self):
@@ -270,7 +283,7 @@ class IndexTTSWorker:
             self.channel.queue_declare(queue="tts_jobs", durable=True)
 
             logger.success("Connected to RabbitMQ")
-            
+
             # Reset reconnection tracking on successful connection
             self._reconnect_attempts = 0
             self._reconnect_delay = 5
@@ -278,7 +291,7 @@ class IndexTTSWorker:
         except Exception as e:
             logger.failure(f"Failed to connect to RabbitMQ: {e!s}")
             raise
-    
+
     def _is_connection_open(self) -> bool:
         """Check if RabbitMQ connection is open and healthy."""
         try:
@@ -290,45 +303,46 @@ class IndexTTSWorker:
             )
         except Exception:
             return False
-    
+
     def _reconnect_with_backoff(self) -> bool:
         """
         Attempt to reconnect to RabbitMQ with exponential backoff.
-        
+
         Returns:
             True if reconnection successful, False if shutdown requested
         """
         while not self._shutdown_requested:
             self._reconnect_attempts += 1
-            
+
             logger.warning(
                 f"Attempting to reconnect to RabbitMQ "
                 f"(attempt {self._reconnect_attempts}, waiting {self._reconnect_delay}s)..."
             )
-            
+
             time.sleep(self._reconnect_delay)
-            
+
             try:
                 # Close old connection if it exists
                 self.disconnect_rabbitmq()
-                
+
                 # Attempt new connection
                 self.connect_rabbitmq()
-                
+
                 logger.success(
                     f"Successfully reconnected to RabbitMQ after {self._reconnect_attempts} attempts"
                 )
                 return True
-                
+
             except Exception as e:
-                logger.error(f"Reconnection attempt {self._reconnect_attempts} failed: {e}")
-                
+                logger.error(
+                    f"Reconnection attempt {self._reconnect_attempts} failed: {e}"
+                )
+
                 # Exponential backoff with maximum delay
                 self._reconnect_delay = min(
-                    self._reconnect_delay * 2,
-                    self._max_reconnect_delay
+                    self._reconnect_delay * 2, self._max_reconnect_delay
                 )
-        
+
         return False
 
     def disconnect_rabbitmq(self):
@@ -345,7 +359,7 @@ class IndexTTSWorker:
     ) -> tuple[bool, str | None]:
         """
         Async helper to lookup and process cache hit.
-        
+
         Returns:
             (cache_hit, cached_audio_path) tuple
         """
@@ -353,11 +367,11 @@ class IndexTTSWorker:
             async with DatabaseSession() as db_session:
                 cache_service = TTSCacheService(db_session, self.cache_dir)
                 cache_entry = await cache_service.lookup(text, audio_prompt_path)
-                
+
                 if cache_entry:
                     # Cache HIT - reuse base audio
                     logger.success(f"[JOB {job_id}] Cache HIT - reusing base audio")
-                    
+
                     if ratio != 1.0:
                         # Apply time-stretching to cached audio
                         cached_audio_path = self._apply_ratio_to_cached_audio(
@@ -368,17 +382,19 @@ class IndexTTSWorker:
                         cached_audio_path = self._copy_cached_audio(
                             cache_entry.base_audio_local_path, job_id
                         )
-                    
+
                     # Check for eviction (in background, doesn't affect this job)
                     await cache_service.evict_old_entries(
                         max_entries=self.cache_max_entries,
-                        evict_count=self.cache_eviction_threshold
+                        evict_count=self.cache_eviction_threshold,
                     )
-                    
+
                     return (True, cached_audio_path)
         except Exception as e:
-            logger.warning(f"[JOB {job_id}] Cache lookup failed: {e}, falling back to full synthesis")
-        
+            logger.warning(
+                f"[JOB {job_id}] Cache lookup failed: {e}, falling back to full synthesis"
+            )
+
         return (False, None)
 
     def _process_cache_lookup(
@@ -389,38 +405,47 @@ class IndexTTSWorker:
         Avoids event loop attachment issues.
         """
         result_container = {}
-        
+
         def run_async():
             """Run in separate thread with its own event loop"""
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
                 result = loop.run_until_complete(
-                    self._process_cache_lookup_async(job_id, text, audio_prompt_path, ratio)
+                    self._process_cache_lookup_async(
+                        job_id, text, audio_prompt_path, ratio
+                    )
                 )
-                result_container['result'] = result
+                result_container["result"] = result
             except Exception as e:
-                result_container['error'] = e
+                result_container["error"] = e
             finally:
                 loop.close()
-        
+
         thread = threading.Thread(target=run_async)
         thread.start()
         thread.join(timeout=10.0)  # 10 second timeout
-        
-        if 'error' in result_container:
-            logger.warning(f"[JOB {job_id}] Cache lookup failed: {result_container['error']}")
+
+        if "error" in result_container:
+            logger.warning(
+                f"[JOB {job_id}] Cache lookup failed: {result_container['error']}"
+            )
             return (False, None)
-        
-        return result_container.get('result', (False, None))
+
+        return result_container.get("result", (False, None))
 
     async def _process_cache_store_async(
-        self, job_id: str, text: str, audio_prompt_path: str, 
-        base_audio_path: str, language: str, synthesis_start: float
+        self,
+        job_id: str,
+        text: str,
+        audio_prompt_path: str,
+        base_audio_path: str,
+        language: str,
+        synthesis_start: float,
     ) -> None:
         """
         Async helper to store synthesis result in cache.
-        
+
         Note: All cached audio is stored at ratio=1.0 (base speed).
         Time-stretching is applied separately when needed.
         """
@@ -429,7 +454,7 @@ class IndexTTSWorker:
                 cache_service = TTSCacheService(db_session, self.cache_dir)
                 audio_duration = self._get_audio_duration(base_audio_path)
                 synthesis_duration = time.time() - synthesis_start
-                
+
                 await cache_service.store(
                     text=text,
                     audio_prompt_path=audio_prompt_path,
@@ -438,21 +463,27 @@ class IndexTTSWorker:
                     synthesis_duration_ms=int(synthesis_duration * 1000),
                     language=language,
                 )
-                
+
                 logger.success(f"[JOB {job_id}] Base audio cached for future reuse")
         except Exception as e:
             logger.warning(f"[JOB {job_id}] Failed to cache synthesis: {e}")
 
     def _process_cache_store(
-        self, job_id: str, text: str, audio_prompt_path: str, 
-        base_audio_path: str, language: str, synthesis_start: float
+        self,
+        job_id: str,
+        text: str,
+        audio_prompt_path: str,
+        base_audio_path: str,
+        language: str,
+        synthesis_start: float,
     ) -> None:
         """
         Synchronous wrapper for cache storage using thread + new event loop.
-        
+
         Note: All cached audio is stored at ratio=1.0 (base speed).
         Time-stretching is applied separately when needed.
         """
+
         def run_async():
             """Run in separate thread with its own event loop"""
             loop = asyncio.new_event_loop()
@@ -460,15 +491,19 @@ class IndexTTSWorker:
             try:
                 loop.run_until_complete(
                     self._process_cache_store_async(
-                        job_id, text, audio_prompt_path, base_audio_path,
-                        language, synthesis_start
+                        job_id,
+                        text,
+                        audio_prompt_path,
+                        base_audio_path,
+                        language,
+                        synthesis_start,
                     )
                 )
             except Exception as e:
                 logger.warning(f"[JOB {job_id}] Cache store failed: {e}")
             finally:
                 loop.close()
-        
+
         thread = threading.Thread(target=run_async)
         thread.start()
         thread.join(timeout=10.0)  # 10 second timeout
@@ -584,11 +619,17 @@ class IndexTTSWorker:
                         with self.tts_breaker:
                             # Synthesize base audio at ratio=1.0 for caching
                             base_audio_path = self._synthesize_audio(
-                                job_id, text, local_audio_prompt, audio_prompt_path, 
-                                language, ratio=1.0  # Always 1.0 for cache
+                                job_id,
+                                text,
+                                local_audio_prompt,
+                                audio_prompt_path,
+                                language,
+                                ratio=1.0,  # Always 1.0 for cache
                             )
                     except CircuitBreakerError:
-                        error_msg = "IndexTTS circuit breaker is open - service unavailable"
+                        error_msg = (
+                            "IndexTTS circuit breaker is open - service unavailable"
+                        )
                         logger.error(f"[JOB {job_id}] {error_msg}")
                         return {
                             "job_id": job_id,
@@ -603,8 +644,12 @@ class IndexTTSWorker:
                     # Store in cache (if enabled)
                     if self.cache_enabled:
                         self._process_cache_store(
-                            job_id, text, audio_prompt_path, base_audio_path,
-                            language, synthesis_start
+                            job_id,
+                            text,
+                            audio_prompt_path,
+                            base_audio_path,
+                            language,
+                            synthesis_start,
                         )
 
                     # Apply time-stretching if ratio != 1.0
@@ -642,7 +687,7 @@ class IndexTTSWorker:
 
                 # Calculate synthesis duration (TTS only, excluding I/O and upload)
                 synthesis_duration = time.time() - synthesis_start
-                
+
                 # Calculate total job duration (for logging)
                 total_duration = time.time() - job_start_time
 
@@ -661,7 +706,7 @@ class IndexTTSWorker:
                     "cache_hit": cache_hit,
                     "retry_count": retry_count,
                 }
-                
+
                 cache_status = "cache HIT" if cache_hit else "full synthesis"
                 logger.success(
                     f"[JOB {job_id}] Completed in {total_duration:.2f}s ({cache_status})"
@@ -712,7 +757,9 @@ class IndexTTSWorker:
                 if local_audio_prompt:
                     self._cleanup_local_files(local_audio_prompt)
                 # Only clean up output if it's not in cache directory
-                if local_output and not local_output.startswith(str(Path(self.cache_dir))):
+                if local_output and not local_output.startswith(
+                    str(Path(self.cache_dir))
+                ):
                     self._cleanup_local_files(local_output)
 
     def _download_audio_prompt(
@@ -788,9 +835,10 @@ class IndexTTSWorker:
         if ratio == 1.0 and self.cache_enabled:
             # Store in cache directory with semantic filename
             from app.cache_service import TTSCacheService
+
             cache_dir = Path(self.cache_dir)
             cache_dir.mkdir(parents=True, exist_ok=True)
-            
+
             # Generate semantic filename for better debugging
             # Format: {text_preview}_{voice_id}.wav (e.g., "hello_world_001.wav")
             output_filename = TTSCacheService.generate_semantic_filename(
@@ -801,7 +849,7 @@ class IndexTTSWorker:
             # Non-cacheable output (custom ratio)
             output_dir = os.path.join("outputs", "tts_output", job_id)
             os.makedirs(output_dir, exist_ok=True)
-            
+
             timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
             output_filename = f"{job_id}_{timestamp}.wav"
             output_path = os.path.join(output_dir, output_filename)
@@ -824,24 +872,28 @@ class IndexTTSWorker:
             # - We track S3 paths at the worker level for cache hit detection
             # - But we let infer/infer_fast use local paths for its internal cache comparison
             # - After each inference, we keep the S3 path for next job's comparison
-            
+
             if audio_prompt_s3_path:
                 # Check if this is the same voice as previous job (by S3 path)
-                is_same_voice = (self.tts.cache_audio_prompt == audio_prompt_s3_path)
-                
+                is_same_voice = self.tts.cache_audio_prompt == audio_prompt_s3_path
+
                 if not is_same_voice:
                     # New voice - need to clear cache and load audio
-                    logger.info(f"[JOB {job_id}] Loading new voice (S3: {audio_prompt_s3_path})")
+                    logger.info(
+                        f"[JOB {job_id}] Loading new voice (S3: {audio_prompt_s3_path})"
+                    )
                     self.tts.cache_audio_prompt = None
                     self.tts.cache_cond_mel = None
                     # Now infer/infer_fast will load the audio and cache it
                 else:
                     # Same voice - trick infer/infer_fast into thinking this is the same file
                     # by temporarily setting cache_audio_prompt to the current local path
-                    logger.info(f"[JOB {job_id}] Reusing cached voice (S3: {audio_prompt_s3_path})")
+                    logger.info(
+                        f"[JOB {job_id}] Reusing cached voice (S3: {audio_prompt_s3_path})"
+                    )
                     # Override the comparison: make infer/infer_fast think the local path matches cache
                     self.tts.cache_audio_prompt = audio_prompt
-                
+
                 # Run inference - it will either load audio (if cache was cleared) or reuse (if paths match)
                 # NOTE: ratio parameter is NOT used by IndexTTS - we handle time-stretching separately
                 if self.use_fast_inference:
@@ -860,14 +912,16 @@ class IndexTTSWorker:
                         output_path=output_path,
                         ratio=1.0,  # Always 1.0 for base audio
                     )
-                
+
                 # CRITICAL: Store S3 path as cache key for next job comparison
                 # This allows the NEXT job to detect if it's using the same voice
                 self.tts.cache_audio_prompt = audio_prompt_s3_path
                 # cache_cond_mel is already set by infer/infer_fast, we keep it
             else:
                 # Fallback for jobs without S3 path metadata
-                logger.warning(f"[JOB {job_id}] No S3 path provided, voice caching disabled")
+                logger.warning(
+                    f"[JOB {job_id}] No S3 path provided, voice caching disabled"
+                )
                 if self.use_fast_inference:
                     self.tts.infer_fast(
                         audio_prompt=audio_prompt,
@@ -887,7 +941,7 @@ class IndexTTSWorker:
 
         logger.info(f"[JOB {job_id}] Synthesis complete: {output_path}")
         return output_path
-    
+
     def _copy_cached_audio(self, base_audio_path: str, job_id: str) -> str:
         """
         Copy cached base audio to job-specific location.
@@ -938,7 +992,9 @@ class IndexTTSWorker:
         shutil.copy(base_audio_path, output_path)
 
         # Apply time-stretching in-place
-        logger.info(f"[JOB {job_id}] Applying time stretch to cached audio (ratio={ratio})")
+        logger.info(
+            f"[JOB {job_id}] Applying time stretch to cached audio (ratio={ratio})"
+        )
         self._apply_time_stretch_to_file(output_path, ratio, job_id)
 
         return output_path
@@ -946,50 +1002,52 @@ class IndexTTSWorker:
     def _apply_time_stretch_to_file(self, audio_path: str, ratio: float, job_id: str):
         """
         Apply time-stretching to audio file in-place.
-        
+
         Uses librosa's time_stretch to adjust playback speed while preserving pitch.
         This implements the ratio parameter for TTS synthesis:
         - ratio > 1.0: Speed up (e.g., 2.0 = 2x faster, half duration)
         - ratio = 1.0: No change (normal speed)
         - ratio < 1.0: Slow down (e.g., 0.5 = 2x slower, double duration)
-        
+
         Args:
             audio_path: Path to audio file (WAV format)
             ratio: Time stretch ratio (0.5=slow, 1.0=normal, 2.0=fast)
             job_id: Job identifier for logging
-        
+
         Raises:
             Exception: If time-stretching fails
         """
         import librosa
         import soundfile as sf
-        
+
         try:
             # Load audio file
             audio, sr = librosa.load(audio_path, sr=None)
-            
+
             # Calculate original duration
             original_duration = len(audio) / sr
-            
+
             # Apply time stretching (ratio > 1.0 speeds up, < 1.0 slows down)
             stretched = librosa.effects.time_stretch(audio, rate=ratio)
-            
+
             # Calculate new duration
             new_duration = len(stretched) / sr
-            
+
             # Save back to the same file (in-place modification)
             sf.write(audio_path, stretched, sr)
-            
+
             logger.info(
                 f"[JOB {job_id}] Time stretch applied successfully "
                 f"(original: {original_duration:.2f}s → new: {new_duration:.2f}s)"
             )
-            
+
         except Exception as e:
             logger.error(f"[JOB {job_id}] Time stretching failed: {e}")
             # Don't raise - continue with unstretched audio
             # This ensures the job doesn't fail completely if time-stretching fails
-            logger.warning(f"[JOB {job_id}] Continuing with original audio (no time stretch)")
+            logger.warning(
+                f"[JOB {job_id}] Continuing with original audio (no time stretch)"
+            )
 
     def _upload_to_s3_idempotent(
         self,
@@ -1117,10 +1175,12 @@ class IndexTTSWorker:
             try:
                 # Check connection health before publishing
                 if not self._is_connection_open():
-                    logger.warning(f"[JOB {job_id}] Connection closed, attempting to reconnect before publishing...")
+                    logger.warning(
+                        f"[JOB {job_id}] Connection closed, attempting to reconnect before publishing..."
+                    )
                     if not self._reconnect_with_backoff():
                         raise Exception("Failed to reconnect to RabbitMQ")
-                
+
                 self.channel.basic_publish(
                     exchange="",
                     routing_key="tts_results",
@@ -1152,13 +1212,15 @@ class IndexTTSWorker:
                         if not self._reconnect_with_backoff():
                             raise Exception("Reconnection failed")
                     except Exception as reconnect_error:
-                        logger.error(f"[JOB {job_id}] Reconnection failed: {reconnect_error}")
+                        logger.error(
+                            f"[JOB {job_id}] Reconnection failed: {reconnect_error}"
+                        )
                 else:
                     logger.critical(
                         f"[JOB {job_id}] ✗ Failed to publish result after {max_retries} attempts: {e}"
                     )
                     self._handle_publish_failure(job_id, result, e)
-                    
+
             except Exception as e:
                 retry_count += 1
                 if retry_count < max_retries:
@@ -1173,8 +1235,10 @@ class IndexTTSWorker:
                         f"[JOB {job_id}] ✗ Failed to publish result after {max_retries} attempts: {e}"
                     )
                     self._handle_publish_failure(job_id, result, e)
-    
-    def _handle_publish_failure(self, job_id: str, result: dict[str, Any], error: Exception):
+
+    def _handle_publish_failure(
+        self, job_id: str, result: dict[str, Any], error: Exception
+    ):
         """Handle failure to publish result after all retries exhausted."""
         # If result contains audio_path, S3 upload likely succeeded
         if result.get("status") == "completed" and result.get("audio_path"):
@@ -1190,9 +1254,7 @@ class IndexTTSWorker:
                     remote_path=result.get("audio_path"),
                     error=error,
                 )
-                logger.critical(
-                    f"Recovery data: {json.dumps(recovery_data, indent=2)}"
-                )
+                logger.critical(f"Recovery data: {json.dumps(recovery_data, indent=2)}")
 
         # Do not raise - we've done our best, avoid requeueing the original message
 
@@ -1263,9 +1325,7 @@ class IndexTTSWorker:
                 logger.error(f"Error processing job: {e!s}")
                 if job_data:
                     job_id = job_data.get("job_id")
-                    logger.error(
-                        f"[JOB {job_id}] Processing failed, sending to DLQ"
-                    )
+                    logger.error(f"[JOB {job_id}] Processing failed, sending to DLQ")
                 # Reject without requeue - failed jobs go to DLQ after retries
                 ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
 

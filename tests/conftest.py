@@ -1,4 +1,5 @@
 """Pytest configuration and fixtures for all tests."""
+
 import sys
 from pathlib import Path
 

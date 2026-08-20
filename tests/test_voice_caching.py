@@ -38,7 +38,9 @@ class TestVoiceCaching:
             worker.tts = mock_tts_engine
             yield worker
 
-    def test_first_job_loads_voice(self, worker_with_mock_tts, mock_tts_engine, tmp_path):
+    def test_first_job_loads_voice(
+        self, worker_with_mock_tts, mock_tts_engine, tmp_path
+    ):
         """Test that first job with a voice loads and caches it."""
         # Arrange
         job_id = "test_job_1"
@@ -62,7 +64,9 @@ class TestVoiceCaching:
         # After inference, cache should store S3 path
         assert mock_tts_engine.cache_audio_prompt == s3_path
 
-    def test_second_job_reuses_voice_cache(self, worker_with_mock_tts, mock_tts_engine, tmp_path):
+    def test_second_job_reuses_voice_cache(
+        self, worker_with_mock_tts, mock_tts_engine, tmp_path
+    ):
         """Test that second job with same voice reuses cache."""
         # Arrange
         job_id_1 = "test_job_1"
@@ -96,7 +100,7 @@ class TestVoiceCaching:
             job_id=job_id_2,
             text="Different text",
             audio_prompt=str(local_path_2),  # Different local path
-            audio_prompt_s3_path=s3_path,    # Same S3 path
+            audio_prompt_s3_path=s3_path,  # Same S3 path
             language="en",
             ratio=1.0,
         )
@@ -107,7 +111,9 @@ class TestVoiceCaching:
         # Cache should still store S3 path
         assert mock_tts_engine.cache_audio_prompt == s3_path
 
-    def test_different_voice_clears_cache(self, worker_with_mock_tts, mock_tts_engine, tmp_path):
+    def test_different_voice_clears_cache(
+        self, worker_with_mock_tts, mock_tts_engine, tmp_path
+    ):
         """Test that different voice clears cache."""
         # Arrange
         job_id_1 = "test_job_1"
@@ -146,7 +152,9 @@ class TestVoiceCaching:
         # Cache should be updated to new voice
         assert mock_tts_engine.cache_audio_prompt == s3_path_2
 
-    def test_no_s3_path_disables_caching(self, worker_with_mock_tts, mock_tts_engine, tmp_path):
+    def test_no_s3_path_disables_caching(
+        self, worker_with_mock_tts, mock_tts_engine, tmp_path
+    ):
         """Test that missing S3 path disables caching."""
         # Arrange
         job_id = "test_job_1"

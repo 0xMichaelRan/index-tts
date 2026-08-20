@@ -57,7 +57,7 @@ async def health():
 async def infer(
     audio_prompt: UploadFile = File(None),
     text: str = Form(...),
-    ratio: float = Form(1.0)
+    ratio: float = Form(1.0),
 ):
     """
     Text-to-speech inference endpoint.

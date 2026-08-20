@@ -463,36 +463,36 @@ class TestNetworkReconnection:
     def test_connection_health_check_when_open(self, mock_s3):
         """Test that _is_connection_open returns True for healthy connection."""
         worker = IndexTTSWorker()
-        
+
         # Mock healthy connection
         worker.connection = Mock()
         worker.connection.is_open = True
         worker.channel = Mock()
         worker.channel.is_open = True
-        
+
         assert worker._is_connection_open() is True
 
     @patch("services.tts_worker.S3Client")
     def test_connection_health_check_when_closed(self, mock_s3):
         """Test that _is_connection_open returns False for closed connection."""
         worker = IndexTTSWorker()
-        
+
         # Mock closed connection
         worker.connection = Mock()
         worker.connection.is_open = False
         worker.channel = Mock()
         worker.channel.is_open = False
-        
+
         assert worker._is_connection_open() is False
 
     @patch("services.tts_worker.S3Client")
     def test_connection_health_check_when_none(self, mock_s3):
         """Test that _is_connection_open returns False when connection is None."""
         worker = IndexTTSWorker()
-        
+
         worker.connection = None
         worker.channel = None
-        
+
         assert worker._is_connection_open() is False
 
     @patch("services.tts_worker.S3Client")
@@ -501,10 +501,10 @@ class TestNetworkReconnection:
         """Test successful reconnection with exponential backoff."""
         worker = IndexTTSWorker()
         worker.disconnect_rabbitmq = Mock()
-        
+
         # Mock connect_rabbitmq to succeed on second attempt
         call_count = {"count": 0}
-        
+
         def connect_side_effect():
             call_count["count"] += 1
             if call_count["count"] == 1:
@@ -514,12 +514,12 @@ class TestNetworkReconnection:
             worker.connection.is_open = True
             worker.channel = Mock()
             worker.channel.is_open = True
-        
+
         worker.connect_rabbitmq = Mock(side_effect=connect_side_effect)
-        
+
         # Attempt reconnection
         result = worker._reconnect_with_backoff()
-        
+
         assert result is True
         assert worker._reconnect_attempts == 2
         assert call_count["count"] == 2
@@ -533,10 +533,10 @@ class TestNetworkReconnection:
         worker = IndexTTSWorker()
         worker.disconnect_rabbitmq = Mock()
         worker._reconnect_delay = 5
-        
+
         # Mock connect_rabbitmq to succeed on third attempt
         call_count = {"count": 0}
-        
+
         def connect_side_effect():
             call_count["count"] += 1
             if call_count["count"] < 3:
@@ -546,16 +546,16 @@ class TestNetworkReconnection:
             worker.connection.is_open = True
             worker.channel = Mock()
             worker.channel.is_open = True
-        
+
         worker.connect_rabbitmq = Mock(side_effect=connect_side_effect)
-        
+
         # Attempt reconnection
         result = worker._reconnect_with_backoff()
-        
+
         assert result is True
         # Verify exponential backoff: 5s, 10s
         sleep_calls = [call[0][0] for call in mock_sleep.call_args_list]
-        assert sleep_calls[0] == 5   # First retry
+        assert sleep_calls[0] == 5  # First retry
         assert sleep_calls[1] == 10  # Second retry
 
     @patch("services.tts_worker.S3Client")
@@ -566,10 +566,10 @@ class TestNetworkReconnection:
         worker.disconnect_rabbitmq = Mock()
         worker._reconnect_delay = 200  # Start high
         worker._max_reconnect_delay = 300
-        
+
         # Mock connect_rabbitmq to fail once
         call_count = {"count": 0}
-        
+
         def connect_side_effect():
             call_count["count"] += 1
             if call_count["count"] == 1:
@@ -579,12 +579,12 @@ class TestNetworkReconnection:
             worker.connection.is_open = True
             worker.channel = Mock()
             worker.channel.is_open = True
-        
+
         worker.connect_rabbitmq = Mock(side_effect=connect_side_effect)
-        
+
         # Attempt reconnection
         result = worker._reconnect_with_backoff()
-        
+
         assert result is True
         # Verify delay was capped at max (200 * 2 = 400, capped to 300)
         assert worker._reconnect_delay == 300
@@ -596,10 +596,10 @@ class TestNetworkReconnection:
         worker._shutdown_requested = True
         worker.disconnect_rabbitmq = Mock()
         worker.connect_rabbitmq = Mock(side_effect=Exception("Should not be called"))
-        
+
         # Attempt reconnection with shutdown flag set
         result = worker._reconnect_with_backoff()
-        
+
         assert result is False
         # connect_rabbitmq should not have been called
         assert not worker.connect_rabbitmq.called
@@ -612,32 +612,33 @@ class TestNetworkReconnection:
         """Test that publish_result attempts reconnection on connection error."""
         worker = IndexTTSWorker()
         worker.channel = Mock()
-        
+
         # Mock basic_publish to fail with connection error then succeed
         call_count = {"count": 0}
-        
+
         def publish_side_effect(*args, **kwargs):
             call_count["count"] += 1
             if call_count["count"] == 1:
                 import pika
+
                 raise pika.exceptions.ConnectionClosedByBroker(200, "Connection closed")
             # Success on retry
-        
+
         worker.channel.basic_publish = Mock(side_effect=publish_side_effect)
         worker._is_connection_open = Mock(return_value=False)
-        
+
         # Mock successful reconnection
         def reconnect_side_effect():
             worker._is_connection_open = Mock(return_value=True)
             return True
-        
+
         worker._reconnect_with_backoff = Mock(side_effect=reconnect_side_effect)
-        
+
         result = {"job_id": "test-123", "status": "completed"}
-        
+
         with patch("services.tts_worker.time.sleep"):
             worker.publish_result(result)
-        
+
         # Verify reconnection was attempted
         assert worker._reconnect_with_backoff.called
         assert call_count["count"] == 2
@@ -648,18 +649,18 @@ class TestNetworkReconnection:
         worker = IndexTTSWorker()
         worker._reconnect_attempts = 5
         worker._reconnect_delay = 80
-        
+
         # Mock successful connection
         worker.connection = Mock()
         worker.connection.is_open = True
         worker.channel = Mock()
         worker.channel.is_open = True
-        
+
         with patch("services.tts_worker.pika.BlockingConnection"):
             with patch("services.tts_worker.pika.PlainCredentials"):
                 with patch("services.tts_worker.pika.ConnectionParameters"):
                     worker.connect_rabbitmq()
-        
+
         # Verify tracking was reset
         assert worker._reconnect_attempts == 0
         assert worker._reconnect_delay == 5
