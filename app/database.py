@@ -24,6 +24,33 @@ load_dotenv()
 
 logger = get_logger(__name__)
 
+def async_to_sync_database_url(database_url: str) -> str:
+    """Convert async SQLAlchemy URL to sync (e.g. postgresql+asyncpg -> postgresql)."""
+    from sqlalchemy.engine import make_url
+
+    parsed = make_url(database_url)
+    if "+asyncpg" in parsed.drivername:
+        return str(parsed.set(drivername=parsed.drivername.replace("+asyncpg", "", 1)))
+    return database_url
+
+
+def get_sync_database_url() -> str | None:
+    """
+    Sync database URL for Alembic and other sync tools.
+
+    Uses SYNC_DATABASE_URL when set; otherwise derives from DATABASE_URL.
+    """
+    sync_url = os.getenv("SYNC_DATABASE_URL")
+    if sync_url:
+        return sync_url
+
+    database_url = os.getenv("DATABASE_URL")
+    if not database_url:
+        return None
+
+    return async_to_sync_database_url(database_url)
+
+
 # Database configuration from environment
 DATABASE_URL = os.getenv("DATABASE_URL")
 

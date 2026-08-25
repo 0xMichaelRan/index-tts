@@ -13,8 +13,10 @@ load_dotenv()
 # access to the values within the .ini file in use.
 config = context.config
 
-# Override sqlalchemy.url from environment (use SYNC_DATABASE_URL for Alembic)
-sync_database_url = os.getenv("SYNC_DATABASE_URL")
+# Override sqlalchemy.url from environment (derived from DATABASE_URL)
+from app.database import get_sync_database_url
+
+sync_database_url = get_sync_database_url()
 if sync_database_url:
     config.set_main_option("sqlalchemy.url", sync_database_url)
 
