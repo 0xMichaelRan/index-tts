@@ -38,12 +38,8 @@ def get_sync_database_url() -> str | None:
     """
     Sync database URL for Alembic and other sync tools.
 
-    Uses SYNC_DATABASE_URL when set; otherwise derives from DATABASE_URL.
+    Derived from DATABASE_URL by stripping the async driver (+asyncpg).
     """
-    sync_url = os.getenv("SYNC_DATABASE_URL")
-    if sync_url:
-        return sync_url
-
     database_url = os.getenv("DATABASE_URL")
     if not database_url:
         return None

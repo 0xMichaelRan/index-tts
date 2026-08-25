@@ -25,16 +25,14 @@ Successfully implemented a **database-backed TTS synthesis caching system** for 
   - `psycopg2-binary>=2.9.9`
 
 - [x] Created environment variables in `.env`
-  - `DATABASE_URL` (async connection)
-  - `SYNC_DATABASE_URL` (sync for Alembic)
+  - `DATABASE_URL` (async connection; Alembic derives sync URL from this)
   - `TTS_CACHE_ENABLED`
   - `TTS_CACHE_MAX_ENTRIES`
   - `TTS_CACHE_EVICTION_THRESHOLD`
   - `TTS_CACHE_LOCAL_DIR`
 
 - [x] **FIXED:** Alembic async driver issue
-  - Updated `alembic/env.py` to use synchronous migrations
-  - Fixed `SYNC_DATABASE_URL` in `.env`
+  - Updated `alembic/env.py` to derive sync URL from `DATABASE_URL`
   - Verified `alembic current` works correctly
 
 - [x] Initialized Alembic configuration
@@ -316,7 +314,7 @@ uv sync
 
 # 4. Configure .env (update database credentials)
 # DATABASE_URL=postgresql+asyncpg://user:pass@host/db
-# SYNC_DATABASE_URL=postgresql://user:pass@host/db
+# (Alembic derives its sync URL from DATABASE_URL)
 
 # 5. Create database
 createdb indextts

@@ -174,8 +174,8 @@ pytest tests/test_cache_service.py -v
 Added to `.env`:
 ```bash
 # PostgreSQL Database (for TTS synthesis cache)
+# Alembic derives its sync URL from DATABASE_URL automatically
 DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/indextts
-SYNC_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/indextts
 
 # Cache Configuration
 TTS_CACHE_ENABLED=true
@@ -213,7 +213,7 @@ uv sync
 createdb indextts
 
 # 3. Configure .env
-# (Update DATABASE_URL and SYNC_DATABASE_URL)
+# (Update DATABASE_URL)
 
 # 4. Run migration
 alembic upgrade head
