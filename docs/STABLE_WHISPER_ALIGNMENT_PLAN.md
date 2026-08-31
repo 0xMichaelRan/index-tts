@@ -114,17 +114,22 @@ RabbitMQ job
 - Runs on CPU with the `small` checkpoint.
 - No changes to IndexTTS weights required.
 
-### Model configuration
+### Model configuration (verified API)
 
 ```python
 import stable_whisper
 
-model = stable_whisper.load_model(
-    "small",
-    device="cpu",
-    cpu_preload=True,  # preload weights on CPU at worker startup
+model = stable_whisper.load_model("small", device="cpu")
+
+# Forced alignment call (keyword args required)
+result = model.align(
+    audio=audio_path,
+    text=text,
+    language=language_hint,
 )
 ```
+
+> **Note:** `cpu_preload` is **not** a valid parameter — `stable_whisper.load_model` proxies `whisper.load_model(name, device, download_root, in_memory)`. Verified against `stable-ts>=2.19.1`.
 
 | Setting | Value | Rationale |
 |---------|-------|-----------|
@@ -138,10 +143,14 @@ model = stable_whisper.load_model(
 Add to main dependencies (alignment is mandatory, not optional):
 
 ```toml
-"stable-ts>=2.17.0",
+"stable-ts>=2.19.1",
+"torch>=2.13.0",
+"torchaudio>=2.11.0",
 ```
 
-`stable-ts` pulls in `openai-whisper`, `torch`, and `torchaudio`. Torch is already present in the CUDA extra; document that CPU-only workers still need torch for alignment even on macOS dev machines.
+Versions verified against a working alignment environment. `stable-ts` brings in `openai-whisper`; `torch` and `torchaudio` are listed explicitly so macOS CPU-only dev machines get a consistent version without the CUDA extras.
+
+> **macOS note:** On Apple Silicon, force CPU — do **not** use `device="mps"`. MPS has float64 tensor conversion crashes during alignment (verified). The worker already sets `device="cpu"` unconditionally.
 
 ---
 
@@ -202,24 +211,21 @@ Rules:
 3. Emit words[] with global start/end
 ```
 
-#### §5.1 v1 limitation: multi-segment audio slicing
+#### §5.1 v1: monolingual-first; two-pass deferred to Phase 2
 
-Whisper align does not tell us where segment *i* starts in the audio before alignment. For v1, use a **two-pass proportional heuristic**:
+Whisper align does not reveal segment boundaries before alignment runs, making exact audio-slice attribution non-trivial. For v1 the **simpler fallback table below is the definitive v1 contract**. The two-pass (Pass A + Pass B) approach is reserved for Phase 2 when segment-level accuracy data is available.
 
-1. **Pass A:** Align full text as one block using `language` from job hint (or majority script vote) to get coarse word timings.
-2. **Pass B:** For each script segment, find the audio time window that covers that segment's characters (by matching aligned words to segment text), re-align within that window with the correct per-segment language.
+#### v1 alignment strategy (definitive)
 
-If Pass B is too complex for v1, ship **monolingual path only** first (§10 phased rollout) and add mixed-text refinement in v1.1.
+| Text profile | v1 strategy | `alignment_quality` value |
+|--------------|-------------|---------------------------|
+| `language=zh`, no Latin letters | `model.align(audio=path, text=text, language="zh")` | `"monolingual_zh"` |
+| `language=en`, no CJK | `model.align(audio=path, text=text, language="en")` | `"monolingual_en"` |
+| Mixed ZH/EN | `model.align(audio=path, text=text, language="zh")` — majority-script wins | `"mixed_fallback"` |
 
-#### Simpler v1 fallback (recommended for initial implementation)
+For mixed text, majority script is determined by character count of CJK vs Latin runs in the input. If Latin characters exceed 40% of total alphanumeric chars, use `language="en"` instead. Log `alignment_quality: "mixed_fallback"` in the JSON output so consumers can apply QA filtering.
 
-| Text profile | Strategy |
-|--------------|----------|
-| `language=zh`, no Latin letters | `model.align(audio, text, language="zh")` |
-| `language=en`, no CJK | `model.align(audio, text, language="en")` |
-| Mixed ZH/EN | `model.align(audio, text, language="zh")` with `regroup=False`; validate word coverage; if Latin words missing, retry with per-segment slicing (Pass B) |
-
-Document known mixed-text accuracy risk in job metadata (`alignment_quality: "mixed_fallback"`).
+Per-segment slicing (Phase 2) will improve mixed-text accuracy but is not required for v1.
 
 ---
 
@@ -266,10 +272,12 @@ alignment_s3_path = output_s3_path.rsplit(".", 1)[0] + ".json"
   "version": "1.0",
   "job_id": "abc123",
   "engine": "stable-whisper",
+  "engine_version": "2.19.1",
   "model": "small",
   "device": "cpu",
   "audio_duration_seconds": 12.34,
   "language_strategy": "monolingual_zh",
+  "alignment_quality": "monolingual_zh",
   "source_text": "你好，世界。",
   "segments": [
     {
@@ -291,6 +299,8 @@ alignment_s3_path = output_s3_path.rsplit(".", 1)[0] + ".json"
   "aligned_at": "2026-09-01T02:30:00+08:00"
 }
 ```
+
+**`alignment_quality` values:** `"monolingual_zh"` | `"monolingual_en"` | `"mixed_fallback"` (see §5 v1 strategy table).
 
 - **`segments`:** Per script/language block (length 1 for monolingual jobs).
 - **`words`:** Flattened global timeline for easy subtitle consumption.
@@ -361,8 +371,12 @@ Add to `.env.example`:
 # Model name (default: small)
 TTS_ALIGNMENT_MODEL=small
 
-# Device for alignment (must be cpu — GPU reserved for TTS)
+# Device for alignment (must be cpu — GPU reserved for TTS; do NOT use mps on Apple Silicon)
 TTS_ALIGNMENT_DEVICE=cpu
+
+# Directory where Whisper model weights are cached (default: ~/.cache/whisper)
+# Set to a persistent path in containerised deployments
+TTS_ALIGNMENT_MODEL_DIR=/opt/models/whisper
 
 # Max alignment retries per job (transient failures)
 TTS_ALIGNMENT_MAX_RETRIES=2
@@ -385,7 +399,7 @@ Alignment is mandatory: **alignment failure fails the job** (same as S3 upload f
 | Model load failure at startup | Worker fails to start | No — fix deployment |
 | Alignment timeout / OOM on CPU | `ALIGNMENT_FAILED` | Yes (up to `TTS_ALIGNMENT_MAX_RETRIES`) |
 | Circuit breaker open | `ALIGNMENT_CIRCUIT_OPEN` | Yes (after reset timeout) |
-| Empty text | Skip alignment? **No** — fail with `ALIGNMENT_INVALID_INPUT` | No |
+| Empty / whitespace-only text | `ALIGNMENT_INVALID_INPUT` — caught in `process_job()` **before** alignment is called; job fails immediately | No |
 | Audio file missing | `ALIGNMENT_AUDIO_NOT_FOUND` | No |
 
 Logging:
@@ -507,8 +521,10 @@ Alignment: stable-whisper small on cpu (mandatory)
 | Risk | Impact | Mitigation |
 |------|--------|------------|
 | TTS synthetic audio differs from natural speech | Drift, wrong word boundaries | Use forced align (known text); benchmark on real cloned voices; log `probability` |
-| Mixed ZH/EN alignment quality | Missing or merged words | Script segmentation (Phase 2); flag `alignment_quality` in JSON |
+| Mixed ZH/EN alignment quality | Missing or merged words | Script segmentation (Phase 2); flag `alignment_quality: "mixed_fallback"` in JSON |
 | CPU alignment too slow for long audio | Job latency | `small` model; mandatory acceptance; future: sentence-level coarse pass |
+| MPS (Apple Silicon) float64 crash | Worker crash on macOS dev | Always use `device="cpu"`; never `"mps"` — verified crash on stable-ts |
+| Whisper model not cached in container | Re-download on every restart | Set `TTS_ALIGNMENT_MODEL_DIR` to a persistent volume mount |
 | Extra torch dependency on macOS dev | Heavier local setup | Document in `MACOS_SETUP.md`; alignment uses CPU only |
 | Alignment failure blocks delivery | Stricter than audio-only | Retries + circuit breaker; monitor error rate |
 
@@ -517,9 +533,9 @@ Alignment: stable-whisper small on cpu (mandatory)
 ## 16. Open questions
 
 1. **Backend contract:** Does the API gateway expect `alignment_path` in the RabbitMQ response, or will it poll S3 by convention (`{job_id}.json`)?
-2. **Audio format:** Worker currently outputs WAV locally; S3 template may be `.mp3`. Alignment reads local WAV before any MP3 transcode — confirm upload pipeline does not transcode before alignment (align first, then transcode if needed).
+2. **Audio format (blocking):** Worker outputs WAV locally; S3 template may be `.mp3`. Alignment **must** run on the local WAV file before any MP3 transcode — confirm upload pipeline does not transcode before alignment. Implementation rule: align first, upload both audio and JSON independently, transcode only after alignment JSON is generated.
 3. **Word granularity for Chinese:** Whisper may align at character or sub-word level for ZH. Is character-level acceptable for subtitles?
-4. **Failure policy confirmation:** Mandatory means job fails if alignment fails — confirm product accepts this vs. delivering audio without timestamps.
+4. **Failure policy (resolved):** Mandatory — alignment failure fails the job. Empty/whitespace text is caught pre-alignment as `ALIGNMENT_INVALID_INPUT` (not a runtime alignment failure).
 
 ---
 
