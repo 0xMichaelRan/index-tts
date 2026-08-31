@@ -57,10 +57,6 @@ cd /path/to/indexTTS-worker
 # Create Python 3.10+ virtual environment
 uv venv --python 3.10
 
-# Activate it (optional - uv handles this automatically)
-source .venv/bin/activate
-```
-
 ### 3. Install Dependencies
 
 Install only macOS-specific dependencies (no GPU/CUDA libraries):
