@@ -83,12 +83,15 @@ RabbitMQ job
 │    input:  local_output (final WAV)                     │
 │            text (job input, unchanged)                  │
 │            language hint (job.language)                 │
-│    output: local_alignment.json                         │
+│    output: {job_id}_raw_alignment.json  ← kept locally  │
+│            {job_id}_alignment.srt       ← kept locally  │
+│            {job_id}_alignment.json      ← parsed JSON   │
 └─────────────────────────────────────────────────────────┘
     │
     ▼
 ┌─────────────────────────────────────────────────────────┐
-│ Step 4: Upload audio + alignment JSON to S3             │
+│ Step 4: Upload audio + parsed alignment JSON to S3      │
+│         (SRT and raw Whisper JSON stay on local disk)   │
 └─────────────────────────────────────────────────────────┘
     │
     ▼
@@ -143,12 +146,12 @@ result = model.align(
 Add to main dependencies (alignment is mandatory, not optional):
 
 ```toml
-"stable-ts>=2.19.1",
-"torch>=2.13.0",
-"torchaudio>=2.11.0",
+"stable-ts",
+"torch",
+"torchaudio",
 ```
 
-Versions verified against a working alignment environment. `stable-ts` brings in `openai-whisper`; `torch` and `torchaudio` are listed explicitly so macOS CPU-only dev machines get a consistent version without the CUDA extras.
+`stable-ts` transitively brings in `openai-whisper`. `torch` and `torchaudio` are listed explicitly so macOS CPU-only dev machines resolve them without pulling CUDA extras. Do not pin versions here — let `uv` resolve compatible versions at sync time against the existing `torch` pin in the `cuda` extras.
 
 > **macOS note:** On Apple Silicon, force CPU — do **not** use `device="mps"`. MPS has float64 tensor conversion crashes during alignment (verified). The worker already sets `device="cpu"` unconditionally.
 
@@ -229,16 +232,43 @@ Per-segment slicing (Phase 2) will improve mixed-text accuracy but is not requir
 
 ---
 
-## 6. Interaction with synthesis cache and `ratio`
+## 6. `ratio` parameter: synthesis handling and alignment impact
+
+### How `ratio` flows through the synthesis pipeline
+
+The `ratio` job parameter controls playback speed. Critically, **IndexTTS itself ignores `ratio`** — the engine always synthesises at its natural pace. Speed adjustment is applied by the worker as a post-synthesis time-stretch step using `librosa.effects.time_stretch`.
+
+```
+process_job(ratio=R)
+  ├── TTS synthesis   → base_audio_path  (always ratio=1.0, cached)
+  ├── time-stretch    → local_output     (only if R != 1.0; librosa time_stretch(rate=R))
+  └── forced align    → on local_output  (the final delivered waveform)
+```
+
+Key behaviour in [`_synthesize_audio()`](file:///Users/aa/git/github_uncgra/indexTTS-worker/services/tts_worker.py#L840):
+- `ratio` is always passed as `1.0` to `infer()` / `infer_fast()` — the IndexTTS model never sees the real ratio.
+- `_apply_ratio_to_cached_audio()` (or `_apply_time_stretch_to_file()`) performs the actual time-stretch on a **copy** of the base audio, producing `local_output`.
+
+### How `ratio` affects forced alignment
+
+| Scenario | `local_output` used for alignment | Effect on timestamps |
+|----------|-----------------------------------|----------------------|
+| `ratio=1.0` (no stretch) | Base audio copy | Timestamps at natural TTS speed |
+| `ratio=1.5` (faster) | Time-stretched copy (~2/3 duration) | All timestamps proportionally compressed |
+| `ratio=0.8` (slower) | Time-stretched copy (~1.25× duration) | All timestamps proportionally expanded |
+
+**Critical rule (unchanged from §3):** Alignment **must** run on `local_output` — i.e., the final time-stretched local WAV — never on `base_audio_path`. The synthesis cache stores only `base_audio_path`; alignment is never cached and always computed fresh per job.
+
+**Rationale:** Timestamps are valid only for a specific waveform duration. If alignment ran on the base `ratio=1.0` audio and the consumer received the `ratio=1.5` audio, every word timestamp would be off by a factor of 1.5. Aligning the final delivered file guarantees timestamps match playback.
+
+### Interaction with synthesis cache
 
 | Scenario | Audio aligned | Cache stores alignment? |
 |----------|---------------|-------------------------|
-| Cache miss, `ratio=1.0` | `base_audio_path` | **No** |
-| Cache miss, `ratio=1.5` | Time-stretched copy | **No** |
+| Cache miss, `ratio=1.0` | `base_audio_path` (copied) | **No** |
+| Cache miss, `ratio=1.5` | Time-stretched copy of base | **No** |
 | Cache hit, `ratio=1.0` | Copied base audio | **No** |
-| Cache hit, `ratio=0.8` | Time-stretched copy | **No** |
-
-**Rationale:** Timestamps are valid only for a specific waveform duration. Time-stretching changes segment durations non-uniformly in perceptual terms; aligning the final stretched file avoids timestamp drift.
+| Cache hit, `ratio=0.8` | Time-stretched copy of base | **No** |
 
 Alignment is always computed fresh per job. Expected CPU cost: ~1–4 s per minute of audio on `small`/CPU (benchmark during implementation).
 
@@ -246,23 +276,44 @@ Alignment is always computed fresh per job. Expected CPU cost: ~1–4 s per minu
 
 ## 7. Output format
 
-### Local file
+### Local files
 
-`outputs/tts_output/{job_id}/{job_id}_alignment.json`
-
-### S3 path
-
-Mirror audio path with `.json` suffix:
+Three alignment files are generated locally after alignment:
 
 ```
-Audio:     tts-audio/studio/{job_id}.mp3
-Alignment: tts-audio/studio/{job_id}.json
+outputs/tts_output/{job_id}/{job_id}_raw_alignment.json  ← native stable-whisper output; kept on disk; NOT uploaded
+outputs/tts_output/{job_id}/{job_id}_alignment.srt       ← SRT subtitle; kept on disk; NOT uploaded
+outputs/tts_output/{job_id}/{job_id}_alignment.json      ← parsed/distilled JSON; uploaded to S3, then deleted
 ```
 
-If audio is `.wav`, alignment uses the same stem. Derive from `output_path_template`:
+**Rationale for separating raw and parsed JSON:**
+- The native stable-whisper JSON contains verbose internal fields (token probabilities, internal Whisper segments, mel offsets) that are not needed by downstream video rendering (Remotion).
+- The **parsed JSON** (`{job_id}_alignment.json`) is a distilled representation — only the fields required for Remotion video rendering (see schema in §7.3 below) — making it compact and stable for API consumers.
+- The **raw JSON** (`{job_id}_raw_alignment.json`) is retained on local disk for debugging and re-parsing without re-running alignment.
+- The **SRT** (`{job_id}_alignment.srt`) is retained on local disk for downstream subtitle transcoding without re-running alignment.
+
+**Temp file cleanup policy:**
+- `{job_id}_raw_alignment.json` — **retained** on local disk; never uploaded.
+- `{job_id}_alignment.srt` — **retained** on local disk; never uploaded.
+- `{job_id}_alignment.json` (parsed) — uploaded to S3, then **deleted** from local disk (same lifecycle as `local_output`).
+
+> **Note:** `stable-ts` emits SRT/VTT natively via `result.to_srt_vtt()` and raw JSON via `result.to_dict()`. All three files are produced from the same `AlignmentResult` object in a single alignment pass — no extra Whisper inference is needed.
+
+### S3 paths
+
+Only the parsed alignment JSON is uploaded. Mirror the audio path using stem substitution:
+
+```
+Audio:          tts-audio/studio/{job_id}.mp3
+Alignment JSON: tts-audio/studio/{job_id}.json   ← only this is uploaded
+```
+
+Derive S3 path from `output_s3_path`:
 
 ```python
-alignment_s3_path = output_s3_path.rsplit(".", 1)[0] + ".json"
+base_s3 = output_s3_path.rsplit(".", 1)[0]
+alignment_s3_path = base_s3 + ".json"
+# subtitle_s3_path is NOT derived — SRT stays on local disk only
 ```
 
 ### JSON schema (v1)
@@ -308,15 +359,17 @@ alignment_s3_path = output_s3_path.rsplit(".", 1)[0] + ".json"
 
 ### Worker result payload extension
 
-Add to `process_job()` success dict:
+Add to `process_job()` success dict sent back via RabbitMQ:
 
 ```python
 {
     ...
-    "alignment_path": "tts-audio/studio/{job_id}.json",
+    "alignment_path": "tts-audio/studio/{job_id}.json",  # S3 key of the parsed JSON
     "alignment_duration_seconds": 1.87,
 }
 ```
+
+> **Note:** `subtitle_path` is **not** included in the RabbitMQ response. The SRT file lives only on local worker disk. The API gateway and downstream consumers (e.g. Remotion) access alignment data exclusively via `alignment_path` (the parsed JSON in S3).
 
 ---
 
@@ -348,14 +401,24 @@ class AlignmentService:
 
 1. **`__init__`:** Instantiate `AlignmentService` after TTS engine init.
 2. **New circuit breaker:** `ALIGNMENT` (failure_threshold=3, reset_timeout=60).
-3. **`process_job()`:** After `local_output` is finalized, call alignment; upload JSON; extend result.
+3. **`process_job()`:** After `local_output` is finalized (post time-stretch), call alignment; upload **only the parsed JSON** to S3; extend result with `alignment_path`. Do **not** upload SRT or raw JSON.
 4. **New helpers:**
-   - `_align_audio(job_id, local_output, text, language) -> str` → local JSON path
-   - `_upload_alignment(job_id, local_json, remote_path) -> str`
+   - `_align_audio(job_id, local_output, text, language) -> tuple[str, str, str]` → `(local_raw_json_path, local_srt_path, local_parsed_json_path)`
+   - `_upload_alignment(job_id, local_parsed_json, json_s3_path) -> str`
+
+**Temp file registration in `finally` block:**
+```python
+# Parsed alignment JSON is uploaded then removed (same as local_output)
+if local_alignment_json:
+    self._cleanup_local_files(local_alignment_json)
+# Raw Whisper JSON and SRT are intentionally NOT cleaned up — kept on local disk
+# local_raw_alignment_json  → retained
+# local_alignment_srt       → retained
+```
 
 ### Changes to `services/idempotent_upload.py`
 
-Reuse `IdempotentUploader.upload_with_retry()` for the JSON sidecar (same integrity semantics as audio).
+Reuse `IdempotentUploader.upload_with_retry()` for the parsed JSON sidecar upload (same integrity semantics as audio). No upload is made for the SRT or raw Whisper JSON.
 
 ---
 
@@ -457,12 +520,14 @@ Alignment: stable-whisper small on cpu (mandatory)
 - Align a short known WAV fixture with known text; assert word count and end time ≈ duration.
 - Mixed-text fixture (if v1 supports it).
 - Verify alignment runs on time-stretched audio (ratio 1.5 changes duration vs ratio 1.0).
+- Verify after job completion: parsed `{job_id}_alignment.json` is deleted locally (uploaded to S3); raw `{job_id}_raw_alignment.json` and `{job_id}_alignment.srt` are retained on local disk.
 
 ### Worker tests (`tests/pytest/test_tts_worker_alignment.py`)
 
 - Mock `AlignmentService.align()` — verify called with `local_output` after stretch.
 - Mock failure — job returns `ALIGNMENT_FAILED`.
-- Result dict includes `alignment_path`.
+- Result dict includes `alignment_path` (parsed JSON S3 key) but NOT `subtitle_path`.
+- Verify only parsed JSON is uploaded; SRT and raw JSON are not passed to `IdempotentUploader`.
 
 ### Manual QA checklist
 
@@ -470,8 +535,10 @@ Alignment: stable-whisper small on cpu (mandatory)
 - [ ] Monolingual English playground job → valid EN word timestamps.
 - [ ] Mixed ZH/EN job → words cover full text (no missing Latin or CJK).
 - [ ] `ratio=1.5` job → timestamps match slowed/sped audio in a video editor.
-- [ ] Cache hit + `ratio != 1.0` → alignment on stretched copy, not cached base.
+- [ ] Cache hit + `ratio != 1.0` → alignment on stretched `local_output`, not cached base audio.
 - [ ] Worker restart → model reloads on CPU without CUDA OOM.
+- [ ] After job completes: parsed `{job_id}_alignment.json` deleted (uploaded to S3); raw `{job_id}_raw_alignment.json` retained; `{job_id}_alignment.srt` retained on local disk.
+- [ ] Digit/symbol text (e.g. `$50`, `2026年`) — verify SRT word boundaries are sensible (see §16 Text Normalization note).
 
 ---
 
@@ -530,15 +597,46 @@ Alignment: stable-whisper small on cpu (mandatory)
 
 ---
 
-## 16. Open questions
+## 16. Special notes
 
-1. **Backend contract:** Does the API gateway expect `alignment_path` in the RabbitMQ response, or will it poll S3 by convention (`{job_id}.json`)?
-2. **Audio format (blocking):** Worker outputs WAV locally; S3 template may be `.mp3`. Alignment **must** run on the local WAV file before any MP3 transcode — confirm upload pipeline does not transcode before alignment. Implementation rule: align first, upload both audio and JSON independently, transcode only after alignment JSON is generated.
-3. **Word granularity for Chinese:** Whisper may align at character or sub-word level for ZH. Is character-level acceptable for subtitles?
-4. **Failure policy (resolved):** Mandatory — alignment failure fails the job. Empty/whitespace text is caught pre-alignment as `ALIGNMENT_INVALID_INPUT` (not a runtime alignment failure).
+### Text Normalization vs Forced Alignment
+
+IndexTTS passes raw job `text` through an internal `TextNormalizer` before BPE tokenisation. This means the **phonetic output may diverge from the raw input text** passed to `model.align()`:
+
+- Numbers: `100` may be spoken as `一百` (ZH) or `one hundred` (EN).
+- Currency: `$50` → `fifty dollars`.
+- Dates: `2026年9月` → `二零二六年九月`.
+- Abbreviations and mixed symbols are similarly expanded.
+
+**Consequence for forced alignment:** `model.align(text=raw_text, ...)` presents Whisper with the original text, while the synthesised audio contains the normalised phonetic form. When there is significant divergence — particularly for digit-heavy, symbol-heavy, or currency-containing text — Whisper's token matching may produce incorrect or missing word timestamps.
+
+**v1 stance (best-effort):** Pass raw `text` to `model.align()`. Log `alignment_quality: "mixed_fallback"` (or a new value `"normalization_mismatch_risk"`) for jobs containing digits, `$`, `%`, or other expandable tokens so downstream consumers can apply QA filtering.
+
+**Future improvement (Phase 3):** Expose the normalised text from `TextNormalizer` and pass it to `model.align()` instead of raw text. This eliminates phoneme drift at the cost of coupling the alignment step to IndexTTS internals.
+
+### Chinese Word Granularity
+
+Whisper's ZH tokeniser produces timestamps at **character or sub-word level**, not at dictionary-word level. For a sentence like `你好世界`, timestamps may appear as `你`, `好`, `世界` or even `你好`, `世`, `界` depending on the Whisper model's subword segmentation. Character-level granularity is acceptable for most karaoke and subtitle use cases. If word-level segmentation is required (e.g. `jieba` words), a post-processing step merging character timestamps into dictionary words can be added in Phase 3.
 
 ---
 
-## 17. Summary
+## 17. Open questions
 
-Add a **mandatory CPU-only `stable-whisper` small-model alignment step** to the worker **after time-stretching** and **before S3 upload**. Use script-based language selection for IndexTTS's ZH/EN content. Publish a JSON sidecar next to each audio file and return `alignment_path` in the job result. Keep alignment out of the synthesis cache and out of `infer.py` to preserve separation of concerns and correct timestamp semantics across `ratio` values.
+> **Resolved:** Audio format (always local WAV), failure policy (mandatory — alignment failure = job failure), and backend contract (`alignment_path` included in RabbitMQ response; `subtitle_path` not included) are all resolved and reflected in this plan.
+
+No open questions remain. Please flag any new requirements or edge cases.
+
+---
+
+## 18. Summary
+
+Add a **mandatory CPU-only `stable-whisper` small-model alignment step** to the worker **after time-stretching** and **before S3 upload**. Because `ratio` is handled entirely by the worker's post-synthesis time-stretch (not by IndexTTS itself), alignment always runs on `local_output` — the final delivered WAV — ensuring timestamps match the uploaded audio exactly.
+
+**Three local files** are produced per job:
+- `{job_id}_raw_alignment.json` — native stable-whisper output (kept on local disk, **not** uploaded)
+- `{job_id}_alignment.srt` — SRT subtitle (kept on local disk, **not** uploaded)
+- `{job_id}_alignment.json` — parsed/distilled JSON for Remotion video rendering (uploaded to S3, then deleted locally)
+
+Only the **parsed JSON** is uploaded to S3. Return `alignment_path` (the S3 key of the parsed JSON) in the RabbitMQ job result; `subtitle_path` is not included. Keep alignment out of the synthesis cache and out of `infer.py` to preserve separation of concerns and correct timestamp semantics across `ratio` values.
+
+Text normalisation divergence (digits, currency, abbreviations) is a known v1 limitation; raw text is passed to `model.align()` and flagged via `alignment_quality` metadata for downstream QA filtering.
