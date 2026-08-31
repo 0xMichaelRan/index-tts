@@ -47,7 +47,7 @@ try:
 
     CACHE_AVAILABLE = True
 except ImportError as e:
-    logger.warning(f"Cache dependencies not available: {e}")
+    logging.warning("Cache dependencies not available: %s", e)
     CACHE_AVAILABLE = False
 
 # Load environment variables from .env file
@@ -55,10 +55,37 @@ env_file = Path(__file__).parent.parent / ".env"
 if env_file.exists():
     load_dotenv(str(env_file))
 
-# Configure structured logging
+
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.lower() in ("true", "1", "yes")
+
+
+def _env_int(name: str, default: int) -> int:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return int(value)
+
+
+def _parse_log_level(level_name: str) -> int:
+    level = getattr(logging, level_name.upper(), None)
+    if isinstance(level, int):
+        return level
+    return logging.INFO
+
+
+# Configure structured logging from environment
+_log_level = _parse_log_level(os.getenv("LOG_LEVEL", "INFO"))
+_log_file_enabled = _env_bool("LOG_FILE_ENABLED", False)
+_log_file_path = os.getenv("LOG_FILE_PATH", "logs/worker.log")
+
 configure_logging(
-    level=logging.INFO,
-    use_file=False,  # Set to True to enable file logging
+    level=_log_level,
+    use_file=_log_file_enabled,
+    file_path=_log_file_path,
     use_color=True,
 )
 logger = get_logger(__name__)
@@ -98,6 +125,9 @@ class IndexTTSWorker:
 
         logger.section("STARTUP")
         logger.info(f"Platform:         {self.platform}")
+        logger.info(f"Log level:        {logging.getLevelName(_log_level)}")
+        if _log_file_enabled:
+            logger.info(f"Log file:         {_log_file_path}")
 
         # Initialize TTS engine
         self._init_tts_engine()
@@ -129,20 +159,25 @@ class IndexTTSWorker:
             )
             self.uploader = None
 
-        # Initialize circuit breakers
+        # Initialize circuit breakers (thresholds/timeouts from .env)
         logger.subsection("Initializing Circuit Breakers")
+        s3_failure_threshold = _env_int("CIRCUIT_BREAKER_S3_FAILURE_THRESHOLD", 5)
+        s3_reset_timeout = _env_int("CIRCUIT_BREAKER_S3_RESET_TIMEOUT", 60)
+        tts_failure_threshold = _env_int("CIRCUIT_BREAKER_TTS_FAILURE_THRESHOLD", 3)
+        tts_reset_timeout = _env_int("CIRCUIT_BREAKER_TTS_RESET_TIMEOUT", 30)
+
         self.s3_breaker = get_circuit_breaker(
             name="S3Download",
-            failure_threshold=5,
-            reset_timeout=60,
+            failure_threshold=s3_failure_threshold,
+            reset_timeout=s3_reset_timeout,
             half_open_max_calls=3,
             success_threshold=2,
         )
 
         self.tts_breaker = get_circuit_breaker(
             name="IndexTTS",
-            failure_threshold=3,
-            reset_timeout=30,
+            failure_threshold=tts_failure_threshold,
+            reset_timeout=tts_reset_timeout,
             half_open_max_calls=2,
             success_threshold=2,
         )
