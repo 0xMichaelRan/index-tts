@@ -132,8 +132,7 @@ The worker implements **database-backed synthesis caching** to eliminate redunda
 - **Persistence**: Survives worker restarts
 
 **Documentation**:
-- **Design**: `docs/TTS_SYNTHESIS_CACHE_DESIGN.md` - Full architecture and implementation guide
-- **Quick Start**: `docs/TTS_CACHE_QUICK_START.md` - Setup and usage guide
+- **Implementation guide**: `docs/CACHE_IMPLEMENTATION_SUMMARY.md` - Architecture, setup, CLI, and troubleshooting
 
 **Key Features**:
 - ✅ Automatic cache lookup before synthesis
@@ -146,19 +145,19 @@ The worker implements **database-backed synthesis caching** to eliminate redunda
 **Commands**:
 ```bash
 # View cache statistics
-python scripts/manage_cache.py stats
+uv run python scripts/manage_cache.py stats
 
 # View top entries
-python scripts/manage_cache.py top --limit 20
+uv run python scripts/manage_cache.py top --limit 20
 
 # Evict old entries
-python scripts/manage_cache.py evict --count 1000
+uv run python scripts/manage_cache.py evict --count 1000
 
 # Test cache service
-python scripts/test_cache_service.py
+uv run python scripts/test_cache_service.py
 
 # Run unit tests
-pytest tests/test_cache_service.py -v
+uv run pytest tests/test_cache_service.py -v
 ```
 
 ### Audio Loudness Normalization ✅ IMPLEMENTED

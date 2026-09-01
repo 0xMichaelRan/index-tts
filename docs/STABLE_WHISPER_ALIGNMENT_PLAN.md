@@ -579,7 +579,7 @@ Alignment: stable-whisper small on cpu (mandatory)
 | `docs/CONFIGURATION.md` | Alignment settings reference |
 | `docs/ARCHITECTURE.md` | Updated worker pipeline diagram |
 | `docs/API.md` | Job result fields: `alignment_path`, JSON schema link |
-| `IMPLEMENTATION_STATUS.md` | Track rollout status |
+| `docs/STABLE_WHISPER_ALIGNMENT_PLAN.md` | Mark rollout checklist complete in §13 |
 
 ---
 

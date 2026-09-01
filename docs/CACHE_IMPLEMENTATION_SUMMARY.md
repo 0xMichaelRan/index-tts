@@ -115,22 +115,22 @@ def _apply_ratio_to_cached_audio(base_audio_path, ratio, job_id) -> str
 **Commands:**
 ```bash
 # Statistics
-python scripts/manage_cache.py stats
+uv run python scripts/manage_cache.py stats
 
 # Top entries
-python scripts/manage_cache.py top --limit 20
+uv run python scripts/manage_cache.py top --limit 20
 
 # Evict old entries
-python scripts/manage_cache.py evict --count 1000
+uv run python scripts/manage_cache.py evict --count 1000
 
 # Clear entire cache
-python scripts/manage_cache.py clear --confirm
+uv run python scripts/manage_cache.py clear --confirm
 
 # Invalidate voice
-python scripts/manage_cache.py invalidate --voice "audio-prompts/voice_123.wav"
+uv run python scripts/manage_cache.py invalidate --voice "audio-prompts/voice_123.wav"
 
 # Inspect entry
-python scripts/manage_cache.py inspect --key abc123def456
+uv run python scripts/manage_cache.py inspect --key abc123def456
 ```
 
 ### 5. Testing ✅
@@ -153,19 +153,17 @@ python scripts/manage_cache.py inspect --key abc123def456
 **Run Tests:**
 ```bash
 # Integration tests
-python scripts/test_cache_service.py
+uv run python scripts/test_cache_service.py
 
 # Unit tests
-pytest tests/test_cache_service.py -v
+uv run pytest tests/test_cache_service.py -v
 ```
 
 ### 6. Documentation ✅
 
-**Files Created:**
-- `docs/TTS_SYNTHESIS_CACHE_DESIGN.md` - Full architecture (existing, updated)
-- `docs/TTS_CACHE_QUICK_START.md` - Setup and usage guide (new)
-- `docs/CACHE_IMPLEMENTATION_SUMMARY.md` - This file (new)
-- `AGENTS.md` - Updated with cache system details
+**Files:**
+- `docs/CACHE_IMPLEMENTATION_SUMMARY.md` - This file (architecture, setup, CLI, troubleshooting)
+- `AGENTS.md` - Cache system overview and command reference
 
 ## Configuration
 
@@ -205,22 +203,21 @@ dependencies = [
 
 ```bash
 # 1. Install dependencies
-conda activate index-tts
-cd d:\runway\git\indextts-0xmichaelran
 uv sync
 
 # 2. Create database
 createdb indextts
 
-# 3. Configure .env
-# (Update DATABASE_URL)
+# 3. Configure .env (copy from .env.example)
+# DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/indextts
+# TTS_CACHE_ENABLED=true
 
 # 4. Run migration
-alembic upgrade head
+uv run alembic upgrade head
 
 # 5. Verify
-python scripts/test_cache_service.py
-python scripts/manage_cache.py stats
+uv run python scripts/test_cache_service.py
+uv run python scripts/manage_cache.py stats
 ```
 
 ## Performance Metrics
@@ -319,7 +316,7 @@ Total: 6/6 tests passed 🎉
 ### Unit Tests
 
 ```
-pytest tests/test_cache_service.py -v
+uv run pytest tests/test_cache_service.py -v
 
 tests/test_cache_service.py::TestCacheKeyGeneration::test_cache_key_is_deterministic PASSED
 tests/test_cache_service.py::TestCacheKeyGeneration::test_cache_key_is_unique PASSED
@@ -380,7 +377,7 @@ All tests passed ✅
 - [x] Initialize Alembic configuration
 - [x] Create database: `createdb indextts`
 - [x] Create initial migration
-- [x] Apply migration: `alembic upgrade head`
+- [x] Apply migration: `uv run alembic upgrade head`
 - [x] Verify table created: `\dt tts_synthesis_cache` in psql
 
 ### Code Implementation ✅
@@ -404,7 +401,6 @@ All tests passed ✅
 ### Documentation ✅
 
 - [x] Update `AGENTS.md` with cache system
-- [x] Create `docs/TTS_CACHE_QUICK_START.md`
 - [x] Create `docs/CACHE_IMPLEMENTATION_SUMMARY.md`
 - [x] Document environment variables
 - [x] Create troubleshooting guide
@@ -444,7 +440,7 @@ The TTS synthesis cache system is **production-ready** and provides:
 ✅ **65-80% performance improvement** for cache hits  
 ✅ **Automatic cache management** with LRU eviction  
 ✅ **Comprehensive testing** (integration + unit tests)  
-✅ **Complete documentation** (design + quick start)  
+✅ **Complete documentation** (`docs/CACHE_IMPLEMENTATION_SUMMARY.md` + `AGENTS.md`)  
 ✅ **CLI tools** for cache management and analytics  
 ✅ **Zero breaking changes** to existing workflow  
 
@@ -459,5 +455,5 @@ The TTS synthesis cache system is **production-ready** and provides:
 **Implementation Time:** ~6 hours  
 **Production Ready:** Yes  
 **Breaking Changes:** None  
-**Migration Required:** Yes (`alembic upgrade head`)
+**Migration Required:** Yes (`uv run alembic upgrade head`)
 
