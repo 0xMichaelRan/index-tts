@@ -706,22 +706,26 @@ class IndexTTSWorker:
                 - alignment_path: S3 path to alignment JSON (mandatory)
                 - audio_duration_seconds: Duration of synthesized audio
                 - synthesis_duration_seconds: Time taken for TTS synthesis (in seconds)
-                - started_at: ISO 8601 timestamp when processing started
-                - completed_at: ISO 8601 timestamp when processing completed
-                - cache_hit: Whether cache was used
-                - error_code: Error code (if failed)
-                - error: Error message (if failed)
-                - retry_count: Number of retries attempted
+                - audioPath: S3 path to generated audio
+                - alignmentPath: S3 path to alignment JSON (mandatory)
+                - audioDurationSeconds: Duration of synthesized audio
+                - synthesisDurationSeconds: Time taken for TTS synthesis (in seconds)
+                - startedAt: ISO 8601 timestamp when processing started
+                - completedAt: ISO 8601 timestamp when processing completed
+                - cacheHit: Whether cache was used
+                - errorCode: Error code (if failed)
+                - errorMessage: Error message (if failed)
+                - retryCount: Number of retries attempted
         """
-        job_id = job_data.get("job_id")
+        job_id = job_data.get("jobId") if job_data.get("jobId") is not None else job_data.get("job_id")
         # Ensure job_id is a string (may come as integer from backend)
         if job_id is not None:
             job_id = str(job_id)
 
         text = job_data.get("text", "")
-        audio_prompt_path = job_data.get("audio_prompt_path")
+        audio_prompt_path = job_data.get("audioPromptPath") or job_data.get("audio_prompt_path")
         language = job_data.get("language", "en")
-        job_type = job_data.get("job_type", "studio")
+        job_type = job_data.get("jobType") or job_data.get("job_type", "studio")
 
         # Validate job_type (support studio, playground, rem)
         if job_type not in ("studio", "playground", "rem"):
@@ -733,7 +737,7 @@ class IndexTTSWorker:
         # Note: output_path_template is legacy and no longer used; paths are built dynamically
         ratio = job_data.get("ratio", 1.0)
         environment = job_data.get("environment", "prod")
-        voice_id = job_data.get("voice_id", 0)
+        voice_id = job_data.get("voiceId") if job_data.get("voiceId") is not None else job_data.get("voice_id", 0)
 
         retry_count = 0
         max_retries = 3
@@ -746,11 +750,11 @@ class IndexTTSWorker:
         if job_id in self._processed_jobs:
             logger.warning(f"[JOB {job_id}] Already processed, skipping")
             return {
-                "job_type": job_type,
-                "job_id": job_id,
+                "jobType": job_type,
+                "jobId": job_id,
                 "status": "completed",
                 "note": "duplicate_skipped",
-                "timestamp": datetime.now().isoformat(),
+                "completedAt": datetime.now().isoformat(),
             }
 
         # Track precise timing
@@ -787,44 +791,42 @@ class IndexTTSWorker:
                         error_msg = "S3 circuit breaker is open - service unavailable"
                         logger.error(f"[JOB {job_id}] {error_msg}")
                         return {
-                            "job_type": job_type,
-                            "job_id": job_id,
+                            "jobType": job_type,
+                            "jobId": job_id,
                             "status": "failed",
-                            "error_code": "S3_CIRCUIT_OPEN",
-                            "error_message": error_msg,
-                            "retry_count": retry_count,
-                            "started_at": job_started_at.isoformat(),
-                            "completed_at": datetime.now().isoformat(),
+                            "errorCode": "S3_CIRCUIT_OPEN",
+                            "errorMessage": error_msg,
+                            "retryCount": retry_count,
+                            "startedAt": job_started_at.isoformat(),
+                            "completedAt": datetime.now().isoformat(),
                         }
 
-                    # Synthesize audio
+                    # Synthesize audio at ratio 1.0 (for caching)
                     logger.info(f"[JOB {job_id}] Synthesizing audio...")
-                    synthesis_start = time.time()  # Reset timing for actual synthesis
+                    synthesis_start = time.time()
+
                     try:
                         with self.tts_breaker:
-                            # Synthesize base audio at ratio=1.0 for caching
                             base_audio_path = self._synthesize_audio(
-                                job_id,
-                                text,
-                                local_audio_prompt,
-                                audio_prompt_path,
-                                language,
-                                ratio=1.0,  # Always 1.0 for cache
+                                job_id=job_id,
+                                text=text,
+                                audio_prompt=local_audio_prompt,
+                                audio_prompt_s3_path=audio_prompt_path,
+                                language=language,
+                                ratio=1.0,  # ALWAYS synthesize at 1.0 for caching
                             )
                     except CircuitBreakerError:
-                        error_msg = (
-                            "IndexTTS circuit breaker is open - service unavailable"
-                        )
+                        error_msg = "TTS circuit breaker is open - service unavailable"
                         logger.error(f"[JOB {job_id}] {error_msg}")
                         return {
-                            "job_type": job_type,
-                            "job_id": job_id,
+                            "jobType": job_type,
+                            "jobId": job_id,
                             "status": "failed",
-                            "error_code": "TTS_CIRCUIT_OPEN",
-                            "error_message": error_msg,
-                            "retry_count": retry_count,
-                            "started_at": job_started_at.isoformat(),
-                            "completed_at": datetime.now().isoformat(),
+                            "errorCode": "TTS_CIRCUIT_OPEN",
+                            "errorMessage": error_msg,
+                            "retryCount": retry_count,
+                            "startedAt": job_started_at.isoformat(),
+                            "completedAt": datetime.now().isoformat(),
                         }
 
                     # Store in cache (if enabled)
@@ -846,7 +848,7 @@ class IndexTTSWorker:
                     else:
                         local_output = base_audio_path
 
-                # Step 3: Forced alignment (stable-whisper, CPU) — mandatory
+                # Step 3: Forced alignment (stable-whisper, CPU) — mandatory for all job types
                 output_dir = os.path.join("outputs", "tts_output", job_id)
 
                 try:
@@ -866,14 +868,28 @@ class IndexTTSWorker:
                     error_msg = "Alignment circuit breaker is open"
                     logger.error(f"[JOB {job_id}] {error_msg}")
                     return {
-                        "job_type": job_type,
-                        "job_id": job_id,
+                        "jobType": job_type,
+                        "jobId": job_id,
                         "status": "failed",
-                        "error_code": "ALIGNMENT_CIRCUIT_OPEN",
-                        "error_message": error_msg,
-                        "retry_count": retry_count,
-                        "started_at": job_started_at.isoformat(),
-                        "completed_at": datetime.now().isoformat(),
+                        "errorCode": "ALIGNMENT_CIRCUIT_OPEN",
+                        "errorMessage": error_msg,
+                        "retryCount": retry_count,
+                        "startedAt": job_started_at.isoformat(),
+                        "completedAt": datetime.now().isoformat(),
+                    }
+                except Exception as e:
+                    # Alignment generation failure MUST fail the job for ALL job types
+                    error_msg = f"Forced alignment generation failed: {e!s}"
+                    logger.error(f"[JOB {job_id}] {error_msg}")
+                    return {
+                        "jobType": job_type,
+                        "jobId": job_id,
+                        "status": "failed",
+                        "errorCode": "FORCED_ALIGNMENT_FAILED",
+                        "errorMessage": error_msg,
+                        "retryCount": retry_count,
+                        "startedAt": job_started_at.isoformat(),
+                        "completedAt": datetime.now().isoformat(),
                     }
 
                 # Step 3.5: Extract detected language from alignment JSON
@@ -913,48 +929,79 @@ class IndexTTSWorker:
                             job_id, local_output, output_s3_path
                         )
                 except CircuitBreakerError:
-                    error_msg = "S3 circuit breaker is open during upload"
+                    error_msg = "S3 circuit breaker is open during audio upload"
                     logger.error(f"[JOB {job_id}] {error_msg}")
                     return {
-                        "job_type": job_type,
-                        "job_id": job_id,
+                        "jobType": job_type,
+                        "jobId": job_id,
                         "status": "failed",
-                        "error_code": "S3_UPLOAD_CIRCUIT_OPEN",
-                        "error_message": error_msg,
-                        "retry_count": retry_count,
-                        "started_at": job_started_at.isoformat(),
-                        "completed_at": datetime.now().isoformat(),
+                        "errorCode": "S3_UPLOAD_CIRCUIT_OPEN",
+                        "errorMessage": error_msg,
+                        "retryCount": retry_count,
+                        "startedAt": job_started_at.isoformat(),
+                        "completedAt": datetime.now().isoformat(),
                     }
 
-                # Step 5: Upload parsed alignment JSON sidecar to S3
+                # Step 5: Upload parsed alignment JSON sidecar to S3 (mandatory for all job types)
                 alignment_s3_path = None
                 alignment_duration_seconds = None
-                if local_alignment_json and os.path.exists(local_alignment_json):
+                if not local_alignment_json or not os.path.exists(local_alignment_json):
+                    error_msg = "Alignment JSON file missing prior to upload"
+                    logger.error(f"[JOB {job_id}] {error_msg}")
+                    return {
+                        "jobType": job_type,
+                        "jobId": job_id,
+                        "status": "failed",
+                        "errorCode": "FORCED_ALIGNMENT_FAILED",
+                        "errorMessage": error_msg,
+                        "retryCount": retry_count,
+                        "startedAt": job_started_at.isoformat(),
+                        "completedAt": datetime.now().isoformat(),
+                    }
+
+                try:
+                    with self.s3_breaker:
+                        alignment_s3_path = self._upload_alignment(
+                            job_id=job_id,
+                            local_parsed_json=local_alignment_json,
+                            output_s3_path=output_s3_path,
+                        )
+                    # Read back alignment_duration_seconds from the uploaded JSON
                     try:
-                        with self.s3_breaker:
-                            alignment_s3_path = self._upload_alignment(
-                                job_id=job_id,
-                                local_parsed_json=local_alignment_json,
-                                output_s3_path=output_s3_path,
-                            )
-                        # Read back alignment_duration_seconds from the uploaded JSON
-                        try:
-                            with open(local_alignment_json, encoding="utf-8") as fh:
-                                _aj = json.load(fh)
-                            alignment_duration_seconds = _aj.get(
-                                "alignment_duration_seconds"
-                            )
-                        except Exception:
-                            pass
-                    except CircuitBreakerError:
-                        logger.error(
-                            f"[JOB {job_id}] S3 circuit breaker open during alignment upload"
+                        with open(local_alignment_json, encoding="utf-8") as fh:
+                            _aj = json.load(fh)
+                        alignment_duration_seconds = _aj.get(
+                            "alignment_duration_seconds"
                         )
-                    except Exception as e:
-                        # Alignment upload failure does NOT fail the job
-                        logger.error(
-                            f"[JOB {job_id}] Failed to upload alignment JSON: {e}"
-                        )
+                    except Exception:
+                        pass
+                except CircuitBreakerError:
+                    error_msg = "S3 circuit breaker open during alignment upload"
+                    logger.error(f"[JOB {job_id}] {error_msg}")
+                    return {
+                        "jobType": job_type,
+                        "jobId": job_id,
+                        "status": "failed",
+                        "errorCode": "ALIGNMENT_UPLOAD_CIRCUIT_OPEN",
+                        "errorMessage": error_msg,
+                        "retryCount": retry_count,
+                        "startedAt": job_started_at.isoformat(),
+                        "completedAt": datetime.now().isoformat(),
+                    }
+                except Exception as e:
+                    # Alignment upload failure MUST fail the job for ALL job types
+                    error_msg = f"Failed to upload alignment JSON: {e!s}"
+                    logger.error(f"[JOB {job_id}] {error_msg}")
+                    return {
+                        "jobType": job_type,
+                        "jobId": job_id,
+                        "status": "failed",
+                        "errorCode": "FORCED_ALIGNMENT_UPLOAD_FAILED",
+                        "errorMessage": error_msg,
+                        "retryCount": retry_count,
+                        "startedAt": job_started_at.isoformat(),
+                        "completedAt": datetime.now().isoformat(),
+                    }
 
                 # Step 6: Calculate audio duration
                 audio_duration = self._get_audio_duration(local_output)
@@ -969,18 +1016,18 @@ class IndexTTSWorker:
                 self._processed_jobs.add(job_id)
 
                 result = {
-                    "job_type": job_type,
-                    "job_id": job_id,
+                    "jobType": job_type,
+                    "jobId": job_id,
                     "status": "completed",
-                    "audio_path": audio_path,
-                    "audio_duration_seconds": audio_duration,
-                    "synthesis_duration_seconds": round(synthesis_duration, 2),
-                    "started_at": job_started_at.isoformat(),
-                    "completed_at": datetime.now().isoformat(),
-                    "cache_hit": cache_hit,
-                    "retry_count": retry_count,
-                    "alignment_path": alignment_s3_path,
-                    "alignment_duration_seconds": alignment_duration_seconds,
+                    "audioPath": audio_path,
+                    "audioDurationSeconds": audio_duration,
+                    "synthesisDurationSeconds": round(synthesis_duration, 2),
+                    "startedAt": job_started_at.isoformat(),
+                    "completedAt": datetime.now().isoformat(),
+                    "cacheHit": cache_hit,
+                    "retryCount": retry_count,
+                    "alignmentPath": alignment_s3_path,
+                    "alignmentDurationSeconds": alignment_duration_seconds,
                 }
 
                 cache_status = "cache HIT" if cache_hit else "full synthesis"
@@ -1004,28 +1051,28 @@ class IndexTTSWorker:
                         f"[JOB {job_id}] All {max_retries} attempts failed: {e!s}"
                     )
                     return {
-                        "job_type": job_type,
-                        "job_id": job_id,
+                        "jobType": job_type,
+                        "jobId": job_id,
                         "status": "failed",
-                        "error_code": "RETRYABLE_ERROR_EXHAUSTED",
-                        "error_message": str(e),
-                        "retry_count": retry_count,
-                        "started_at": job_started_at.isoformat(),
-                        "completed_at": datetime.now().isoformat(),
+                        "errorCode": "RETRYABLE_ERROR_EXHAUSTED",
+                        "errorMessage": str(e),
+                        "retryCount": retry_count,
+                        "startedAt": job_started_at.isoformat(),
+                        "completedAt": datetime.now().isoformat(),
                     }
 
             except Exception as e:
                 # Non-retryable errors
                 logger.error(f"[JOB {job_id}] Non-retryable error: {e!s}")
                 return {
-                    "job_type": job_type,
-                    "job_id": job_id,
+                    "jobType": job_type,
+                    "jobId": job_id,
                     "status": "failed",
-                    "error_code": "NON_RETRYABLE_ERROR",
-                    "error_message": str(e),
-                    "retry_count": retry_count,
-                    "started_at": job_started_at.isoformat(),
-                    "completed_at": datetime.now().isoformat(),
+                    "errorCode": "NON_RETRYABLE_ERROR",
+                    "errorMessage": str(e),
+                    "retryCount": retry_count,
+                    "startedAt": job_started_at.isoformat(),
+                    "completedAt": datetime.now().isoformat(),
                 }
 
             finally:
@@ -1532,7 +1579,7 @@ class IndexTTSWorker:
         """
         max_retries = 3
         retry_count = 0
-        job_id = result.get("job_id")
+        job_id = result.get("jobId") or result.get("job_id")
 
         while retry_count < max_retries:
             try:
@@ -1664,7 +1711,7 @@ class IndexTTSWorker:
             job_data = None
             try:
                 job_data = json.loads(body)
-                job_id = job_data.get("job_id")
+                job_id = job_data.get("jobId") if job_data.get("jobId") is not None else job_data.get("job_id")
                 logger.info(f"[JOB {job_id}] Received from queue")
 
                 result = self.process_job(job_data)
@@ -1687,7 +1734,7 @@ class IndexTTSWorker:
             except Exception as e:
                 logger.error(f"Error processing job: {e!s}")
                 if job_data:
-                    job_id = job_data.get("job_id")
+                    job_id = job_data.get("jobId") if job_data.get("jobId") is not None else job_data.get("job_id")
                     logger.error(f"[JOB {job_id}] Processing failed, sending to DLQ")
                 # Reject without requeue - failed jobs go to DLQ after retries
                 ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
