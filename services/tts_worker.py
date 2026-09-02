@@ -103,7 +103,7 @@ def _build_s3_output_path(
     Filename: {language}_r{ratio}_{environment}[_voice{voice_id}].{ext}
 
     Args:
-        job_type: "studio" or "playground"
+        job_type: "studio", "playground", or "rem"
         job_id: Job identifier
         language: Language code (e.g., "zh", "en", "mixed")
         ratio: Speed ratio (e.g., 1.0, 1.2, 0.8)
@@ -693,15 +693,17 @@ class IndexTTSWorker:
                 - text: Text to synthesize
                 - audio_prompt_path: S3 path to audio prompt file (e.g., "audio-prompts/voice_001.wav")
                 - language: Language code
-                - job_type: "studio" or "playground"
+                - job_type: "studio", "playground", or "rem" (Remotion)
                 - output_path_template: S3 output path template (e.g., "tts-audio/studio/{job_id}.mp3")
                 - ratio: Speech speed ratio (0.5=slow, 1.0=normal, 2.0=fast)
 
         Returns:
             Result dictionary with:
                 - job_id: Original job ID
+                - job_type: Job type (included for routing in backend)
                 - status: "completed" or "failed"
                 - audio_path: S3 path to generated audio
+                - alignment_path: S3 path to alignment JSON (mandatory)
                 - audio_duration_seconds: Duration of synthesized audio
                 - synthesis_duration_seconds: Time taken for TTS synthesis (in seconds)
                 - started_at: ISO 8601 timestamp when processing started
@@ -720,6 +722,14 @@ class IndexTTSWorker:
         audio_prompt_path = job_data.get("audio_prompt_path")
         language = job_data.get("language", "en")
         job_type = job_data.get("job_type", "studio")
+
+        # Validate job_type (support studio, playground, rem)
+        if job_type not in ("studio", "playground", "rem"):
+            logger.error(
+                f"[JOB {job_id}] Invalid job_type: {job_type}, defaulting to 'studio'"
+            )
+            job_type = "studio"
+
         # Note: output_path_template is legacy and no longer used; paths are built dynamically
         ratio = job_data.get("ratio", 1.0)
         environment = job_data.get("environment", "prod")
@@ -736,6 +746,7 @@ class IndexTTSWorker:
         if job_id in self._processed_jobs:
             logger.warning(f"[JOB {job_id}] Already processed, skipping")
             return {
+                "job_type": job_type,
                 "job_id": job_id,
                 "status": "completed",
                 "note": "duplicate_skipped",
@@ -776,6 +787,7 @@ class IndexTTSWorker:
                         error_msg = "S3 circuit breaker is open - service unavailable"
                         logger.error(f"[JOB {job_id}] {error_msg}")
                         return {
+                            "job_type": job_type,
                             "job_id": job_id,
                             "status": "failed",
                             "error_code": "S3_CIRCUIT_OPEN",
@@ -805,6 +817,7 @@ class IndexTTSWorker:
                         )
                         logger.error(f"[JOB {job_id}] {error_msg}")
                         return {
+                            "job_type": job_type,
                             "job_id": job_id,
                             "status": "failed",
                             "error_code": "TTS_CIRCUIT_OPEN",
@@ -903,6 +916,7 @@ class IndexTTSWorker:
                     error_msg = "S3 circuit breaker is open during upload"
                     logger.error(f"[JOB {job_id}] {error_msg}")
                     return {
+                        "job_type": job_type,
                         "job_id": job_id,
                         "status": "failed",
                         "error_code": "S3_UPLOAD_CIRCUIT_OPEN",
