@@ -87,6 +87,65 @@ def _parse_log_level(level_name: str) -> int:
     return logging.INFO
 
 
+def _build_s3_output_path(
+    job_type: str,
+    job_id: str,
+    language: str,
+    ratio: float,
+    environment: str,
+    voice_id: int | None,
+    file_extension: str,
+) -> str:
+    """
+    Build S3 output path with new structure.
+
+    Format: {job_type}/{YYYYMMDD}/{job_id}/{filename}.{ext}
+    Filename: {language}_r{ratio}_{environment}[_voice{voice_id}].{ext}
+
+    Args:
+        job_type: "studio" or "playground"
+        job_id: Job identifier
+        language: Language code (e.g., "zh", "en", "mixed")
+        ratio: Speed ratio (e.g., 1.0, 1.2, 0.8)
+        environment: Environment name (e.g., "prod", "dev", "staging")
+        voice_id: Voice ID (include in filename if > 0)
+        file_extension: File extension without dot (e.g., "mp3", "json")
+
+    Returns:
+        S3 path string
+
+    Examples:
+        >>> _build_s3_output_path("studio", "abc123", "zh", 1.0, "prod", 42, "mp3")
+        'studio/20260902/abc123/zh_r10_prod_voice42.mp3'
+        >>> _build_s3_output_path("playground", "xyz", "en", 1.5, "dev", 0, "wav")
+        'playground/20260902/xyz/en_r15_dev.wav'
+        >>> _build_s3_output_path("studio", "def", "en", 0.7, "prod", 0, "mp3")
+        'studio/20260902/def/en_r07_prod.mp3'
+    """
+    # Get current date in local timezone (YYYYMMDD format)
+    date_str = datetime.now().strftime("%Y%m%d")
+
+    # Format ratio: remove decimal point and zero-pad (e.g., 1.0→r10, 1.2→r12, 0.7→r07)
+    ratio_int = int(ratio * 10)
+    ratio_str = f"r{ratio_int:02d}"
+
+    # Build filename components
+    filename_parts = [
+        language,
+        ratio_str,
+        environment,
+    ]
+
+    # Add voice_id only if it's greater than 0
+    if voice_id and voice_id > 0:
+        filename_parts.append(f"voice{voice_id}")
+
+    filename = "_".join(filename_parts) + f".{file_extension}"
+
+    # Build full path: {job_type}/{YYYYMMDD}/{job_id}/{filename}
+    return f"{job_type}/{date_str}/{job_id}/{filename}"
+
+
 # Configure structured logging from environment
 _log_level = _parse_log_level(os.getenv("LOG_LEVEL", "INFO"))
 _log_file_enabled = _env_bool("LOG_FILE_ENABLED", False)
@@ -632,8 +691,10 @@ class IndexTTSWorker:
         audio_prompt_path = job_data.get("audio_prompt_path")
         language = job_data.get("language", "en")
         job_type = job_data.get("job_type", "studio")
-        output_path_template = job_data.get("output_path_template")
+        # Note: output_path_template is legacy and no longer used; paths are built dynamically
         ratio = job_data.get("ratio", 1.0)
+        environment = job_data.get("environment", "prod")
+        voice_id = job_data.get("voice_id", 0)
 
         retry_count = 0
         max_retries = 3
@@ -744,7 +805,6 @@ class IndexTTSWorker:
                         local_output = base_audio_path
 
                 # Step 3: Forced alignment (stable-whisper, CPU) — mandatory
-                output_s3_path = output_path_template.format(job_id=job_id)
                 output_dir = os.path.join("outputs", "tts_output", job_id)
 
                 try:
@@ -773,6 +833,34 @@ class IndexTTSWorker:
                         "started_at": job_started_at.isoformat(),
                         "completed_at": datetime.now().isoformat(),
                     }
+
+                # Step 3.5: Extract detected language from alignment JSON
+                detected_language = language  # fallback to job language
+                if local_alignment_json and os.path.exists(local_alignment_json):
+                    try:
+                        with open(local_alignment_json, encoding="utf-8") as fh:
+                            alignment_data = json.load(fh)
+                        detected_language = alignment_data.get(
+                            "language_strategy", language
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            f"[JOB {job_id}] Could not extract language from alignment: {e}"
+                        )
+
+                # Step 3.6: Build S3 output paths using detected language
+                file_extension = Path(local_output).suffix.lstrip(
+                    "."
+                )  # e.g., "mp3" or "wav"
+                output_s3_path = _build_s3_output_path(
+                    job_type=job_type,
+                    job_id=job_id,
+                    language=detected_language,
+                    ratio=ratio,
+                    environment=environment,
+                    voice_id=voice_id,
+                    file_extension=file_extension,
+                )
 
                 # Step 4: Upload audio to S3 with idempotent retry
                 logger.info(f"[JOB {job_id}] Uploading to S3...")
@@ -1244,8 +1332,9 @@ class IndexTTSWorker:
         """
         Upload parsed alignment JSON sidecar to the S3 output bucket.
 
-        S3 path is derived from the audio path by stem substitution (plan §7.2):
-            ``tts-audio/studio/{job_id}.mp3``  →  ``tts-audio/studio/{job_id}.json``
+        S3 path is derived from the audio path by replacing the file extension:
+            ``studio/20260902/abc123/zh_ratio1-0_prod.mp3``
+            → ``studio/20260902/abc123/zh_ratio1-0_prod.json``
 
         The SRT and raw Whisper JSON are NOT uploaded — they remain on local disk.
 
@@ -1260,8 +1349,8 @@ class IndexTTSWorker:
         Raises:
             S3ConfigError: If upload fails after retries.
         """
-        base_s3 = output_s3_path.rsplit(".", 1)[0]
-        alignment_s3_path = base_s3 + ".json"
+        # Replace the file extension with .json
+        alignment_s3_path = output_s3_path.rsplit(".", 1)[0] + ".json"
 
         logger.info(
             f"[JOB {job_id}] Uploading alignment JSON sidecar → {alignment_s3_path}"

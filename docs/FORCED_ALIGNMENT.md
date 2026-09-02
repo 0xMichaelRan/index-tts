@@ -120,8 +120,28 @@ Three files are generated per job:
 ### S3 Paths
 
 ```
-Audio:          tts-audio/studio/{job_id}.mp3
-Alignment JSON: tts-audio/studio/{job_id}.json   ← Derived from audio path
+Audio:          {job_type}/{YYYYMMDD}/{job_id}/{filename}.{ext}
+Alignment JSON: {job_type}/{YYYYMMDD}/{job_id}/{filename}.json
+```
+
+Where `{filename}` follows the pattern:
+```
+{language}_ratio{ratio}_{environment}[_voice{voice_id}]
+```
+
+**Examples:**
+```
+# Studio job with voice clone
+Audio:     studio/20260902/abc123/zh_ratio1-0_prod_voice42.mp3
+Alignment: studio/20260902/abc123/zh_ratio1-0_prod_voice42.json
+
+# Playground job without voice clone, faster speed
+Audio:     playground/20260902/xyz789/en_ratio1-5_dev.mp3
+Alignment: playground/20260902/xyz789/en_ratio1-5_dev.json
+
+# Studio job with slower speed
+Audio:     studio/20260902/def456/mixed_ratio0-8_prod.mp3
+Alignment: studio/20260902/def456/mixed_ratio0-8_prod.json
 ```
 
 ### JSON Schema (v1)
@@ -181,11 +201,11 @@ The worker extends the job result payload with alignment metadata:
     "job_type": "studio",
     "job_id": "abc123",
     "status": "completed",
-    "audio_path": "tts-audio/studio/abc123.mp3",
+    "audio_path": "studio/20260902/abc123/zh_ratio1-0_prod_voice42.mp3",
     "audio_duration_seconds": 12.34,
     "synthesis_duration_seconds": 5.21,
-    "alignment_path": "tts-audio/studio/abc123.json",  # ← S3 key of parsed JSON
-    "alignment_duration_seconds": 1.87,                # ← CPU alignment time
+    "alignment_path": "studio/20260902/abc123/zh_ratio1-0_prod_voice42.json",
+    "alignment_duration_seconds": 1.87,
     "cache_hit": false,
     "retry_count": 0,
     "started_at": "2026-09-02T02:30:00+00:00",
@@ -431,6 +451,8 @@ export const TtsVideo = ({ job }: { job: JobResult }) => {
   const [alignment, setAlignment] = useState<AlignmentData | null>(null);
 
   useEffect(() => {
+    // S3 path format: {job_type}/{YYYYMMDD}/{job_id}/{filename}.json
+    // Example: studio/20260902/abc123/zh_ratio1-0_prod_voice42.json
     fetch(job.alignment_path)  // S3 presigned URL or CDN path
       .then(res => res.json())
       .then(data => setAlignment(data));
