@@ -415,13 +415,6 @@ If issues arise after deployment:
 # Parts: [language, ratio, environment, voice(optional)]
 ```
 
-### Q: Does this affect voice recordings (audio prompts)?
-
-**A**: No. Voice recordings in the storage bucket remain unchanged:
-```
-audio-prompts/{voice_id}.wav  # Unchanged
-```
-
 ### Q: What timezone is used for the date folder?
 
 **A**: The worker's local server timezone (not UTC). This may vary by deployment region.

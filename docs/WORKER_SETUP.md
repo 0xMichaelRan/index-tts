@@ -167,20 +167,6 @@ R2_VOICE_USE_SSL=true
 
 See [RABBITMQ_SETUP.md](./RABBITMQ_SETUP.md) for detailed RabbitMQ installation and configuration.
 
-### 3. S3 Bucket Structure
-
-```
-Storage Bucket:
-├── audio-prompts/
-│   ├── {voice_id}.wav       # Worker reads voice prompts
-│   └── {voice_id}.json      # Voice metadata
-
-Output Bucket:
-├── tts-audio/
-│   ├── studio/{job_id}.mp3      # Studio TTS results (long-term retention)
-│   └── playground/{job_id}.mp3  # Playground TTS (30-day retention)
-```
-
 ---
 
 ## Running the Worker
@@ -456,24 +442,6 @@ systemctl status rabbitmq-server       # Windows with WSL
 sudo systemctl start rabbitmq-server   # Linux
 ```
 
-### S3 Access Denied
-
-**Symptom:**
-```
-[JOB xxx] S3ConfigError: Access Denied
-```
-
-**Solution:**
-1. Verify credentials in `.env`:
-   - `S3_MISC_ACCESS_KEY_ID`
-   - `S3_MISC_SECRET_ACCESS_KEY`
-   - `R2_VOICE_ACCESS_KEY_ID`
-   - `R2_VOICE_SECRET_ACCESS_KEY`
-
-2. Check bucket permissions (IAM policy should allow `s3:GetObject`, `s3:PutObject`)
-
-3. Verify bucket names are correct
-
 ### Models Not Found
 
 **Symptom:**
@@ -559,7 +527,6 @@ Configured in `process_job()`:
 ## Next Steps
 
 - **Architecture Details** → [ARCHITECTURE.md](./ARCHITECTURE.md)
-- **Dual-Bucket S3 Guide** → [DUAL_BUCKET_GUIDE.md](./DUAL_BUCKET_GUIDE.md)
 - **Network Resilience** → [NETWORK_RESILIENCE.md](./NETWORK_RESILIENCE.md)
 - **API Reference** → [API.md](./API.md)
 - **FAQ** → [FAQ.md](./FAQ.md)
