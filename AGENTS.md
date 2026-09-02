@@ -85,26 +85,31 @@ Output Bucket:
 │           └── {filename}.json      # Alignment sidecar
 ```
 
-**Filename format**: `{language}_ratio{ratio}_{environment}[_voice{voice_id}].{ext}`
+**Filename format**: `{language}_r{ratio}_{environment}[_voice{voice_id}].{ext}`
+
+**Ratio format**: `r` + (ratio × 10, zero-padded to 2 digits)
+- `1.0` → `r10`
+- `1.2` → `r12`
+- `0.7` → `r07`
 
 **Path examples**:
 ```
 # Studio with voice clone
-studio/20260902/abc123/zh_ratio1-0_prod_voice42.mp3
-studio/20260902/abc123/zh_ratio1-0_prod_voice42.json
+studio/20260902/abc123/zh_r10_prod_voice42.mp3
+studio/20260902/abc123/zh_r10_prod_voice42.json
 
 # Playground without voice, faster speed
-playground/20260902/xyz789/en_ratio1-5_dev.mp3
-playground/20260902/xyz789/en_ratio1-5_dev.json
+playground/20260902/xyz789/en_r15_dev.mp3
+playground/20260902/xyz789/en_r15_dev.json
 
 # Studio with slower speed
-studio/20260902/def456/mixed_ratio0-8_prod.mp3
-studio/20260902/def456/mixed_ratio0-8_prod.json
+studio/20260902/def456/mixed_r07_prod.mp3
+studio/20260902/def456/mixed_r07_prod.json
 ```
 
 **Notes**: 
 - Date is in local server timezone (YYYYMMDD format)
-- Ratio uses `-` instead of `.` (e.g., `1-0`, `1-2`, `0-8`)
+- Ratio format is compact: multiply by 10 and zero-pad (e.g., `r10`, `r12`, `r07`)
 - `voice_id` only included in filename if > 0
 - Language is detected from alignment (e.g., `zh`, `en`, `mixed_fallback`)
 - Both buckets are logged clearly in startup summary
