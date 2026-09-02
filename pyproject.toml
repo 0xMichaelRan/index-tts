@@ -61,6 +61,11 @@ dependencies = [
     "sqlalchemy[asyncio]>=2.0.0",
     "psycopg2-binary>=2.9.9",
     
+    # Forced alignment (stable-whisper, mandatory for all jobs)
+    "stable-ts",      # stable-ts >= 2.19.1; brings openai-whisper transitively
+    "torch",          # explicit to allow macOS CPU-only resolution without CUDA extras
+    "torchaudio",     # explicit for the same reason
+
     # Platform-specific text processing
     "wetext; sys_platform == 'darwin'",
     "WeTextProcessing; sys_platform != 'darwin'",
@@ -150,4 +155,9 @@ markers = [
 ]
 filterwarnings = [
     "ignore::DeprecationWarning",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
 ]
