@@ -221,6 +221,8 @@ class AlignmentService:
         if self._model_loaded:
             return
 
+        import ssl
+        import platform as _platform
         import stable_whisper  # noqa: PLC0415
 
         load_kwargs: dict[str, Any] = {
@@ -235,17 +237,29 @@ class AlignmentService:
             self._model_name,
             self._device,
         )
+
+        # Windows SSL fix: bypass certificate verification for model downloads
+        # This prevents "[ASN1: NOT_ENOUGH_DATA] not enough data" errors
+        if _platform.system() == "Windows":
+            logger.info("Windows detected: configuring SSL context for model download")
+            ssl._create_default_https_context = ssl._create_unverified_context
+
         t0 = time.time()
-        self._model = stable_whisper.load_model(**load_kwargs)
-        elapsed = time.time() - t0
-        self._model_loaded = True
-        logger.info(
-            "stable-whisper '%s' loaded on %s in %.1f s (version: %s)",
-            self._model_name,
-            self._device,
-            elapsed,
-            self._engine_version,
-        )
+        try:
+            self._model = stable_whisper.load_model(**load_kwargs)
+            elapsed = time.time() - t0
+            self._model_loaded = True
+            logger.info(
+                "stable-whisper '%s' loaded on %s in %.1f s (version: %s)",
+                self._model_name,
+                self._device,
+                elapsed,
+                self._engine_version,
+            )
+        finally:
+            # Restore default SSL context after model loading
+            if _platform.system() == "Windows":
+                ssl._create_default_https_context = ssl.create_default_context
 
     # ------------------------------------------------------------------
     # Core alignment
