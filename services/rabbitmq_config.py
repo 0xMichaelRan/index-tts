@@ -4,14 +4,18 @@ RabbitMQ Queue Configuration with Dead-Letter Queues
 This module provides idempotent RabbitMQ queue configuration for the TTS service,
 including main queues and dead-letter queues (DLQ) for failed message handling.
 
-Queue Architecture:
+Queue Architecture (Standardized DLX Pattern):
     Main Queues (Durable):
-    ├── tts_jobs (TTL: 24h) → Dead-letter: tts_jobs_dlq
-    └── tts_results (TTL: 7d) → Dead-letter: tts_results_dlq
+    ├── tts_jobs (TTL: 24h) → DLX: tts_jobs.dlx → DLQ: tts_jobs_failed
+    └── tts_results (TTL: 7d) → DLX: tts_results.dlx → DLQ: tts_results_failed
+
+    Dead-Letter Exchanges (Fanout):
+    ├── tts_jobs.dlx → routes to tts_jobs_failed
+    └── tts_results.dlx → routes to tts_results_failed
 
     Dead-Letter Queues (Durable):
-    ├── tts_jobs_dlq (TTL: 7 days) - Messages rejected after 3 retries
-    └── tts_results_dlq (TTL: 7 days) - Failed result processing
+    ├── tts_jobs_failed (TTL: 7 days) - Messages rejected after 3 retries
+    └── tts_results_failed (TTL: 7 days) - Failed result processing
 
 Usage:
     from services.rabbitmq_config import configure_queues
@@ -45,12 +49,14 @@ logger = logging.getLogger(__name__)
 
 
 # Queue Configuration Constants
+# NOTE: Using standardized DLX pattern (consistent with studio-backend)
+# Pattern: {queue_name}.dlx (fanout exchange) → {queue_name}_failed (DLQ)
 QUEUE_CONFIGS = {
     "tts_jobs": {
         "durable": True,
         "arguments": {
-            "x-dead-letter-exchange": "",  # Use default exchange
-            "x-dead-letter-routing-key": "tts_jobs_dlq",
+            "x-dead-letter-exchange": "tts_jobs.dlx",  # Named fanout exchange
+            "x-dead-letter-routing-key": "tts_jobs_failed",  # DLQ name
             "x-message-ttl": 86400000,  # 24 hours in milliseconds
             "x-max-length": 10000,  # Prevent unlimited queue buildup
             "x-overflow": "reject-publish",  # Reject new messages when full
@@ -59,20 +65,20 @@ QUEUE_CONFIGS = {
     "tts_results": {
         "durable": True,
         "arguments": {
-            "x-dead-letter-exchange": "",  # Use default exchange
-            "x-dead-letter-routing-key": "tts_results_dlq",
+            "x-dead-letter-exchange": "tts_results.dlx",  # Named fanout exchange
+            "x-dead-letter-routing-key": "tts_results_failed",  # DLQ name
             "x-message-ttl": 604800000,  # 7 days in milliseconds
             "x-max-length": 10000,
         },
     },
-    "tts_jobs_dlq": {
+    "tts_jobs_failed": {  # Renamed from tts_jobs_dlq
         "durable": True,
         "arguments": {
             "x-message-ttl": 604800000,  # 7 days in milliseconds
             "x-max-length": 5000,
         },
     },
-    "tts_results_dlq": {
+    "tts_results_failed": {  # Renamed from tts_results_dlq
         "durable": True,
         "arguments": {
             "x-message-ttl": 604800000,  # 7 days in milliseconds
@@ -192,6 +198,61 @@ def configure_queue(
         raise
 
 
+def declare_dlx_exchanges(channel: pika.channel.Channel) -> None:
+    """
+    Declare DLX (Dead Letter Exchange) fanout exchanges for all queues.
+
+    Creates the following exchanges:
+    - tts_jobs.dlx (fanout, durable)
+    - tts_results.dlx (fanout, durable)
+
+    Args:
+        channel: RabbitMQ channel
+    """
+    dlx_exchanges = ["tts_jobs.dlx", "tts_results.dlx"]
+    
+    for exchange_name in dlx_exchanges:
+        try:
+            channel.exchange_declare(
+                exchange=exchange_name,
+                exchange_type="fanout",
+                durable=True,
+            )
+            logger.info(f"✓ DLX exchange '{exchange_name}' declared successfully")
+        except Exception as e:
+            logger.error(f"✗ Failed to declare DLX exchange '{exchange_name}': {str(e)}")
+            raise
+
+
+def bind_dlq_to_dlx(channel: pika.channel.Channel) -> None:
+    """
+    Bind dead-letter queues to their respective DLX exchanges.
+
+    Bindings:
+    - tts_jobs_failed → tts_jobs.dlx
+    - tts_results_failed → tts_results.dlx
+
+    Args:
+        channel: RabbitMQ channel
+    """
+    bindings = [
+        ("tts_jobs_failed", "tts_jobs.dlx"),
+        ("tts_results_failed", "tts_results.dlx"),
+    ]
+    
+    for queue_name, exchange_name in bindings:
+        try:
+            channel.queue_bind(
+                queue=queue_name,
+                exchange=exchange_name,
+                routing_key="",  # Empty routing key for fanout
+            )
+            logger.info(f"✓ Bound queue '{queue_name}' to exchange '{exchange_name}'")
+        except Exception as e:
+            logger.error(f"✗ Failed to bind queue '{queue_name}' to exchange '{exchange_name}': {str(e)}")
+            raise
+
+
 def configure_queues(
     rabbitmq_url: Optional[str] = None,
     max_retries: int = 3,
@@ -201,11 +262,19 @@ def configure_queues(
     Configure all RabbitMQ queues for the TTS service.
 
     This function is idempotent and can be safely run multiple times.
-    It will create or update the following queues:
-    - tts_jobs (main job queue with DLQ)
-    - tts_results (result queue with DLQ)
-    - tts_jobs_dlq (dead-letter queue for failed jobs)
-    - tts_results_dlq (dead-letter queue for failed results)
+    It will create or update the following:
+    
+    1. DLX Exchanges (fanout):
+       - tts_jobs.dlx
+       - tts_results.dlx
+    
+    2. Dead-Letter Queues:
+       - tts_jobs_failed
+       - tts_results_failed
+    
+    3. Main Queues (with DLX routing):
+       - tts_jobs → routes failed messages to tts_jobs.dlx → tts_jobs_failed
+       - tts_results → routes failed messages to tts_results.dlx → tts_results_failed
 
     Args:
         rabbitmq_url: RabbitMQ connection URL (default: from RABBITMQ_URL env var)
@@ -237,7 +306,7 @@ def configure_queues(
         )
 
     logger.info("=" * 70)
-    logger.info("Starting RabbitMQ Queue Configuration")
+    logger.info("Starting RabbitMQ Queue Configuration (Standardized DLX Pattern)")
     logger.info("=" * 70)
 
     connection = None
@@ -255,12 +324,26 @@ def configure_queues(
         connection = _connect_with_retry(connection_params, max_retries, retry_delay)
         channel = connection.channel()
 
-        # Configure each queue
-        logger.info("\nConfiguring queues...")
+        logger.info("\nConfiguring DLX pattern...")
         logger.info("-" * 70)
-
-        for queue_name, config in QUEUE_CONFIGS.items():
-            configure_queue(channel, queue_name, config)
+        
+        # Step 1: Declare DLX exchanges
+        logger.info("Step 1: Declaring DLX exchanges...")
+        declare_dlx_exchanges(channel)
+        
+        # Step 2: Declare DLQ queues (must exist before binding)
+        logger.info("\nStep 2: Declaring DLQ queues...")
+        for queue_name in ["tts_jobs_failed", "tts_results_failed"]:
+            configure_queue(channel, queue_name, QUEUE_CONFIGS[queue_name])
+        
+        # Step 3: Bind DLQs to DLX exchanges
+        logger.info("\nStep 3: Binding DLQs to DLX exchanges...")
+        bind_dlq_to_dlx(channel)
+        
+        # Step 4: Declare main queues with DLX routing
+        logger.info("\nStep 4: Declaring main queues with DLX routing...")
+        for queue_name in ["tts_jobs", "tts_results"]:
+            configure_queue(channel, queue_name, QUEUE_CONFIGS[queue_name])
 
         logger.info("-" * 70)
         logger.info("✓ All queues configured successfully")

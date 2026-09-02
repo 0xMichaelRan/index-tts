@@ -432,6 +432,10 @@ class IndexTTSWorker:
             self.channel.queue_declare(
                 queue="tts_jobs_failed",
                 durable=True,
+                arguments={
+                    "x-message-ttl": 604800000,  # 7 days TTL (must match rabbitmq_config.py)
+                    "x-max-length": 5000,
+                },
             )
 
             # Bind DLQ to DLX (fanout exchange doesn't require routing key)
@@ -448,6 +452,9 @@ class IndexTTSWorker:
                 arguments={
                     "x-dead-letter-exchange": "tts_jobs.dlx",
                     "x-dead-letter-routing-key": "tts_jobs_failed",
+                    "x-message-ttl": 86400000,  # 24 hours TTL (must match rabbitmq_config.py)
+                    "x-max-length": 10000,
+                    "x-overflow": "reject-publish",
                 },
             )
 

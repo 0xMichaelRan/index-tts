@@ -635,32 +635,42 @@ logger.error("Job processing failed")
 The worker follows a standardized DLX pattern (consistent with studio-backend and remotion worker):
 
 **Pattern**:
-- **Main Queue**: `tts_jobs`
-- **DLX Exchange**: `tts_jobs.dlx` (fanout, durable)
-- **DLQ Queue**: `tts_jobs_failed` (durable)
+- **Input Queue**: `tts_jobs` (worker consumes from here)
+  - DLX Exchange: `tts_jobs.dlx` (fanout, durable)
+  - DLQ Queue: `tts_jobs_failed` (durable)
 
-**Configuration** (in `services/tts_worker.py`):
+- **Output Queue**: `tts_results` (worker publishes to here)
+  - DLX Exchange: `tts_results.dlx` (fanout, durable)
+  - DLQ Queue: `tts_results_failed` (durable)
+
+**Queue Setup** (in `services/rabbitmq_config.py`):
+
+All queues are configured using the `configure_queues()` function which follows this 4-step process:
+
 ```python
-# Declare DLX (fanout exchange)
+# Step 1: Declare DLX exchanges (fanout)
 channel.exchange_declare(
-    exchange="tts_jobs.dlx",
+    exchange="tts_jobs.dlx",      # or "tts_results.dlx"
     exchange_type="fanout",
     durable=True
 )
 
-# Declare DLQ
-channel.queue_declare(queue="tts_jobs_failed", durable=True)
-
-# Bind DLQ to DLX
-channel.queue_bind(
-    queue="tts_jobs_failed",
-    exchange="tts_jobs.dlx",
-    routing_key=""
+# Step 2: Declare DLQ queues
+channel.queue_declare(
+    queue="tts_jobs_failed",      # or "tts_results_failed"
+    durable=True
 )
 
-# Declare main queue with DLX routing
+# Step 3: Bind DLQ to DLX
+channel.queue_bind(
+    queue="tts_jobs_failed",      # or "tts_results_failed"
+    exchange="tts_jobs.dlx",      # or "tts_results.dlx"
+    routing_key=""                # Empty for fanout
+)
+
+# Step 4: Declare main queue with DLX routing
 channel.queue_declare(
-    queue="tts_jobs",
+    queue="tts_jobs",             # or "tts_results"
     durable=True,
     arguments={
         "x-dead-letter-exchange": "tts_jobs.dlx",
@@ -669,18 +679,58 @@ channel.queue_declare(
 )
 ```
 
+**Setup Command**:
+```bash
+# Configure all queues (idempotent, can run multiple times)
+python -m services.rabbitmq_config
+
+# Or programmatically:
+from services.rabbitmq_config import configure_queues
+configure_queues(rabbitmq_url="amqp://user:pass@host:5672/vhost")
+```
+
 ### Message Flow
 
+**Input Queue (`tts_jobs`)**:
 1. **Normal Processing**: Producer → `tts_jobs` → Worker → Ack → Message Removed
 2. **Transient Failure**: Producer → `tts_jobs` → Worker → Nack (requeue=True) → Back to `tts_jobs`
 3. **Permanent Failure**: Producer → `tts_jobs` → Worker → Nack (requeue=False) → `tts_jobs.dlx` → `tts_jobs_failed`
 
+**Output Queue (`tts_results`)**:
+1. **Normal Publishing**: Worker → `tts_results` → studio-backend consumes → Ack
+2. **studio-backend Failure**: Worker → `tts_results` → studio-backend → Nack (requeue=False) → `tts_results.dlx` → `tts_results_failed`
+
 ### Retry Strategy
 
-- **Transient errors**: S3 download failures, temporary TTS engine errors → Retry with circuit breaker
-- **Data errors**: Invalid text, corrupt audio prompts → Fail immediately (no requeue)
-- **Max retries**: `MAX_RETRY_COUNT` env var (default: 3) → routes to DLQ after exhaustion
+**Transient errors** (retry with circuit breaker):
+- S3 download failures
+- Temporary TTS engine errors
+- Network timeouts
+
+**Data errors** (fail immediately, no requeue):
+- Invalid text
+- Corrupt audio prompts
+- Schema validation failures
+
+**Max retries**: `MAX_RETRY_COUNT` env var (default: 3) → routes to DLQ after exhaustion
+
+### Queue Migration
+
+If you're upgrading from an older version that used the default exchange pattern (`x-dead-letter-exchange: ""`), you need to migrate:
+
+```bash
+# Run migration script (deletes old queues and recreates with new pattern)
+python scripts/fix_queue_dlx_migration.py
+
+# Or manually:
+# 1. Delete old queues via RabbitMQ management UI
+# 2. Run: python -m services.rabbitmq_config
+```
+
+**See**: `docs/QUEUE_DLX_MIGRATION.md` for detailed migration guide
 
 ### Documentation
 
-See `docs/RABBITMQ_DLX_STANDARD.md` (in studio-backend repo) for complete standard specification.
+- **Full Standard**: `docs/RABBITMQ_DLX_STANDARD.md` (in studio-backend repo)
+- **Migration Guide**: `docs/QUEUE_DLX_MIGRATION.md` (in this repo)
+- **Queue Setup**: `services/rabbitmq_config.py`
