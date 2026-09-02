@@ -160,6 +160,101 @@ uv run python scripts/test_cache_service.py
 uv run pytest tests/test_cache_service.py -v
 ```
 
+### Forced Alignment ✅ IMPLEMENTED
+
+**Status**: Fully implemented and tested
+
+The worker implements **mandatory forced alignment** using stable-whisper to generate word-level timestamps for every TTS synthesis job:
+
+- **Engine**: stable-whisper (stable-ts >= 2.19.1)
+- **Model**: Whisper `small` (CPU-only)
+- **Library**: openai-whisper (via stable-ts)
+- **Performance**: ~0.5-5s per minute of audio (CPU)
+- **Language Strategy**: Majority-script detection for mixed ZH/EN text
+
+**Why Forced Alignment?**
+- Enables subtitle/karaoke rendering in video applications (Remotion)
+- Provides word-level timestamps matching the final delivered audio
+- Mandatory for all jobs (alignment failure fails the job)
+- Runs on CPU to avoid GPU contention with IndexTTS synthesis
+
+**Configuration** (`.env`):
+```bash
+# Whisper model size (default: small)
+TTS_ALIGNMENT_MODEL=small
+
+# Device (must be cpu; never use mps on macOS)
+TTS_ALIGNMENT_DEVICE=cpu
+
+# Model cache directory (optional, for persistent storage)
+TTS_ALIGNMENT_MODEL_DIR=/opt/models/whisper
+
+# Retry and circuit breaker
+TTS_ALIGNMENT_MAX_RETRIES=2
+CIRCUIT_BREAKER_ALIGNMENT_FAILURE_THRESHOLD=3
+CIRCUIT_BREAKER_ALIGNMENT_RESET_TIMEOUT=60
+```
+
+**Output Files** (per job):
+- `{job_id}_raw_alignment.json` — Native stable-whisper output (kept on disk, NOT uploaded)
+- `{job_id}_alignment.srt` — SRT subtitle format (kept on disk, NOT uploaded)
+- `{job_id}_alignment.json` — Parsed JSON (uploaded to S3, then deleted locally)
+
+**JSON Schema** (v1):
+```json
+{
+  "version": "1.0",
+  "job_id": "abc123",
+  "engine": "stable-whisper",
+  "engine_version": "2.19.1",
+  "model": "small",
+  "device": "cpu",
+  "audio_duration_seconds": 12.34,
+  "language_strategy": "monolingual_zh",
+  "alignment_quality": "monolingual_zh",
+  "source_text": "你好，世界。",
+  "segments": [...],
+  "words": [
+    {"word": "你", "start": 0.12, "end": 0.28, "probability": 0.98}
+  ],
+  "alignment_duration_seconds": 1.87,
+  "aligned_at": "2026-09-02T02:30:00+00:00"
+}
+```
+
+**RabbitMQ Result Extension**:
+```python
+{
+    "alignment_path": "tts-audio/studio/{job_id}.json",  # S3 key of parsed JSON
+    "alignment_duration_seconds": 1.87                   # CPU alignment time
+}
+```
+
+**Features**:
+- ✅ Automatic alignment after synthesis and time-stretching
+- ✅ Majority-script language detection (monolingual ZH/EN + mixed fallback)
+- ✅ Three output formats (raw JSON, SRT, parsed JSON)
+- ✅ S3 upload of parsed JSON only
+- ✅ Circuit breaker for transient failures
+- ✅ Normalization mismatch detection (digits/currency warnings)
+- ✅ Comprehensive error handling
+- ✅ Unit tests (32 tests, all passing)
+
+**Module Location**: `services/alignment.py`
+
+**Documentation**: See [`docs/FORCED_ALIGNMENT.md`](./docs/FORCED_ALIGNMENT.md) for complete reference
+
+**Testing**:
+```bash
+# Run alignment unit tests
+uv run pytest tests/test_alignment.py -v
+
+# Run worker integration tests (Windows/Linux with GPU only)
+python -m pytest tests/pytest/test_tts_worker_alignment.py -v
+```
+
+---
+
 ### Audio Loudness Normalization ✅ IMPLEMENTED
 
 **Status**: Fully implemented and tested
@@ -469,9 +564,12 @@ logger.error("Job processing failed")
 
 ## Documentation
 
-- `DUAL_BUCKET_GUIDE.md` - Dual-bucket S3 configuration guide
-- `WORKER_SETUP.md` - Complete worker setup and installation guide
-- `docs/` - documentation
+- `docs/DUAL_BUCKET_GUIDE.md` - Dual-bucket S3 configuration guide
+- `docs/WORKER_SETUP.md` - Complete worker setup and installation guide
+- `docs/FORCED_ALIGNMENT.md` - Forced alignment reference documentation
+- `docs/CACHE_IMPLEMENTATION_SUMMARY.md` - Synthesis cache implementation guide
+- `docs/LOUDNESS_NORMALIZATION_FIX.md` - Audio normalization implementation
+- `docs/` - Complete documentation directory
 
 ## Performance Considerations
 

@@ -67,6 +67,20 @@ indextts/
 │   ├── conformer_encoder.py
 │   └── conformer/                 Conformer blocks
 └── utils/                         Utilities
+    └── audio_normalization.py     LUFS loudness normalization
+
+services/                          Worker services
+├── tts_worker.py                  Main RabbitMQ worker
+├── alignment.py                   Forced alignment (stable-whisper)
+├── circuit_breaker.py             Circuit breaker pattern
+├── s3_config.py                   Dual-bucket S3 client
+├── idempotent_upload.py           Idempotent S3 upload
+└── logging_config.py              Structured logging
+
+app/                               Database & caching
+├── cache_service.py               TTS synthesis cache
+├── database.py                    Database connection
+└── models.py                      SQLAlchemy models
 ```
 
 ---
@@ -208,6 +222,51 @@ Save WAV File ✓
 - Batch processing capable
 - 2-10 seconds per 10s audio (RTF ~0.2-1.0)
 - Memory intensive (6-8GB VRAM)
+
+---
+
+### Worker Pipeline (RabbitMQ + S3)
+
+```
+RabbitMQ Job Message
+    ↓
+┌─────────────────────────────────────────────┐
+│ 1. Cache Lookup (text + voice)             │
+│    ├─ Cache HIT → Copy base audio          │
+│    └─ Cache MISS → Synthesize (ratio=1.0)  │
+│                    → Store in cache          │
+└─────────────────────────────────────────────┘
+    ↓
+┌─────────────────────────────────────────────┐
+│ 2. Time-Stretch (if ratio != 1.0)          │
+│    local_output = stretched or base audio   │
+└─────────────────────────────────────────────┘
+    ↓
+┌─────────────────────────────────────────────┐
+│ 3. Forced Alignment (stable-whisper, CPU)  │
+│    ├─ Input: local_output, text, language  │
+│    ├─ Model: Whisper small (CPU-only)      │
+│    └─ Output: word-level timestamps         │
+│       ├─ raw_alignment.json (kept on disk)  │
+│       ├─ alignment.srt (kept on disk)       │
+│       └─ alignment.json (uploaded to S3)    │
+└─────────────────────────────────────────────┘
+    ↓
+┌─────────────────────────────────────────────┐
+│ 4. Upload Audio + Parsed Alignment to S3   │
+│    Output bucket (tts-audio/)               │
+└─────────────────────────────────────────────┘
+    ↓
+Return Job Result (audio_path + alignment_path)
+```
+
+**Pipeline Characteristics:**
+- **Synthesis Cache**: 65-80% faster for cache hits (10,000 entry capacity)
+- **Time-Stretching**: Librosa time_stretch for speed adjustment (ratio parameter)
+- **Forced Alignment**: Mandatory; ~0.5-5s per minute of audio (CPU)
+- **S3 Dual-Bucket**: Separate storage (voices) and output (TTS results) buckets
+- **Circuit Breakers**: S3, TTS, and Alignment (prevents cascading failures)
+- **Idempotent Upload**: Prevents duplicate uploads on job retry
 
 ---
 
