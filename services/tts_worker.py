@@ -50,6 +50,16 @@ except ImportError as e:
     logging.warning("Cache dependencies not available: %s", e)
     CACHE_AVAILABLE = False
 
+# Import alignment service
+try:
+    from services.alignment import AlignmentService
+
+    ALIGNMENT_AVAILABLE = True
+except ImportError as e:
+    logging.warning("AlignmentService not available: %s", e)
+    AlignmentService = None  # type: ignore[assignment,misc]
+    ALIGNMENT_AVAILABLE = False
+
 # Load environment variables from .env file
 env_file = Path(__file__).parent.parent / ".env"
 if env_file.exists():
@@ -133,6 +143,29 @@ class IndexTTSWorker:
         self._init_tts_engine()
         logger.success("TTS engine initialized")
 
+        # Initialize alignment service (CPU, Whisper small — mandatory)
+        alignment_model = os.getenv("TTS_ALIGNMENT_MODEL", "small")
+        alignment_device = os.getenv("TTS_ALIGNMENT_DEVICE", "cpu")
+        if ALIGNMENT_AVAILABLE and AlignmentService is not None:
+            self.alignment_service = AlignmentService(
+                model_name=alignment_model,
+                device=alignment_device,
+            )
+            try:
+                t_align_load = time.time()
+                self.alignment_service.load_model()
+                logger.success(
+                    f"Alignment: stable-whisper {alignment_model} on {alignment_device} "
+                    f"(mandatory, loaded in {time.time() - t_align_load:.1f}s)"
+                )
+            except Exception as e:
+                logger.failure(f"Alignment model failed to load: {e}")
+                raise  # Alignment is mandatory — worker must not start without it
+        else:
+            self.alignment_service = None
+            logger.failure("AlignmentService unavailable — worker cannot start")
+            raise RuntimeError("AlignmentService is required but not available")
+
         # Initialize S3 client (reads config from environment variables)
         try:
             self.s3_client = S3Client()
@@ -165,6 +198,12 @@ class IndexTTSWorker:
         s3_reset_timeout = _env_int("CIRCUIT_BREAKER_S3_RESET_TIMEOUT", 60)
         tts_failure_threshold = _env_int("CIRCUIT_BREAKER_TTS_FAILURE_THRESHOLD", 3)
         tts_reset_timeout = _env_int("CIRCUIT_BREAKER_TTS_RESET_TIMEOUT", 30)
+        alignment_failure_threshold = _env_int(
+            "CIRCUIT_BREAKER_ALIGNMENT_FAILURE_THRESHOLD", 3
+        )
+        alignment_reset_timeout = _env_int(
+            "CIRCUIT_BREAKER_ALIGNMENT_RESET_TIMEOUT", 60
+        )
 
         self.s3_breaker = get_circuit_breaker(
             name="S3Download",
@@ -178,6 +217,14 @@ class IndexTTSWorker:
             name="IndexTTS",
             failure_threshold=tts_failure_threshold,
             reset_timeout=tts_reset_timeout,
+            half_open_max_calls=2,
+            success_threshold=2,
+        )
+
+        self.alignment_breaker = get_circuit_breaker(
+            name="Alignment",
+            failure_threshold=alignment_failure_threshold,
+            reset_timeout=alignment_reset_timeout,
             half_open_max_calls=2,
             success_threshold=2,
         )
@@ -611,6 +658,7 @@ class IndexTTSWorker:
         synthesis_start = time.time()  # Initialize for both cache hit and miss paths
         local_audio_prompt = None
         local_output = None
+        local_alignment_json = None  # parsed JSON — uploaded then deleted
         cache_hit = False
 
         # Retry loop for transient failures
@@ -695,9 +743,39 @@ class IndexTTSWorker:
                     else:
                         local_output = base_audio_path
 
-                # Step 3: Upload to S3 with idempotent retry
-                logger.info(f"[JOB {job_id}] Uploading to S3...")
+                # Step 3: Forced alignment (stable-whisper, CPU) — mandatory
                 output_s3_path = output_path_template.format(job_id=job_id)
+                output_dir = os.path.join("outputs", "tts_output", job_id)
+
+                try:
+                    with self.alignment_breaker:
+                        (
+                            _local_raw_json,
+                            _local_srt,
+                            local_alignment_json,
+                        ) = self._align_audio(
+                            job_id=job_id,
+                            local_output=local_output,
+                            text=text,
+                            language=language,
+                            output_dir=output_dir,
+                        )
+                except CircuitBreakerError:
+                    error_msg = "Alignment circuit breaker is open"
+                    logger.error(f"[JOB {job_id}] {error_msg}")
+                    return {
+                        "job_type": job_type,
+                        "job_id": job_id,
+                        "status": "failed",
+                        "error_code": "ALIGNMENT_CIRCUIT_OPEN",
+                        "error_message": error_msg,
+                        "retry_count": retry_count,
+                        "started_at": job_started_at.isoformat(),
+                        "completed_at": datetime.now().isoformat(),
+                    }
+
+                # Step 4: Upload audio to S3 with idempotent retry
+                logger.info(f"[JOB {job_id}] Uploading to S3...")
 
                 try:
                     with self.s3_breaker:
@@ -717,7 +795,37 @@ class IndexTTSWorker:
                         "completed_at": datetime.now().isoformat(),
                     }
 
-                # Step 4: Calculate audio duration
+                # Step 5: Upload parsed alignment JSON sidecar to S3
+                alignment_s3_path = None
+                alignment_duration_seconds = None
+                if local_alignment_json and os.path.exists(local_alignment_json):
+                    try:
+                        with self.s3_breaker:
+                            alignment_s3_path = self._upload_alignment(
+                                job_id=job_id,
+                                local_parsed_json=local_alignment_json,
+                                output_s3_path=output_s3_path,
+                            )
+                        # Read back alignment_duration_seconds from the uploaded JSON
+                        try:
+                            with open(local_alignment_json, encoding="utf-8") as fh:
+                                _aj = json.load(fh)
+                            alignment_duration_seconds = _aj.get(
+                                "alignment_duration_seconds"
+                            )
+                        except Exception:
+                            pass
+                    except CircuitBreakerError:
+                        logger.error(
+                            f"[JOB {job_id}] S3 circuit breaker open during alignment upload"
+                        )
+                    except Exception as e:
+                        # Alignment upload failure does NOT fail the job
+                        logger.error(
+                            f"[JOB {job_id}] Failed to upload alignment JSON: {e}"
+                        )
+
+                # Step 6: Calculate audio duration
                 audio_duration = self._get_audio_duration(local_output)
 
                 # Calculate synthesis duration (TTS only, excluding I/O and upload)
@@ -740,6 +848,8 @@ class IndexTTSWorker:
                     "completed_at": datetime.now().isoformat(),
                     "cache_hit": cache_hit,
                     "retry_count": retry_count,
+                    "alignment_path": alignment_s3_path,
+                    "alignment_duration_seconds": alignment_duration_seconds,
                 }
 
                 cache_status = "cache HIT" if cache_hit else "full synthesis"
@@ -796,6 +906,10 @@ class IndexTTSWorker:
                     str(Path(self.cache_dir))
                 ):
                     self._cleanup_local_files(local_output)
+                # Parsed alignment JSON is uploaded then removed (plan §7 / §8)
+                # Raw alignment JSON and SRT are intentionally NOT cleaned up
+                if local_alignment_json:
+                    self._cleanup_local_files(local_alignment_json)
 
     def _download_audio_prompt(
         self,
@@ -1083,6 +1197,88 @@ class IndexTTSWorker:
             logger.warning(
                 f"[JOB {job_id}] Continuing with original audio (no time stretch)"
             )
+
+    def _align_audio(
+        self,
+        job_id: str,
+        local_output: str,
+        text: str,
+        language: str,
+        output_dir: str,
+    ) -> tuple[str, str, str]:
+        """
+        Run forced alignment on the final delivered audio.
+
+        Must be called **after** time-stretching and **before** S3 upload so that
+        the timestamps match the uploaded waveform exactly (plan §3 ordering rule).
+
+        Args:
+            job_id:      Job identifier.
+            local_output: Path to the final WAV (post time-stretch / post normalization).
+            text:        Raw job text as received from RabbitMQ.
+            language:    Language hint from the job payload.
+            output_dir:  Directory where artefacts are written (e.g. outputs/tts_output/{job_id}).
+
+        Returns:
+            ``(raw_json_path, srt_path, parsed_json_path)`` — per plan §7 file lifecycle.
+
+        Raises:
+            RuntimeError: If alignment fails (ALIGNMENT_FAILED).
+            ValueError:   If text is empty (ALIGNMENT_INVALID_INPUT).
+            FileNotFoundError: If local_output missing (ALIGNMENT_AUDIO_NOT_FOUND).
+        """
+        return self.alignment_service.align_to_files(
+            job_id=job_id,
+            audio_path=local_output,
+            text=text,
+            language_hint=language,
+            output_dir=output_dir,
+        )
+
+    def _upload_alignment(
+        self,
+        job_id: str,
+        local_parsed_json: str,
+        output_s3_path: str,
+    ) -> str:
+        """
+        Upload parsed alignment JSON sidecar to the S3 output bucket.
+
+        S3 path is derived from the audio path by stem substitution (plan §7.2):
+            ``tts-audio/studio/{job_id}.mp3``  →  ``tts-audio/studio/{job_id}.json``
+
+        The SRT and raw Whisper JSON are NOT uploaded — they remain on local disk.
+
+        Args:
+            job_id:           Job identifier.
+            local_parsed_json: Local path to the parsed alignment JSON.
+            output_s3_path:   S3 path of the uploaded audio file.
+
+        Returns:
+            S3 key of the uploaded alignment JSON.
+
+        Raises:
+            S3ConfigError: If upload fails after retries.
+        """
+        base_s3 = output_s3_path.rsplit(".", 1)[0]
+        alignment_s3_path = base_s3 + ".json"
+
+        logger.info(
+            f"[JOB {job_id}] Uploading alignment JSON sidecar → {alignment_s3_path}"
+        )
+
+        if not self.uploader:
+            self.uploader = IdempotentUploader(self.s3_client)
+
+        s3_path = self.uploader.upload_with_retry(
+            job_id=job_id,
+            local_path=local_parsed_json,
+            remote_path=alignment_s3_path,
+            verify_integrity=True,
+        )
+
+        logger.info(f"[JOB {job_id}] Alignment JSON uploaded: {s3_path}")
+        return s3_path
 
     def _upload_to_s3_idempotent(
         self,
