@@ -49,17 +49,17 @@ Never use:
 
 - **`services/tts_worker.py`** - Main worker process (RabbitMQ consumer, orchestration)
 - **`services/circuit_breaker.py`** - Circuit breaker pattern for resilience (S3, TTS)
-- **`services/s3_config.py`** - **Dual-bucket S3 client** (independent storage/output configs)
+- **`services/s3_config.py`** - **Dual-bucket S3 client** (independent misc/voice configs)
 - **`services/idempotent_upload.py`** - Idempotent upload with integrity verification
 - **`services/logging_config.py`** - Structured logging with visual hierarchy
 - **`indextts/`** - TTS engine (BigVGAN vocoder, FastSpeech2 acoustic model)
 
 ### S3 Dual-Bucket Architecture
 
-The worker now supports **completely independent S3 configurations** for storage and output buckets:
+The worker now supports **completely independent S3 configurations** for misc and voice buckets:
 
-- **Storage Bucket** (`S3_STORAGE_*`): Voice recordings, audio prompts (read-only during synthesis)
-- **Output Bucket** (`S3_OUTPUT_*`): TTS synthesis results (write-only during synthesis)
+- **Misc Bucket** (`S3_MISC_*`): Voice recordings, audio prompts (read-only during synthesis)
+- **Voice Bucket** (`R2_VOICE_*`): TTS synthesis results (write-only during synthesis)
 
 Each bucket can have:
 - Different S3 endpoints (different providers or regions)
@@ -67,17 +67,17 @@ Each bucket can have:
 - Different regions and SSL settings
 - Independent retention/lifecycle policies
 
-**Example**: Use AWS S3 for voices (premium, reliable) and DigitalOcean Spaces for TTS output (cheaper, high throughput).
+**Example**: Use Supabase S3 for voices (premium, reliable) and Cloudflare R2 for TTS output (cheaper, high throughput).
 
 ### S3 Storage Structure
 
 ```
-Storage Bucket:
+Misc Bucket:
 ├── audio-prompts/
 │   ├── {voice_id}.wav               # Worker reads voice prompts
 │   └── {voice_id}.json              # Voice metadata
 
-Output Bucket:
+Voice Bucket:
 ├── {job_type}/                      # studio or playground
 │   └── {YYYYMMDD}/                  # Date folder (local timezone, e.g., 20260902)
 │       └── {job_id}/                # Job-specific directory
@@ -378,21 +378,21 @@ Set **all** of these variables:
 # RabbitMQ
 RABBITMQ_URL=amqp://user:pass@host:5672/
 
-# Storage Bucket (voices, audio prompts - read-only during synthesis)
-S3_STORAGE_ENDPOINT_URL=https://storage-provider.com/s3
-S3_STORAGE_ACCESS_KEY_ID=storage-key
-S3_STORAGE_SECRET_ACCESS_KEY=storage-secret
-S3_STORAGE_BUCKET_NAME=bucket-name
-S3_STORAGE_REGION=ap-southeast-1
-S3_STORAGE_USE_SSL=true
+# Misc Bucket (voices, audio prompts - read-only during synthesis)
+S3_MISC_ENDPOINT_URL=https://storage-provider.com/s3
+S3_MISC_ACCESS_KEY_ID=storage-key
+S3_MISC_SECRET_ACCESS_KEY=storage-secret
+S3_MISC_BUCKET_NAME=bucket-name
+S3_MISC_REGION=ap-southeast-1
+S3_MISC_USE_SSL=true
 
-# Output Bucket (TTS synthesis results - write-only during synthesis)
-S3_OUTPUT_ENDPOINT_URL=https://output-provider.com/s3
-S3_OUTPUT_ACCESS_KEY_ID=output-key
-S3_OUTPUT_SECRET_ACCESS_KEY=output-secret
-S3_OUTPUT_BUCKET_NAME=bucket-name
-S3_OUTPUT_REGION=us-east-1
-S3_OUTPUT_USE_SSL=true
+# Voice Bucket (TTS synthesis results - write-only during synthesis)
+R2_VOICE_ENDPOINT_URL=https://output-provider.com/s3
+R2_VOICE_ACCESS_KEY_ID=output-key
+R2_VOICE_SECRET_ACCESS_KEY=output-secret
+R2_VOICE_BUCKET_NAME=bucket-name
+R2_VOICE_REGION=us-east-1
+R2_VOICE_USE_SSL=true
 ```
 
 **Benefits**: Different providers, regions, credentials, and costs per bucket.

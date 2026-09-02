@@ -188,8 +188,8 @@ class IndexTTSWorker:
         self.platform = platform.system()
 
         # S3 bucket names (will be set by S3Client during initialization)
-        self.s3_storage_bucket = None
-        self.s3_output_bucket = None
+        self.s3_misc_bucket = None
+        self.r2_voice_bucket = None
 
         logger.section("STARTUP")
         logger.info(f"Platform:         {self.platform}")
@@ -228,16 +228,16 @@ class IndexTTSWorker:
         try:
             self.s3_client = S3Client()
             # Store bucket names for logging
-            self.s3_storage_bucket = self.s3_client.storage_bucket_name
-            self.s3_output_bucket = self.s3_client.output_bucket_name
+            self.s3_misc_bucket = self.s3_client.storage_bucket_name
+            self.r2_voice_bucket = self.s3_client.output_bucket_name
             logger.success("S3 client initialized")
         except Exception as e:
             logger.warning_icon(
                 f"S3 client initialization failed: {e}. Will retry on first use."
             )
             self.s3_client = None
-            self.s3_storage_bucket = "N/A"
-            self.s3_output_bucket = "N/A"
+            self.s3_misc_bucket = "N/A"
+            self.r2_voice_bucket = "N/A"
 
         # Initialize idempotent uploader
         self.uploader = None
@@ -1624,8 +1624,8 @@ class IndexTTSWorker:
 
         # Log connection summary
         logger.subsection("CONNECTIONS")
-        logger.info(f"S3 Storage Bucket:   {self.s3_storage_bucket}")
-        logger.info(f"S3 Output Bucket:    {self.s3_output_bucket}")
+        logger.info(f"S3 Misc Bucket:      {self.s3_misc_bucket}")
+        logger.info(f"R2 Voice Bucket:     {self.r2_voice_bucket}")
         logger.info("")
 
         # Log circuit breaker status
@@ -1633,8 +1633,8 @@ class IndexTTSWorker:
         log_startup_summary(
             logger,
             platform=self.platform,
-            s3_storage_bucket=self.s3_storage_bucket,
-            s3_output_bucket=self.s3_output_bucket,
+            s3_misc_bucket=self.s3_misc_bucket,
+            r2_voice_bucket=self.r2_voice_bucket,
             rabbitmq_host=self.rabbitmq_host,
             stats_dict=cb_stats,
         )

@@ -141,21 +141,21 @@ Edit `.env` with your settings:
 RABBITMQ_URL=amqp://user:password@host:5672/
 RABBITMQ_HOST=localhost  # For startup logs
 
-# S3 Storage Bucket (voices, audio prompts - read-only)
-S3_STORAGE_ENDPOINT_URL=https://storage-provider.com
-S3_STORAGE_ACCESS_KEY_ID=your-storage-key
-S3_STORAGE_SECRET_ACCESS_KEY=your-storage-secret
-S3_STORAGE_BUCKET_NAME=your-storage-bucket
-S3_STORAGE_REGION=ap-southeast-1
-S3_STORAGE_USE_SSL=true
+# S3 Misc Bucket (voices, audio prompts - read-only)
+S3_MISC_ENDPOINT_URL=https://storage-provider.com
+S3_MISC_ACCESS_KEY_ID=your-storage-key
+S3_MISC_SECRET_ACCESS_KEY=your-storage-secret
+S3_MISC_BUCKET_NAME=your-storage-bucket
+S3_MISC_REGION=ap-southeast-1
+S3_MISC_USE_SSL=true
 
-# S3 Output Bucket (TTS results - write-only)
-S3_OUTPUT_ENDPOINT_URL=https://output-provider.com
-S3_OUTPUT_ACCESS_KEY_ID=your-output-key
-S3_OUTPUT_SECRET_ACCESS_KEY=your-output-secret
-S3_OUTPUT_BUCKET_NAME=your-output-bucket
-S3_OUTPUT_REGION=us-east-1
-S3_OUTPUT_USE_SSL=true
+# R2 Voice Bucket (TTS results - write-only)
+R2_VOICE_ENDPOINT_URL=https://output-provider.com
+R2_VOICE_ACCESS_KEY_ID=your-output-key
+R2_VOICE_SECRET_ACCESS_KEY=your-output-secret
+R2_VOICE_BUCKET_NAME=your-output-bucket
+R2_VOICE_REGION=us-east-1
+R2_VOICE_USE_SSL=true
 ```
 
 **Why two buckets?**
@@ -465,10 +465,10 @@ sudo systemctl start rabbitmq-server   # Linux
 
 **Solution:**
 1. Verify credentials in `.env`:
-   - `S3_STORAGE_ACCESS_KEY_ID`
-   - `S3_STORAGE_SECRET_ACCESS_KEY`
-   - `S3_OUTPUT_ACCESS_KEY_ID`
-   - `S3_OUTPUT_SECRET_ACCESS_KEY`
+   - `S3_MISC_ACCESS_KEY_ID`
+   - `S3_MISC_SECRET_ACCESS_KEY`
+   - `R2_VOICE_ACCESS_KEY_ID`
+   - `R2_VOICE_SECRET_ACCESS_KEY`
 
 2. Check bucket permissions (IAM policy should allow `s3:GetObject`, `s3:PutObject`)
 

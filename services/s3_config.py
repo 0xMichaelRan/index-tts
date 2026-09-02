@@ -144,44 +144,44 @@ class S3Client:
 
         # Storage bucket configuration
         self.storage_endpoint_url = storage_endpoint_url or os.getenv(
-            "S3_STORAGE_ENDPOINT_URL"
+            "S3_MISC_ENDPOINT_URL"
         )
         self.storage_access_key_id = storage_access_key_id or os.getenv(
-            "S3_STORAGE_ACCESS_KEY_ID"
+            "S3_MISC_ACCESS_KEY_ID"
         )
         self.storage_secret_access_key = storage_secret_access_key or os.getenv(
-            "S3_STORAGE_SECRET_ACCESS_KEY"
+            "S3_MISC_SECRET_ACCESS_KEY"
         )
         self.storage_bucket_name = storage_bucket_name or os.getenv(
-            "S3_STORAGE_BUCKET_NAME"
+            "S3_MISC_BUCKET_NAME"
         )
         self.storage_region = storage_region or os.getenv(
-            "S3_STORAGE_REGION", "us-east-1"
+            "S3_MISC_REGION", "us-east-1"
         )
         self.storage_use_ssl = (
             storage_use_ssl
             if storage_use_ssl is not None
-            else os.getenv("S3_STORAGE_USE_SSL", "true").lower() in ("true", "1", "yes")
+            else os.getenv("S3_MISC_USE_SSL", "true").lower() in ("true", "1", "yes")
         )
 
         # Output bucket configuration
         self.output_endpoint_url = output_endpoint_url or os.getenv(
-            "S3_OUTPUT_ENDPOINT_URL"
+            "R2_VOICE_ENDPOINT_URL"
         )
         self.output_access_key_id = output_access_key_id or os.getenv(
-            "S3_OUTPUT_ACCESS_KEY_ID"
+            "R2_VOICE_ACCESS_KEY_ID"
         )
         self.output_secret_access_key = output_secret_access_key or os.getenv(
-            "S3_OUTPUT_SECRET_ACCESS_KEY"
+            "R2_VOICE_SECRET_ACCESS_KEY"
         )
         self.output_bucket_name = output_bucket_name or os.getenv(
-            "S3_OUTPUT_BUCKET_NAME"
+            "R2_VOICE_BUCKET_NAME"
         )
-        self.output_region = output_region or os.getenv("S3_OUTPUT_REGION", "us-east-1")
+        self.output_region = output_region or os.getenv("R2_VOICE_REGION", "us-east-1")
         self.output_use_ssl = (
             output_use_ssl
             if output_use_ssl is not None
-            else os.getenv("S3_OUTPUT_USE_SSL", "true").lower() in ("true", "1", "yes")
+            else os.getenv("R2_VOICE_USE_SSL", "true").lower() in ("true", "1", "yes")
         )
 
         # Validate configuration
@@ -226,30 +226,30 @@ class S3Client:
 
         # Storage bucket validation
         if not self.storage_endpoint_url:
-            missing_storage.append("S3_STORAGE_ENDPOINT_URL")
+            missing_storage.append("S3_MISC_ENDPOINT_URL")
         if not self.storage_access_key_id:
-            missing_storage.append("S3_STORAGE_ACCESS_KEY_ID")
+            missing_storage.append("S3_MISC_ACCESS_KEY_ID")
         if not self.storage_secret_access_key:
-            missing_storage.append("S3_STORAGE_SECRET_ACCESS_KEY")
+            missing_storage.append("S3_MISC_SECRET_ACCESS_KEY")
         if not self.storage_bucket_name:
-            missing_storage.append("S3_STORAGE_BUCKET_NAME")
+            missing_storage.append("S3_MISC_BUCKET_NAME")
 
         # Output bucket validation
         if not self.output_endpoint_url:
-            missing_output.append("S3_OUTPUT_ENDPOINT_URL")
+            missing_output.append("R2_VOICE_ENDPOINT_URL")
         if not self.output_access_key_id:
-            missing_output.append("S3_OUTPUT_ACCESS_KEY_ID")
+            missing_output.append("R2_VOICE_ACCESS_KEY_ID")
         if not self.output_secret_access_key:
-            missing_output.append("S3_OUTPUT_SECRET_ACCESS_KEY")
+            missing_output.append("R2_VOICE_SECRET_ACCESS_KEY")
         if not self.output_bucket_name:
-            missing_output.append("S3_OUTPUT_BUCKET_NAME")
+            missing_output.append("R2_VOICE_BUCKET_NAME")
 
         missing = missing_storage + missing_output
 
         if missing:
             raise S3ConfigError(
                 f"Missing required dual-bucket S3 configuration: {', '.join(missing)}. "
-                "Set all S3_STORAGE_* and S3_OUTPUT_* environment variables. "
+                "Set all S3_MISC_* and R2_VOICE_* environment variables. "
                 "See .env.example or DUAL_BUCKET_GUIDE.md for configuration template."
             )
 

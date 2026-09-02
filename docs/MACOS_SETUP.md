@@ -99,21 +99,21 @@ Edit `.env` with your configuration:
 # RabbitMQ (message queue for job distribution)
 RABBITMQ_URL=amqp://user:password@rabbitmq-host:5672/
 
-# Storage Bucket (for voice prompts - read-only during synthesis)
-S3_STORAGE_ENDPOINT_URL=https://s3.example.com
-S3_STORAGE_ACCESS_KEY_ID=your-storage-key
-S3_STORAGE_SECRET_ACCESS_KEY=your-storage-secret
-S3_STORAGE_BUCKET_NAME=voice-storage
-S3_STORAGE_REGION=us-east-1
-S3_STORAGE_USE_SSL=true
+# Misc Bucket (for voice prompts - read-only during synthesis)
+S3_MISC_ENDPOINT_URL=https://s3.example.com
+S3_MISC_ACCESS_KEY_ID=your-storage-key
+S3_MISC_SECRET_ACCESS_KEY=your-storage-secret
+S3_MISC_BUCKET_NAME=voice-storage
+S3_MISC_REGION=us-east-1
+S3_MISC_USE_SSL=true
 
-# Output Bucket (for TTS results - write-only during synthesis)
-S3_OUTPUT_ENDPOINT_URL=https://s3.example.com
-S3_OUTPUT_ACCESS_KEY_ID=your-output-key
-S3_OUTPUT_SECRET_ACCESS_KEY=your-output-secret
-S3_OUTPUT_BUCKET_NAME=tts-output
-S3_OUTPUT_REGION=us-east-1
-S3_OUTPUT_USE_SSL=true
+# Voice Bucket (for TTS results - write-only during synthesis)
+R2_VOICE_ENDPOINT_URL=https://s3.example.com
+R2_VOICE_ACCESS_KEY_ID=your-output-key
+R2_VOICE_SECRET_ACCESS_KEY=your-output-secret
+R2_VOICE_BUCKET_NAME=tts-output
+R2_VOICE_REGION=us-east-1
+R2_VOICE_USE_SSL=true
 
 # Optional: TTS Synthesis Cache (PostgreSQL)
 # DATABASE_URL=postgresql+asyncpg://user:password@localhost/tts_cache

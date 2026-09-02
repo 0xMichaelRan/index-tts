@@ -49,21 +49,21 @@ Each bucket can have:
 Set **all** of these variables in `.env` file in project root:
 
 ```bash
-# Storage Bucket (voice recordings, audio prompts - READ access)
-S3_STORAGE_ENDPOINT_URL=https://storage-region.example.com/s3
-S3_STORAGE_ACCESS_KEY_ID=storage_key_123
-S3_STORAGE_SECRET_ACCESS_KEY=storage_secret_abc
-S3_STORAGE_BUCKET_NAME=bucket-name
-S3_STORAGE_REGION=ap-southeast-1
-S3_STORAGE_USE_SSL=true
+# Misc Bucket (voice recordings, audio prompts - READ access)
+S3_MISC_ENDPOINT_URL=https://storage-region.example.com/s3
+S3_MISC_ACCESS_KEY_ID=storage_key_123
+S3_MISC_SECRET_ACCESS_KEY=storage_secret_abc
+S3_MISC_BUCKET_NAME=bucket-name
+S3_MISC_REGION=ap-southeast-1
+S3_MISC_USE_SSL=true
 
-# Output Bucket (TTS results - WRITE access)
-S3_OUTPUT_ENDPOINT_URL=https://output-region.example.com/s3
-S3_OUTPUT_ACCESS_KEY_ID=output_key_456
-S3_OUTPUT_SECRET_ACCESS_KEY=output_secret_def
-S3_OUTPUT_BUCKET_NAME=bucket-name
-S3_OUTPUT_REGION=us-west-2
-S3_OUTPUT_USE_SSL=true
+# Voice Bucket (TTS results - WRITE access)
+R2_VOICE_ENDPOINT_URL=https://output-region.example.com/s3
+R2_VOICE_ACCESS_KEY_ID=output_key_456
+R2_VOICE_SECRET_ACCESS_KEY=output_secret_def
+R2_VOICE_BUCKET_NAME=bucket-name
+R2_VOICE_REGION=us-west-2
+R2_VOICE_USE_SSL=true
 ```
 
 **All variables are required** - the worker will fail to start if any are missing.
@@ -74,30 +74,30 @@ S3_OUTPUT_USE_SSL=true
 
 | Variable | Required | Default | Example |
 |----------|----------|---------|---------|
-| `S3_STORAGE_ENDPOINT_URL` | **Yes** | None | `https://storage.example.com/s3` |
-| `S3_STORAGE_ACCESS_KEY_ID` | **Yes** | None | `key_abc123` |
-| `S3_STORAGE_SECRET_ACCESS_KEY` | **Yes** | None | `secret_xyz789` |
-| `S3_STORAGE_BUCKET_NAME` | **Yes** | None | `voice-library` |
-| `S3_STORAGE_REGION` | No | `us-east-1` | `ap-southeast-1` |
-| `S3_STORAGE_USE_SSL` | No | `true` | `true` or `false` |
+| `S3_MISC_ENDPOINT_URL` | **Yes** | None | `https://storage.example.com/s3` |
+| `S3_MISC_ACCESS_KEY_ID` | **Yes** | None | `key_abc123` |
+| `S3_MISC_SECRET_ACCESS_KEY` | **Yes** | None | `secret_xyz789` |
+| `S3_MISC_BUCKET_NAME` | **Yes** | None | `voice-library` |
+| `S3_MISC_REGION` | No | `us-east-1` | `ap-southeast-1` |
+| `S3_MISC_USE_SSL` | No | `true` | `true` or `false` |
 
-### Output Bucket (for TTS results)
+### Voice Bucket (for TTS results)
 
 | Variable | Required | Default | Example |
 |----------|----------|---------|---------|
-| `S3_OUTPUT_ENDPOINT_URL` | **Yes** | None | `https://output.example.com/s3` |
-| `S3_OUTPUT_ACCESS_KEY_ID` | **Yes** | None | `key_def456` |
-| `S3_OUTPUT_SECRET_ACCESS_KEY` | **Yes** | None | `secret_uvw123` |
-| `S3_OUTPUT_BUCKET_NAME` | **Yes** | None | `tts-output` |
-| `S3_OUTPUT_REGION` | No | `us-east-1` | `us-west-2` |
-| `S3_OUTPUT_USE_SSL` | No | `true` | `true` or `false` |
+| `R2_VOICE_ENDPOINT_URL` | **Yes** | None | `https://output.example.com/s3` |
+| `R2_VOICE_ACCESS_KEY_ID` | **Yes** | None | `key_def456` |
+| `R2_VOICE_SECRET_ACCESS_KEY` | **Yes** | None | `secret_uvw123` |
+| `R2_VOICE_BUCKET_NAME` | **Yes** | None | `tts-output` |
+| `R2_VOICE_REGION` | No | `us-east-1` | `us-west-2` |
+| `R2_VOICE_USE_SSL` | No | `true` | `true` or `false` |
 
 ## File Organization
 
 ### Storage Bucket (Read-Only During Synthesis)
 
 ```
-voice-library/  (or your S3_STORAGE_BUCKET_NAME)
+voice-library/  (or your S3_MISC_BUCKET_NAME)
 ├── voice-recordings/
 │   ├── user/{user_id}/{uuid}.webm    # User voice recordings
 │   ├── stock/{uuid}.webm             # Stock voices
@@ -111,7 +111,7 @@ voice-library/  (or your S3_STORAGE_BUCKET_NAME)
 ### Output Bucket (Write-Only During Synthesis)
 
 ```
-tts-output/  (or your S3_OUTPUT_BUCKET_NAME)
+tts-output/  (or your R2_VOICE_BUCKET_NAME)
 ├── tts-audio/
 │   ├── studio/
 │   │   ├── job_123.mp3               # Worker uploads TTS results here
@@ -168,19 +168,19 @@ s3_client.upload_file(
 
 ```bash
 # Both buckets on same Supabase project, different bucket names
-S3_STORAGE_ENDPOINT_URL=https://abcdef.supabase.co/storage/v1/s3
-S3_STORAGE_ACCESS_KEY_ID=supabase_key_123
-S3_STORAGE_SECRET_ACCESS_KEY=supabase_secret_xyz
-S3_STORAGE_BUCKET_NAME=bucket-name
-S3_STORAGE_REGION=ap-southeast-1
-S3_STORAGE_USE_SSL=true
+S3_MISC_ENDPOINT_URL=https://abcdef.supabase.co/storage/v1/s3
+S3_MISC_ACCESS_KEY_ID=supabase_key_123
+S3_MISC_SECRET_ACCESS_KEY=supabase_secret_xyz
+S3_MISC_BUCKET_NAME=bucket-name
+S3_MISC_REGION=ap-southeast-1
+S3_MISC_USE_SSL=true
 
-S3_OUTPUT_ENDPOINT_URL=https://abcdef.supabase.co/storage/v1/s3
-S3_OUTPUT_ACCESS_KEY_ID=supabase_key_123
-S3_OUTPUT_SECRET_ACCESS_KEY=supabase_secret_xyz
-S3_OUTPUT_BUCKET_NAME=bucket-name
-S3_OUTPUT_REGION=ap-southeast-1
-S3_OUTPUT_USE_SSL=true
+R2_VOICE_ENDPOINT_URL=https://abcdef.supabase.co/storage/v1/s3
+R2_VOICE_ACCESS_KEY_ID=supabase_key_123
+R2_VOICE_SECRET_ACCESS_KEY=supabase_secret_xyz
+R2_VOICE_BUCKET_NAME=bucket-name
+R2_VOICE_REGION=ap-southeast-1
+R2_VOICE_USE_SSL=true
 ```
 
 **Use case**: Simple setup with one provider, separate buckets for organization.
@@ -189,20 +189,20 @@ S3_OUTPUT_USE_SSL=true
 
 ```bash
 # Voice storage on AWS S3 (premium, low-latency)
-S3_STORAGE_ENDPOINT_URL=https://s3.ap-southeast-1.amazonaws.com
-S3_STORAGE_ACCESS_KEY_ID=aws_key_123
-S3_STORAGE_SECRET_ACCESS_KEY=aws_secret_xyz
-S3_STORAGE_BUCKET_NAME=bucket-name
-S3_STORAGE_REGION=ap-southeast-1
-S3_STORAGE_USE_SSL=true
+S3_MISC_ENDPOINT_URL=https://s3.ap-southeast-1.amazonaws.com
+S3_MISC_ACCESS_KEY_ID=aws_key_123
+S3_MISC_SECRET_ACCESS_KEY=aws_secret_xyz
+S3_MISC_BUCKET_NAME=bucket-name
+S3_MISC_REGION=ap-southeast-1
+S3_MISC_USE_SSL=true
 
 # TTS output on DigitalOcean Spaces (cheaper, high throughput)
-S3_OUTPUT_ENDPOINT_URL=https://nyc3.digitaloceanspaces.com
-S3_OUTPUT_ACCESS_KEY_ID=do_spaces_key
-S3_OUTPUT_SECRET_ACCESS_KEY=do_spaces_secret
-S3_OUTPUT_BUCKET_NAME=tts-results
-S3_OUTPUT_REGION=nyc3
-S3_OUTPUT_USE_SSL=true
+R2_VOICE_ENDPOINT_URL=https://nyc3.digitaloceanspaces.com
+R2_VOICE_ACCESS_KEY_ID=do_spaces_key
+R2_VOICE_SECRET_ACCESS_KEY=do_spaces_secret
+R2_VOICE_BUCKET_NAME=tts-results
+R2_VOICE_REGION=nyc3
+R2_VOICE_USE_SSL=true
 ```
 
 **Use case**: Optimize costs by using cheaper storage for high-volume TTS output.
@@ -211,20 +211,20 @@ S3_OUTPUT_USE_SSL=true
 
 ```bash
 # Storage on MinIO
-S3_STORAGE_ENDPOINT_URL=http://127.0.0.1:9000
-S3_STORAGE_ACCESS_KEY_ID=minioadmin
-S3_STORAGE_SECRET_ACCESS_KEY=minioadmin
-S3_STORAGE_BUCKET_NAME=bucket-name
-S3_STORAGE_REGION=us-east-1
-S3_STORAGE_USE_SSL=false
+S3_MISC_ENDPOINT_URL=http://127.0.0.1:9000
+S3_MISC_ACCESS_KEY_ID=minioadmin
+S3_MISC_SECRET_ACCESS_KEY=minioadmin
+S3_MISC_BUCKET_NAME=bucket-name
+S3_MISC_REGION=us-east-1
+S3_MISC_USE_SSL=false
 
 # Output on MinIO (different bucket)
-S3_OUTPUT_ENDPOINT_URL=http://127.0.0.1:9000
-S3_OUTPUT_ACCESS_KEY_ID=minioadmin
-S3_OUTPUT_SECRET_ACCESS_KEY=minioadmin
-S3_OUTPUT_BUCKET_NAME=bucket-name
-S3_OUTPUT_REGION=us-east-1
-S3_OUTPUT_USE_SSL=false
+R2_VOICE_ENDPOINT_URL=http://127.0.0.1:9000
+R2_VOICE_ACCESS_KEY_ID=minioadmin
+R2_VOICE_SECRET_ACCESS_KEY=minioadmin
+R2_VOICE_BUCKET_NAME=bucket-name
+R2_VOICE_REGION=us-east-1
+R2_VOICE_USE_SSL=false
 ```
 
 **Use case**: Local development without cloud dependencies.
@@ -384,12 +384,12 @@ The IndexTTS Worker must coordinate with the studio-backend for consistent bucke
 ### Variable Naming Differences
 
 **Worker** (this project):
-- Storage: `S3_STORAGE_*` variables
-- Output: `S3_OUTPUT_*` variables
+- Misc: `S3_MISC_*` variables
+- Voice: `R2_VOICE_*` variables
 
 **Backend** (studio-backend):
-- Storage: `S3_STORAGE_*` variables (same)
-- Output: `S3_OUTPUT_*` variables (same)
+- Misc: `S3_MISC_*` variables (same)
+- Voice: `R2_VOICE_*` variables (same)
 
 ✓ **Both use the same variable names** - no translation needed!
 
@@ -399,29 +399,29 @@ Ensure bucket names match between worker and backend:
 
 ```bash
 # Worker .env
-S3_STORAGE_BUCKET_NAME=bucket-name
-S3_OUTPUT_BUCKET_NAME=bucket-name
+S3_MISC_BUCKET_NAME=bucket-name
+R2_VOICE_BUCKET_NAME=bucket-name
 
 # Backend .env (should match)
-S3_STORAGE_BUCKET_NAME=bucket-name
-S3_OUTPUT_BUCKET_NAME=bucket-name
+S3_MISC_BUCKET_NAME=bucket-name
+R2_VOICE_BUCKET_NAME=bucket-name
 ```
 
 If bucket names don't match, worker won't find voice prompts or backend won't find TTS results.
 
 ## Quick Reference
 
-### Download Voice Prompt (Storage Bucket)
+### Download Voice Prompt (Misc Bucket)
 
 ```python
 prompt_path = worker._download_audio_prompt(
     voice_id="voice_001",
     s3_path="audio-prompts/voice_001.wav"
 )
-# Routes to: S3_STORAGE_BUCKET_NAME
+# Routes to: S3_MISC_BUCKET_NAME
 ```
 
-### Upload TTS Result (Output Bucket)
+### Upload TTS Result (Voice Bucket)
 
 ```python
 s3_path = worker._upload_to_s3_idempotent(
@@ -429,19 +429,19 @@ s3_path = worker._upload_to_s3_idempotent(
     job_id="job_123",
     remote_path="studio/job_123.wav"
 )
-# Routes to: S3_OUTPUT_BUCKET_NAME
+# Routes to: R2_VOICE_BUCKET_NAME
 ```
 
 ### Generate Presigned URL
 
 ```python
-# Storage bucket (voice preview)
+# Misc bucket (voice preview)
 url = s3_client.generate_presigned_url(
     "audio-prompts/voice_001.wav",
     bucket_type="storage"
 )
 
-# Output bucket (TTS result download)
+# Voice bucket (TTS result download)
 url = s3_client.generate_presigned_url(
     "studio/job_123.wav",
     bucket_type="output"
