@@ -40,6 +40,15 @@ dependencies = [
     # Data processing (moved to extras to avoid conflicts with CUDA packages)
     "omegaconf",
     
+    # Visualization (required by BigVGAN utils)
+    "matplotlib",
+    
+    # ML/Transformers (required by GPT models)
+    "transformers",
+    "tokenizers",
+    "accelerate",
+    "einops",
+    
     # Utilities
     "tqdm",
     
