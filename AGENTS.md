@@ -377,7 +377,6 @@ Set **all** of these variables:
 ```bash
 # RabbitMQ
 RABBITMQ_URL=amqp://user:pass@host:5672/
-RABBITMQ_HOST=localhost                 # For startup logs
 
 # Storage Bucket (voices, audio prompts - read-only during synthesis)
 S3_STORAGE_ENDPOINT_URL=https://storage-provider.com/s3
@@ -627,3 +626,61 @@ logger.error("Job processing failed")
 - Run `uv run ruff format . && uv run ruff check .` before committing
 - Keep commits focused on single issues
 - Include issue reference in commit messages if applicable
+
+
+## RabbitMQ Configuration (Updated)
+
+### Dead Letter Exchange (DLX) Setup
+
+The worker follows a standardized DLX pattern (consistent with studio-backend and remotion worker):
+
+**Pattern**:
+- **Main Queue**: `tts_jobs`
+- **DLX Exchange**: `tts_jobs.dlx` (fanout, durable)
+- **DLQ Queue**: `tts_jobs_failed` (durable)
+
+**Configuration** (in `services/tts_worker.py`):
+```python
+# Declare DLX (fanout exchange)
+channel.exchange_declare(
+    exchange="tts_jobs.dlx",
+    exchange_type="fanout",
+    durable=True
+)
+
+# Declare DLQ
+channel.queue_declare(queue="tts_jobs_failed", durable=True)
+
+# Bind DLQ to DLX
+channel.queue_bind(
+    queue="tts_jobs_failed",
+    exchange="tts_jobs.dlx",
+    routing_key=""
+)
+
+# Declare main queue with DLX routing
+channel.queue_declare(
+    queue="tts_jobs",
+    durable=True,
+    arguments={
+        "x-dead-letter-exchange": "tts_jobs.dlx",
+        "x-dead-letter-routing-key": "tts_jobs_failed",
+    }
+)
+```
+
+### Message Flow
+
+1. **Normal Processing**: Producer → `tts_jobs` → Worker → Ack → Message Removed
+2. **Transient Failure**: Producer → `tts_jobs` → Worker → Nack (requeue=True) → Back to `tts_jobs`
+3. **Permanent Failure**: Producer → `tts_jobs` → Worker → Nack (requeue=False) → `tts_jobs.dlx` → `tts_jobs_failed`
+
+### Retry Strategy
+
+- **Transient errors**: S3 download failures, temporary TTS engine errors → Retry with circuit breaker
+- **Data errors**: Invalid text, corrupt audio prompts → Fail immediately (no requeue)
+- **Max retries**: `MAX_RETRY_COUNT` env var (default: 3) → routes to DLQ after exhaustion
+
+### Documentation
+
+See `docs/RABBITMQ_DLX_STANDARD.md` (in studio-backend repo) for complete standard specification.

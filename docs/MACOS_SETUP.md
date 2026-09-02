@@ -291,13 +291,6 @@ Check that:
 2. `RABBITMQ_URL` in `.env` is correct
 3. Network connectivity: `nc -zv rabbitmq-host 5672`
 
-### `S3 client initialization failed`
-
-Verify S3 configuration:
-1. All `S3_STORAGE_*` and `S3_OUTPUT_*` variables are set
-2. Credentials have proper S3 permissions
-3. Endpoints are reachable: `curl -I https://s3-endpoint`
-
 ### macOS Native TTS Not Working
 
 Install the required framework:

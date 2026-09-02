@@ -85,15 +85,15 @@ class WorkerMonitor:
                 
                 # Declare DLX infrastructure
                 self.channel.exchange_declare(
-                    exchange="tts_dlx",
-                    exchange_type="direct",
+                    exchange="tts_jobs.dlx",
+                    exchange_type="fanout",
                     durable=True,
                 )
                 self.channel.queue_declare(queue="tts_jobs_failed", durable=True)
                 self.channel.queue_bind(
                     queue="tts_jobs_failed",
-                    exchange="tts_dlx",
-                    routing_key="tts_jobs_failed",
+                    exchange="tts_jobs.dlx",
+                    routing_key="",
                 )
                 
                 # Declare main queues with DLX
@@ -101,7 +101,7 @@ class WorkerMonitor:
                     queue="tts_jobs",
                     durable=True,
                     arguments={
-                        "x-dead-letter-exchange": "tts_dlx",
+                        "x-dead-letter-exchange": "tts_jobs.dlx",
                         "x-dead-letter-routing-key": "tts_jobs_failed",
                     },
                 )

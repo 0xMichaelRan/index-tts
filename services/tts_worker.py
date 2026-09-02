@@ -171,7 +171,6 @@ class IndexTTSWorker:
             rabbitmq_url: RabbitMQ connection URL (e.g., amqp://user:pass@host:5672/)
 
         Note: S3 configuration is read from environment variables by S3Client.
-              See .env.example for required S3_STORAGE_* and S3_OUTPUT_* variables.
         """
         # RabbitMQ configuration
         if not rabbitmq_url:
@@ -421,23 +420,25 @@ class IndexTTSWorker:
             self.channel = self.connection.channel()
 
             # Declare Dead Letter Exchange (DLX) for failed messages
+            # Pattern: {queue_name}.dlx (fanout exchange for consistency with other workers)
             self.channel.exchange_declare(
-                exchange="tts_dlx",
-                exchange_type="direct",
+                exchange="tts_jobs.dlx",
+                exchange_type="fanout",
                 durable=True,
             )
 
             # Declare Dead Letter Queue (DLQ) to store failed messages
+            # Pattern: {queue_name}_failed (standardized suffix)
             self.channel.queue_declare(
                 queue="tts_jobs_failed",
                 durable=True,
             )
 
-            # Bind DLQ to DLX
+            # Bind DLQ to DLX (fanout exchange doesn't require routing key)
             self.channel.queue_bind(
                 queue="tts_jobs_failed",
-                exchange="tts_dlx",
-                routing_key="tts_jobs_failed",
+                exchange="tts_jobs.dlx",
+                routing_key="",
             )
 
             # Declare main queue with DLX arguments
@@ -445,13 +446,13 @@ class IndexTTSWorker:
                 queue="tts_jobs",
                 durable=True,
                 arguments={
-                    "x-dead-letter-exchange": "tts_dlx",
+                    "x-dead-letter-exchange": "tts_jobs.dlx",
                     "x-dead-letter-routing-key": "tts_jobs_failed",
                 },
             )
 
             logger.success("Connected to RabbitMQ")
-            logger.info("  DLX: tts_dlx → tts_jobs_failed (dead letter queue)")
+            logger.info("  DLX: tts_jobs.dlx → tts_jobs_failed (dead letter queue)")
 
             # Reset reconnection tracking on successful connection
             self._reconnect_attempts = 0
