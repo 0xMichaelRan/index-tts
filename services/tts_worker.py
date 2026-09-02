@@ -1036,6 +1036,10 @@ class IndexTTSWorker:
                     "alignmentPath": alignment_s3_path,
                     "alignmentDurationSeconds": alignment_duration_seconds,
                 }
+                
+                # Preserve isTest flag if present (for test job chaining)
+                if job_data.get("isTest"):
+                    result["isTest"] = True
 
                 cache_status = "cache HIT" if cache_hit else "full synthesis"
                 logger.success(
@@ -1066,6 +1070,7 @@ class IndexTTSWorker:
                         "retryCount": retry_count,
                         "startedAt": job_started_at.isoformat(),
                         "completedAt": datetime.now().isoformat(),
+                        "isTest": job_data.get("isTest", False),  # Preserve test flag
                     }
 
             except Exception as e:
@@ -1080,6 +1085,7 @@ class IndexTTSWorker:
                     "retryCount": retry_count,
                     "startedAt": job_started_at.isoformat(),
                     "completedAt": datetime.now().isoformat(),
+                    "isTest": job_data.get("isTest", False),  # Preserve test flag
                 }
 
             finally:
