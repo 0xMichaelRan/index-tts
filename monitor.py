@@ -77,13 +77,36 @@ class WorkerMonitor:
             try:
                 self.channel.queue_declare(queue="tts_jobs", passive=True)
                 self.channel.queue_declare(queue="tts_results", passive=True)
+                self.channel.queue_declare(queue="tts_jobs_failed", passive=True)
                 logger.info("✓ Connected to RabbitMQ")
             except pika.exceptions.ChannelClosedByBroker:
                 logger.warning("Queues don't exist yet. Declaring them...")
                 self.channel = self.connection.channel()
-                self.channel.queue_declare(queue="tts_jobs", durable=True)
+                
+                # Declare DLX infrastructure
+                self.channel.exchange_declare(
+                    exchange="tts_dlx",
+                    exchange_type="direct",
+                    durable=True,
+                )
+                self.channel.queue_declare(queue="tts_jobs_failed", durable=True)
+                self.channel.queue_bind(
+                    queue="tts_jobs_failed",
+                    exchange="tts_dlx",
+                    routing_key="tts_jobs_failed",
+                )
+                
+                # Declare main queues with DLX
+                self.channel.queue_declare(
+                    queue="tts_jobs",
+                    durable=True,
+                    arguments={
+                        "x-dead-letter-exchange": "tts_dlx",
+                        "x-dead-letter-routing-key": "tts_jobs_failed",
+                    },
+                )
                 self.channel.queue_declare(queue="tts_results", durable=True)
-                logger.info("✓ Connected and queues declared")
+                logger.info("✓ Connected and queues declared (with DLX)")
 
         except Exception as e:
             logger.error(f"✗ Failed to connect to RabbitMQ: {str(e)}")
@@ -104,10 +127,22 @@ class WorkerMonitor:
             tts_results_method = self.channel.queue_declare(
                 queue="tts_results", passive=True
             )
+            
+            # Get DLQ stats (may not exist yet)
+            try:
+                tts_failed_method = self.channel.queue_declare(
+                    queue="tts_jobs_failed", passive=True
+                )
+                dlq_count = tts_failed_method.method.message_count
+            except pika.exceptions.ChannelClosedByBroker:
+                # DLQ doesn't exist yet, reset channel
+                self.channel = self.connection.channel()
+                dlq_count = 0
 
             status = {
                 "tts_jobs_pending": tts_jobs_method.method.message_count,
                 "tts_results_pending": tts_results_method.method.message_count,
+                "tts_jobs_failed": dlq_count,
                 "timestamp": datetime.now().isoformat(),
             }
 
@@ -133,11 +168,13 @@ class WorkerMonitor:
         else:
             tts_jobs = status.get("tts_jobs_pending", 0)
             tts_results = status.get("tts_results_pending", 0)
+            tts_failed = status.get("tts_jobs_failed", 0)
 
             # Queue status
             print("\n📋 Queue Status:")
             print(f"   TTS Jobs (pending):   {tts_jobs:>5}")
             print(f"   TTS Results (pending):{tts_results:>5}")
+            print(f"   Failed Jobs (DLQ):    {tts_failed:>5}")
 
             # Visual indicators
             print("\n📈 Queue Health:")
@@ -152,6 +189,9 @@ class WorkerMonitor:
 
             if tts_results > 0:
                 print(f"   ℹ️  {tts_results} results pending delivery")
+            
+            if tts_failed > 0:
+                print(f"   ⚠️  {tts_failed} failed jobs in DLQ (needs investigation)")
 
             # Throughput (basic estimate)
             print("\n⏱️  Metrics:")

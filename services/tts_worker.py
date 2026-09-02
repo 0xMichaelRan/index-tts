@@ -420,10 +420,38 @@ class IndexTTSWorker:
             self.connection = pika.BlockingConnection([connection_params])
             self.channel = self.connection.channel()
 
-            # Declare the queue (idempotent if it already exists)
-            self.channel.queue_declare(queue="tts_jobs", durable=True)
+            # Declare Dead Letter Exchange (DLX) for failed messages
+            self.channel.exchange_declare(
+                exchange="tts_dlx",
+                exchange_type="direct",
+                durable=True,
+            )
+
+            # Declare Dead Letter Queue (DLQ) to store failed messages
+            self.channel.queue_declare(
+                queue="tts_jobs_failed",
+                durable=True,
+            )
+
+            # Bind DLQ to DLX
+            self.channel.queue_bind(
+                queue="tts_jobs_failed",
+                exchange="tts_dlx",
+                routing_key="tts_jobs_failed",
+            )
+
+            # Declare main queue with DLX arguments
+            self.channel.queue_declare(
+                queue="tts_jobs",
+                durable=True,
+                arguments={
+                    "x-dead-letter-exchange": "tts_dlx",
+                    "x-dead-letter-routing-key": "tts_jobs_failed",
+                },
+            )
 
             logger.success("Connected to RabbitMQ")
+            logger.info("  DLX: tts_dlx → tts_jobs_failed (dead letter queue)")
 
             # Reset reconnection tracking on successful connection
             self._reconnect_attempts = 0
