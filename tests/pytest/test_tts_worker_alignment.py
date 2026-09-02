@@ -103,7 +103,7 @@ def _default_job(
         "text": text,
         "audio_prompt_path": "audio-prompts/voice_001.wav",
         "language": language,
-        "job_type": job_type,
+        "jobType": job_type,
         "output_path_template": "tts-audio/studio/{job_id}.mp3",
         "ratio": ratio,
     }
