@@ -66,7 +66,7 @@ def _default_job(
 def pipeline_and_files(tmp_path):
     """
     Return a configured SynthesisPipeline with mocked dependencies and test files.
-    
+
     Returns:
         (pipeline, tts_engine_mock, storage_manager_mock, alignment_service_mock,
          wav_path, align_json_path, raw_json_path, srt_path)
@@ -153,7 +153,6 @@ def pipeline_and_files(tmp_path):
     )
 
 
-
 # ---------------------------------------------------------------------------
 # Core alignment integration
 # ---------------------------------------------------------------------------
@@ -163,9 +162,16 @@ class TestAlignmentCalledWithLocalOutput:
     """Verify alignment is invoked on the final delivered WAV (post time-stretch)."""
 
     def test_alignment_called_with_local_output_ratio_1(self, pipeline_and_files):
-        pipeline, tts_mock, storage_mock, align_mock, wav_path, align_json, raw_json, srt = (
-            pipeline_and_files
-        )
+        (
+            pipeline,
+            tts_mock,
+            storage_mock,
+            align_mock,
+            wav_path,
+            align_json,
+            raw_json,
+            srt,
+        ) = pipeline_and_files
 
         result = pipeline.process_job(_default_job(ratio=1.0))
 
@@ -308,7 +314,9 @@ class TestAlignmentFailure:
         # The error should bubble up
         assert result["status"] == "failed"
 
-    def test_alignment_circuit_open_returns_circuit_error_code(self, pipeline_and_files):
+    def test_alignment_circuit_open_returns_circuit_error_code(
+        self, pipeline_and_files
+    ):
         from services.circuit_breaker import CircuitBreakerError
 
         pipeline, tts_mock, storage_mock, align_mock, *_ = pipeline_and_files
