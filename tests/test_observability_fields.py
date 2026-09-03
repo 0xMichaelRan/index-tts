@@ -1,14 +1,15 @@
 """
-Test for new observability fields in migrations 005, 006, 007.
+Test for new observability fields in migrations 005, 006, 007, 008.
 
 Tests:
 - Migration 005: Unique constraint on tts_jobs.job_id
 - Migration 006: Observability fields (cache_hit, alignment_duration_seconds, time_stretched, source_ratio, target_ratio)
 - Migration 007: Foreign key constraint on tts_jobs.cache_key
+- Migration 008: word_count for synthesize time estimation
 """
 
 from datetime import datetime, timezone
-from app.models import TTSJob
+from app.models import TTSJob, TTSSynthesisCache
 
 
 class TestJobIdUniqueConstraint:
@@ -93,6 +94,45 @@ class TestObservabilityFields:
         assert job.time_stretched is True
         assert job.source_ratio == 1.0
         assert job.target_ratio == 1.5
+
+
+class TestWordCountField:
+    """Test migration 008: word_count for duration estimation."""
+
+    def test_word_count_field_exists_on_job(self):
+        """TTSJob model should have word_count field."""
+        assert hasattr(TTSJob, "word_count"), "word_count field should exist"
+
+        job = TTSJob(job_id=2001, job_type="studio", status="processing")
+        assert job.word_count is None, "word_count should be nullable"
+
+    def test_word_count_can_be_set_on_job(self):
+        """TTSJob word_count can be set for estimation analytics."""
+        job = TTSJob(
+            job_id=2002,
+            job_type="studio",
+            status="processing",
+            text="Hello world",
+            word_count=2,
+        )
+        assert job.word_count == 2
+
+    def test_word_count_field_exists_on_cache(self):
+        """TTSSynthesisCache model should have word_count field."""
+        assert hasattr(TTSSynthesisCache, "word_count"), "word_count field should exist"
+
+        entry = TTSSynthesisCache(
+            cache_key="a" * 64,
+            text="你好",
+            audio_prompt_path="voice.wav",
+            text_hash="b" * 64,
+            base_audio_local_path="/tmp/a.wav",
+            audio_duration_seconds=1.0,
+            synthesis_duration_ms=100,
+            word_count=2,
+        )
+        assert entry.word_count == 2
+        assert entry.to_dict()["word_count"] == 2
 
 
 class TestCacheForeignKey:

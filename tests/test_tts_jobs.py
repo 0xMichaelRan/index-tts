@@ -20,25 +20,41 @@ def test_tts_job_model_attributes():
         audio_prompt_path="prompts/voice.wav",
         language="en",
         ratio=1.2,
+        word_count=4,
         started_at=datetime.now(timezone.utc),
     )
     assert job.job_id == 12345
     assert job.job_type == "rem"
     assert job.status == "processing"
     assert job.ratio == 1.2
+    assert job.word_count == 4
     assert "12345" in repr(job)
 
 
-def test_tts_job_service_test_job_skips_db():
-    """Test that isTest=True skips database operations."""
+def test_tts_job_service_test_job_persists_with_is_test_flag():
+    """Test that isTest=True still persists (marked is_test) when DB is enabled."""
     service = TTSJobService()
-    job_data = {
-        "jobId": 99999,
-        "isTest": True,
-        "text": "Hello test",
-    }
-    tts_id = service.create_job_record(job_data)
-    assert tts_id is None
+    service.enabled = True
+
+    with (
+        patch("services.tts_job_service.DatabaseSession"),
+        patch("services.tts_job_service._run_coroutine") as mock_run,
+    ):
+
+        def mock_runner(coro, timeout=10.0):
+            coro.close()
+            return 99
+
+        mock_run.side_effect = mock_runner
+
+        job_data = {
+            "jobId": 99999,
+            "isTest": True,
+            "text": "Hello test",
+        }
+        tts_id = service.create_job_record(job_data)
+        assert tts_id == 99
+        mock_run.assert_called_once()
 
 
 def test_tts_job_service_create_and_update():
