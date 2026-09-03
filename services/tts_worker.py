@@ -724,13 +724,19 @@ class IndexTTSWorker:
                 - errorMessage: Error message (if failed)
                 - retryCount: Number of retries attempted
         """
-        job_id = job_data.get("jobId") if job_data.get("jobId") is not None else job_data.get("job_id")
+        job_id = (
+            job_data.get("jobId")
+            if job_data.get("jobId") is not None
+            else job_data.get("job_id")
+        )
         # Ensure job_id is a string (may come as integer from backend)
         if job_id is not None:
             job_id = str(job_id)
 
         text = job_data.get("text", "")
-        audio_prompt_path = job_data.get("audioPromptPath") or job_data.get("audio_prompt_path")
+        audio_prompt_path = job_data.get("audioPromptPath") or job_data.get(
+            "audio_prompt_path"
+        )
         language = job_data.get("language", "en")
         job_type = job_data.get("jobType") or job_data.get("job_type", "studio")
 
@@ -744,7 +750,11 @@ class IndexTTSWorker:
         # Note: output_path_template is legacy and no longer used; paths are built dynamically
         ratio = job_data.get("ratio", 1.0)
         environment = job_data.get("environment", "prod")
-        voice_id = job_data.get("voiceId") if job_data.get("voiceId") is not None else job_data.get("voice_id", 0)
+        voice_id = (
+            job_data.get("voiceId")
+            if job_data.get("voiceId") is not None
+            else job_data.get("voice_id", 0)
+        )
 
         retry_count = 0
         max_retries = 3
@@ -1036,10 +1046,38 @@ class IndexTTSWorker:
                     "alignmentPath": alignment_s3_path,
                     "alignmentDurationSeconds": alignment_duration_seconds,
                 }
-                
+
                 # Preserve isTest flag if present (for test job chaining)
                 if job_data.get("isTest"):
                     result["isTest"] = True
+
+                # For Remotion jobs (jobType="rem"), echo back video parameters for chaining
+                # Read from BOTH old and new field names (camelCase) for backward compatibility
+                if job_type == "rem":
+                    # Priority: new field names (v2) → old field names (v1)
+                    theme = (
+                        job_data.get("remotionStyle")  # New v2 name
+                        or job_data.get("theme")  # Old v1 name
+                    )
+                    resolution = job_data.get("resolution")
+                    aspect_ratio = (
+                        job_data.get("aspectRatio")  # New v2 name
+                        or job_data.get("ratioFormat")  # Old v1 name
+                    )
+                    spoken_lang = (
+                        job_data.get("spokenLang")  # New v2 name
+                        or job_data.get("language")  # Old v1 name
+                    )
+                    
+                    # Echo back using old field names for orchestrator compatibility
+                    if theme:
+                        result["theme"] = theme
+                    if resolution:
+                        result["resolution"] = resolution
+                    if aspect_ratio:
+                        result["ratioFormat"] = aspect_ratio
+                    if spoken_lang:
+                        result["language"] = spoken_lang
 
                 cache_status = "cache HIT" if cache_hit else "full synthesis"
                 logger.success(
@@ -1061,7 +1099,7 @@ class IndexTTSWorker:
                     logger.error(
                         f"[JOB {job_id}] All {max_retries} attempts failed: {e!s}"
                     )
-                    return {
+                    failure_result = {
                         "jobType": job_type,
                         "jobId": job_id,
                         "status": "failed",
@@ -1073,10 +1111,40 @@ class IndexTTSWorker:
                         "isTest": job_data.get("isTest", False),  # Preserve test flag
                     }
 
+                    # For Remotion jobs, echo back video parameters even on failure
+                    # Read from BOTH old and new field names (camelCase) for backward compatibility
+                    if job_type == "rem":
+                        # Priority: new field names (v2) → old field names (v1)
+                        theme = (
+                            job_data.get("remotionStyle")  # New v2 name
+                            or job_data.get("theme")  # Old v1 name
+                        )
+                        resolution = job_data.get("resolution")
+                        aspect_ratio = (
+                            job_data.get("aspectRatio")  # New v2 name
+                            or job_data.get("ratioFormat")  # Old v1 name
+                        )
+                        spoken_lang = (
+                            job_data.get("spokenLang")  # New v2 name
+                            or job_data.get("language")  # Old v1 name
+                        )
+                        
+                        # Echo back using old field names for orchestrator compatibility
+                        if theme:
+                            failure_result["theme"] = theme
+                        if resolution:
+                            failure_result["resolution"] = resolution
+                        if aspect_ratio:
+                            failure_result["ratioFormat"] = aspect_ratio
+                        if spoken_lang:
+                            failure_result["language"] = spoken_lang
+
+                    return failure_result
+
             except Exception as e:
                 # Non-retryable errors
                 logger.error(f"[JOB {job_id}] Non-retryable error: {e!s}")
-                return {
+                failure_result = {
                     "jobType": job_type,
                     "jobId": job_id,
                     "status": "failed",
@@ -1087,6 +1155,36 @@ class IndexTTSWorker:
                     "completedAt": datetime.now().isoformat(),
                     "isTest": job_data.get("isTest", False),  # Preserve test flag
                 }
+
+                # For Remotion jobs, echo back video parameters even on failure
+                # Read from BOTH old and new field names (camelCase) for backward compatibility
+                if job_type == "rem":
+                    # Priority: new field names (v2) → old field names (v1)
+                    theme = (
+                        job_data.get("remotionStyle")  # New v2 name
+                        or job_data.get("theme")  # Old v1 name
+                    )
+                    resolution = job_data.get("resolution")
+                    aspect_ratio = (
+                        job_data.get("aspectRatio")  # New v2 name
+                        or job_data.get("ratioFormat")  # Old v1 name
+                    )
+                    spoken_lang = (
+                        job_data.get("spokenLang")  # New v2 name
+                        or job_data.get("language")  # Old v1 name
+                    )
+                    
+                    # Echo back using old field names for orchestrator compatibility
+                    if theme:
+                        failure_result["theme"] = theme
+                    if resolution:
+                        failure_result["resolution"] = resolution
+                    if aspect_ratio:
+                        failure_result["ratioFormat"] = aspect_ratio
+                    if spoken_lang:
+                        failure_result["language"] = spoken_lang
+
+                return failure_result
 
             finally:
                 # Always clean up temporary files (but NOT cached base audio)
@@ -1724,7 +1822,11 @@ class IndexTTSWorker:
             job_data = None
             try:
                 job_data = json.loads(body)
-                job_id = job_data.get("jobId") if job_data.get("jobId") is not None else job_data.get("job_id")
+                job_id = (
+                    job_data.get("jobId")
+                    if job_data.get("jobId") is not None
+                    else job_data.get("job_id")
+                )
                 logger.info(f"[JOB {job_id}] Received from queue")
 
                 result = self.process_job(job_data)
@@ -1747,7 +1849,11 @@ class IndexTTSWorker:
             except Exception as e:
                 logger.error(f"Error processing job: {e!s}")
                 if job_data:
-                    job_id = job_data.get("jobId") if job_data.get("jobId") is not None else job_data.get("job_id")
+                    job_id = (
+                        job_data.get("jobId")
+                        if job_data.get("jobId") is not None
+                        else job_data.get("job_id")
+                    )
                     logger.error(f"[JOB {job_id}] Processing failed, sending to DLQ")
                 # Reject without requeue - failed jobs go to DLQ after retries
                 ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
