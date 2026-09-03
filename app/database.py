@@ -17,12 +17,19 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import NullPool
 
-from services.logging_config import get_logger
-
 # Load environment variables
 load_dotenv()
 
-logger = get_logger(__name__)
+# Lazy logger initialization to avoid circular imports during alembic initialization
+_logger = None
+
+def _get_logger():
+    """Get or initialize logger (lazy init to avoid circular imports)."""
+    global _logger
+    if _logger is None:
+        from services.logging_config import get_logger
+        _logger = get_logger(__name__)
+    return _logger
 
 def async_to_sync_database_url(database_url: str) -> str:
     """Convert async SQLAlchemy URL to sync (e.g. postgresql+asyncpg -> postgresql)."""
@@ -46,12 +53,8 @@ def get_sync_database_url() -> str | None:
 
     return async_to_sync_database_url(database_url)
 
-
 # Database configuration from environment
 DATABASE_URL = os.getenv("DATABASE_URL")
-
-if not DATABASE_URL:
-    logger.warning("DATABASE_URL not set - TTS synthesis cache will be disabled")
 
 # Create async engine
 # Using pool_pre_ping to verify connections before using them
@@ -66,9 +69,9 @@ if DATABASE_URL:
         pool_pre_ping=True,  # Verify connections before using (handles stale connections)
         pool_recycle=3600,  # Recycle connections after 1 hour
     )
-    logger.info("Database engine initialized successfully (NullPool mode)")
+    _get_logger().info("Database engine initialized successfully (NullPool mode)")
 else:
-    logger.warning("Database engine not initialized - cache disabled")
+    _get_logger().warning("Database engine not initialized - cache disabled")
 
 # Session factory
 # expire_on_commit=False keeps objects accessible after commit
@@ -115,7 +118,7 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
             await session.commit()
         except Exception as e:
             await session.rollback()
-            logger.error(f"Database session error: {e}")
+            _get_logger().error(f"Database session error: {e}")
             raise
         finally:
             await session.close()
@@ -149,7 +152,7 @@ async def init_db():
         # Create all tables
         await conn.run_sync(Base.metadata.create_all)
 
-    logger.success("Database tables created successfully")
+    _get_logger().success("Database tables created successfully")
 
 
 async def close_db():
@@ -163,7 +166,7 @@ async def close_db():
     """
     if engine:
         await engine.dispose()
-        logger.info("Database connection pool closed")
+        _get_logger().info("Database connection pool closed")
 
 
 async def check_db_connection() -> bool:
@@ -178,7 +181,7 @@ async def check_db_connection() -> bool:
             print("Database is ready")
     """
     if not engine:
-        logger.error("Database engine not initialized")
+        _get_logger().error("Database engine not initialized")
         return False
 
     try:
@@ -186,10 +189,10 @@ async def check_db_connection() -> bool:
 
         async with engine.connect() as conn:
             await conn.execute(text("SELECT 1"))
-        logger.info("Database connection check: OK")
+        _get_logger().info("Database connection check: OK")
         return True
     except Exception as e:
-        logger.error(f"Database connection check failed: {e}")
+        _get_logger().error(f"Database connection check failed: {e}")
         return False
 
 
@@ -225,6 +228,6 @@ class DatabaseSession:
                 else:
                     # Exception occurred - rollback
                     await self.session.rollback()
-                    logger.error(f"Database transaction rolled back: {exc_val}")
+                    _get_logger().error(f"Database transaction rolled back: {exc_val}")
             finally:
                 await self.session.close()
