@@ -82,7 +82,7 @@ class WorkerMonitor:
             except pika.exceptions.ChannelClosedByBroker:
                 logger.warning("Queues don't exist yet. Declaring them...")
                 self.channel = self.connection.channel()
-                
+
                 # Declare DLX infrastructure
                 self.channel.exchange_declare(
                     exchange="tts_jobs.dlx",
@@ -95,7 +95,7 @@ class WorkerMonitor:
                     exchange="tts_jobs.dlx",
                     routing_key="",
                 )
-                
+
                 # Declare main queues with DLX
                 self.channel.queue_declare(
                     queue="tts_jobs",
@@ -127,7 +127,7 @@ class WorkerMonitor:
             tts_results_method = self.channel.queue_declare(
                 queue="tts_results", passive=True
             )
-            
+
             # Get DLQ stats (may not exist yet)
             try:
                 tts_failed_method = self.channel.queue_declare(
@@ -189,7 +189,7 @@ class WorkerMonitor:
 
             if tts_results > 0:
                 print(f"   ℹ️  {tts_results} results pending delivery")
-            
+
             if tts_failed > 0:
                 print(f"   ⚠️  {tts_failed} failed jobs in DLQ (needs investigation)")
 

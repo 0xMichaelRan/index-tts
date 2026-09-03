@@ -23,7 +23,6 @@ from sqlalchemy.orm import declarative_base
 Base = declarative_base()
 
 
-
 class TTSSynthesisCache(Base):
     """
     TTS synthesis cache for storing base audio files.
@@ -208,4 +207,3 @@ class TTSJob(Base):
 
     def __repr__(self):
         return f"<TTSJob(id={self.id}, job_id={self.job_id}, status='{self.status}')>"
-

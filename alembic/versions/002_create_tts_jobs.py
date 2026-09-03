@@ -26,7 +26,9 @@ def upgrade() -> None:
         sa.Column("id", sa.Integer(), nullable=False, autoincrement=True),
         sa.Column("job_id", sa.Integer(), nullable=False),
         sa.Column("job_type", sa.String(length=20), nullable=False),
-        sa.Column("status", sa.String(length=20), nullable=False, server_default="queued"),
+        sa.Column(
+            "status", sa.String(length=20), nullable=False, server_default="queued"
+        ),
         # TTS parameters (for debugging/analytics)
         sa.Column("text", sa.Text(), nullable=True),
         sa.Column("audio_prompt_path", sa.Text(), nullable=True),
@@ -36,8 +38,14 @@ def upgrade() -> None:
         sa.Column("cache_key", sa.String(length=64), nullable=True),
         sa.Column("audio_path", sa.Text(), nullable=True),
         sa.Column("alignment_path", sa.Text(), nullable=True),
-        sa.Column("audio_duration_seconds", sa.Numeric(precision=10, scale=2), nullable=True),
-        sa.Column("synthesis_duration_seconds", sa.Numeric(precision=10, scale=2), nullable=True),
+        sa.Column(
+            "audio_duration_seconds", sa.Numeric(precision=10, scale=2), nullable=True
+        ),
+        sa.Column(
+            "synthesis_duration_seconds",
+            sa.Numeric(precision=10, scale=2),
+            nullable=True,
+        ),
         # Error tracking
         sa.Column("error_code", sa.String(length=50), nullable=True),
         sa.Column("error_message", sa.Text(), nullable=True),

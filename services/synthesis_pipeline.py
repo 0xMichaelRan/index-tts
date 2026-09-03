@@ -97,7 +97,9 @@ class SynthesisPipeline:
         # Initialize circuit breakers
         self.tts_breaker = get_circuit_breaker(
             name="IndexTTS",
-            failure_threshold=int(os.getenv("CIRCUIT_BREAKER_TTS_FAILURE_THRESHOLD", "3")),
+            failure_threshold=int(
+                os.getenv("CIRCUIT_BREAKER_TTS_FAILURE_THRESHOLD", "3")
+            ),
             reset_timeout=int(os.getenv("CIRCUIT_BREAKER_TTS_RESET_TIMEOUT", "30")),
             half_open_max_calls=2,
             success_threshold=2,
@@ -105,8 +107,12 @@ class SynthesisPipeline:
 
         self.alignment_breaker = get_circuit_breaker(
             name="Alignment",
-            failure_threshold=int(os.getenv("CIRCUIT_BREAKER_ALIGNMENT_FAILURE_THRESHOLD", "3")),
-            reset_timeout=int(os.getenv("CIRCUIT_BREAKER_ALIGNMENT_RESET_TIMEOUT", "60")),
+            failure_threshold=int(
+                os.getenv("CIRCUIT_BREAKER_ALIGNMENT_FAILURE_THRESHOLD", "3")
+            ),
+            reset_timeout=int(
+                os.getenv("CIRCUIT_BREAKER_ALIGNMENT_RESET_TIMEOUT", "60")
+            ),
             half_open_max_calls=2,
             success_threshold=2,
         )
@@ -233,11 +239,15 @@ class SynthesisPipeline:
                 )
 
                 # Stage 5: Upload audio
-                audio_path = self._run_audio_upload(job_id, local_output, output_s3_path)
+                audio_path = self._run_audio_upload(
+                    job_id, local_output, output_s3_path
+                )
 
                 # Stage 6: Upload alignment JSON
-                alignment_s3_path, alignment_duration_seconds = self._run_alignment_upload(
-                    job_id, local_alignment_json, output_s3_path
+                alignment_s3_path, alignment_duration_seconds = (
+                    self._run_alignment_upload(
+                        job_id, local_alignment_json, output_s3_path
+                    )
                 )
 
                 # Stage 7: Calculate metrics
@@ -378,7 +388,9 @@ class SynthesisPipeline:
         try:
             from services.circuit_breaker import get_circuit_breaker
 
-            s3_breaker = get_circuit_breaker("S3Download", failure_threshold=5, reset_timeout=60)
+            s3_breaker = get_circuit_breaker(
+                "S3Download", failure_threshold=5, reset_timeout=60
+            )
             with s3_breaker:
                 local_audio_prompt = self.storage_manager.download_audio_prompt(
                     job_id, audio_prompt_path
@@ -521,7 +533,9 @@ class SynthesisPipeline:
             logger.error(f"[JOB {job_id}] {error_msg}")
             raise RuntimeError(error_msg)
 
-    def _extract_detected_language(self, local_alignment_json: str, fallback_language: str) -> str:
+    def _extract_detected_language(
+        self, local_alignment_json: str, fallback_language: str
+    ) -> str:
         """Extract language_strategy from alignment JSON."""
         if not local_alignment_json or not os.path.exists(local_alignment_json):
             return fallback_language
@@ -541,9 +555,13 @@ class SynthesisPipeline:
         try:
             from services.circuit_breaker import get_circuit_breaker
 
-            s3_breaker = get_circuit_breaker("S3Download", failure_threshold=5, reset_timeout=60)
+            s3_breaker = get_circuit_breaker(
+                "S3Download", failure_threshold=5, reset_timeout=60
+            )
             with s3_breaker:
-                audio_path = self.storage_manager.upload_audio(job_id, local_path, remote_path)
+                audio_path = self.storage_manager.upload_audio(
+                    job_id, local_path, remote_path
+                )
         except CircuitBreakerError:
             error_msg = "S3 circuit breaker is open during audio upload"
             logger.error(f"[JOB {job_id}] {error_msg}")
@@ -563,7 +581,9 @@ class SynthesisPipeline:
         try:
             from services.circuit_breaker import get_circuit_breaker
 
-            s3_breaker = get_circuit_breaker("S3Download", failure_threshold=5, reset_timeout=60)
+            s3_breaker = get_circuit_breaker(
+                "S3Download", failure_threshold=5, reset_timeout=60
+            )
             with s3_breaker:
                 alignment_s3_path = self.storage_manager.upload_alignment_json(
                     job_id, local_parsed_json, output_s3_path
@@ -668,4 +688,3 @@ class SynthesisPipeline:
                     result[key] = job_data[key]
 
         return result
-

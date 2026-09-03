@@ -9,7 +9,6 @@ import logging
 import os
 import platform
 import signal
-import time
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -74,7 +73,7 @@ logger = get_logger(__name__)
 class IndexTTSWorker:
     """
     Main TTS worker orchestrator.
-    
+
     Coordinates RabbitMQ consumption with synthesis pipeline.
     Small, focused class that delegates to specialized components.
     """
@@ -109,13 +108,17 @@ class IndexTTSWorker:
             self.storage_manager = StorageManager()
             logger.success("S3 client initialized")
         except Exception as e:
-            logger.warning_icon(f"S3 client initialization failed: {e}. Will retry on first use.")
+            logger.warning_icon(
+                f"S3 client initialization failed: {e}. Will retry on first use."
+            )
             self.storage_manager = None
 
         # Initialize cache manager
         cache_enabled = os.getenv("TTS_CACHE_ENABLED", "true").lower() == "true"
         cache_max_entries = int(os.getenv("TTS_CACHE_MAX_ENTRIES", "10000"))
-        cache_eviction_threshold = int(os.getenv("TTS_CACHE_EVICTION_THRESHOLD", "9000"))
+        cache_eviction_threshold = int(
+            os.getenv("TTS_CACHE_EVICTION_THRESHOLD", "9000")
+        )
         cache_dir = os.getenv("TTS_CACHE_LOCAL_DIR", "outputs/tts_cache")
 
         if cache_enabled:
@@ -129,18 +132,26 @@ class IndexTTSWorker:
             logger.warning("TTS synthesis cache: DISABLED")
 
         # Initialize synthesis pipeline
-        use_fast_inference = os.getenv("TTS_USE_FAST_INFERENCE", "true").lower() == "true"
+        use_fast_inference = (
+            os.getenv("TTS_USE_FAST_INFERENCE", "true").lower() == "true"
+        )
         if self.platform != "Darwin":
             inference_method = "infer_fast()" if use_fast_inference else "infer()"
             logger.info(f"TTS inference method: {inference_method}")
         else:
             logger.info("TTS inference method: infer() (macOS native)")
 
-        normalization_enabled = os.getenv("TTS_NORMALIZATION_ENABLED", "true").lower() == "true"
-        normalization_target_lufs = float(os.getenv("TTS_NORMALIZATION_TARGET_LUFS", "-16.0"))
+        normalization_enabled = (
+            os.getenv("TTS_NORMALIZATION_ENABLED", "true").lower() == "true"
+        )
+        normalization_target_lufs = float(
+            os.getenv("TTS_NORMALIZATION_TARGET_LUFS", "-16.0")
+        )
 
         if normalization_enabled:
-            logger.info(f"Audio normalization: ENABLED (target: {normalization_target_lufs:.1f} LUFS)")
+            logger.info(
+                f"Audio normalization: ENABLED (target: {normalization_target_lufs:.1f} LUFS)"
+            )
         else:
             logger.info("Audio normalization: DISABLED")
 
@@ -242,6 +253,10 @@ class IndexTTSWorker:
 
                 # Publish result
                 self.rabbitmq_manager.publish_result(result)
+                if result.get("ttsId"):
+                    logger.info(
+                        f"[JOB {job_id}] Result published with ttsId={result.get('ttsId')}"
+                    )
 
                 # Acknowledge message
                 self.rabbitmq_manager.acknowledge_message(method.delivery_tag)

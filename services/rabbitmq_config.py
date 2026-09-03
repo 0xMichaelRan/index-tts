@@ -210,7 +210,7 @@ def declare_dlx_exchanges(channel: pika.channel.Channel) -> None:
         channel: RabbitMQ channel
     """
     dlx_exchanges = ["tts_jobs.dlx", "tts_results.dlx"]
-    
+
     for exchange_name in dlx_exchanges:
         try:
             channel.exchange_declare(
@@ -220,7 +220,9 @@ def declare_dlx_exchanges(channel: pika.channel.Channel) -> None:
             )
             logger.info(f"✓ DLX exchange '{exchange_name}' declared successfully")
         except Exception as e:
-            logger.error(f"✗ Failed to declare DLX exchange '{exchange_name}': {str(e)}")
+            logger.error(
+                f"✗ Failed to declare DLX exchange '{exchange_name}': {str(e)}"
+            )
             raise
 
 
@@ -239,7 +241,7 @@ def bind_dlq_to_dlx(channel: pika.channel.Channel) -> None:
         ("tts_jobs_failed", "tts_jobs.dlx"),
         ("tts_results_failed", "tts_results.dlx"),
     ]
-    
+
     for queue_name, exchange_name in bindings:
         try:
             channel.queue_bind(
@@ -249,7 +251,9 @@ def bind_dlq_to_dlx(channel: pika.channel.Channel) -> None:
             )
             logger.info(f"✓ Bound queue '{queue_name}' to exchange '{exchange_name}'")
         except Exception as e:
-            logger.error(f"✗ Failed to bind queue '{queue_name}' to exchange '{exchange_name}': {str(e)}")
+            logger.error(
+                f"✗ Failed to bind queue '{queue_name}' to exchange '{exchange_name}': {str(e)}"
+            )
             raise
 
 
@@ -263,15 +267,15 @@ def configure_queues(
 
     This function is idempotent and can be safely run multiple times.
     It will create or update the following:
-    
+
     1. DLX Exchanges (fanout):
        - tts_jobs.dlx
        - tts_results.dlx
-    
+
     2. Dead-Letter Queues:
        - tts_jobs_failed
        - tts_results_failed
-    
+
     3. Main Queues (with DLX routing):
        - tts_jobs → routes failed messages to tts_jobs.dlx → tts_jobs_failed
        - tts_results → routes failed messages to tts_results.dlx → tts_results_failed
@@ -326,20 +330,20 @@ def configure_queues(
 
         logger.info("\nConfiguring DLX pattern...")
         logger.info("-" * 70)
-        
+
         # Step 1: Declare DLX exchanges
         logger.info("Step 1: Declaring DLX exchanges...")
         declare_dlx_exchanges(channel)
-        
+
         # Step 2: Declare DLQ queues (must exist before binding)
         logger.info("\nStep 2: Declaring DLQ queues...")
         for queue_name in ["tts_jobs_failed", "tts_results_failed"]:
             configure_queue(channel, queue_name, QUEUE_CONFIGS[queue_name])
-        
+
         # Step 3: Bind DLQs to DLX exchanges
         logger.info("\nStep 3: Binding DLQs to DLX exchanges...")
         bind_dlq_to_dlx(channel)
-        
+
         # Step 4: Declare main queues with DLX routing
         logger.info("\nStep 4: Declaring main queues with DLX routing...")
         for queue_name in ["tts_jobs", "tts_results"]:

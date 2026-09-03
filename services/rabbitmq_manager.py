@@ -37,7 +37,9 @@ class RabbitMQManager:
             parsed = urlparse(rabbitmq_url)
             self.rabbitmq_host = parsed.hostname or "localhost"
             self.host_display = (
-                rabbitmq_url.split("@")[1] if "@" in rabbitmq_url else self.rabbitmq_host
+                rabbitmq_url.split("@")[1]
+                if "@" in rabbitmq_url
+                else self.rabbitmq_host
             )
         except Exception:
             self.rabbitmq_host = "localhost"
@@ -204,10 +206,15 @@ class RabbitMQManager:
 
     def consume_messages(
         self,
-        callback: Callable[[pika.adapters.blocking_connection.BlockingChannel,
-                           pika.spec.Basic.Deliver,
-                           pika.spec.BasicProperties,
-                           bytes], None],
+        callback: Callable[
+            [
+                pika.adapters.blocking_connection.BlockingChannel,
+                pika.spec.Basic.Deliver,
+                pika.spec.BasicProperties,
+                bytes,
+            ],
+            None,
+        ],
         prefetch_count: int = 1,
     ) -> None:
         """
@@ -319,9 +326,7 @@ class RabbitMQManager:
         if self.channel and not self.channel.is_closed:
             self.channel.basic_ack(delivery_tag=delivery_tag)
 
-    def reject_message(
-        self, delivery_tag: int, requeue: bool = False
-    ) -> None:
+    def reject_message(self, delivery_tag: int, requeue: bool = False) -> None:
         """Reject message and optionally requeue."""
         if self.channel and not self.channel.is_closed:
             self.channel.basic_nack(delivery_tag=delivery_tag, requeue=requeue)

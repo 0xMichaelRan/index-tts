@@ -155,9 +155,7 @@ class S3Client:
         self.storage_bucket_name = storage_bucket_name or os.getenv(
             "S3_MISC_BUCKET_NAME"
         )
-        self.storage_region = storage_region or os.getenv(
-            "S3_MISC_REGION", "us-east-1"
-        )
+        self.storage_region = storage_region or os.getenv("S3_MISC_REGION", "us-east-1")
         self.storage_use_ssl = (
             storage_use_ssl
             if storage_use_ssl is not None

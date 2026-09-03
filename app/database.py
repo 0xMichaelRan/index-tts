@@ -23,13 +23,16 @@ load_dotenv()
 # Lazy logger initialization to avoid circular imports during alembic initialization
 _logger = None
 
+
 def _get_logger():
     """Get or initialize logger (lazy init to avoid circular imports)."""
     global _logger
     if _logger is None:
         from services.logging_config import get_logger
+
         _logger = get_logger(__name__)
     return _logger
+
 
 def async_to_sync_database_url(database_url: str) -> str:
     """Convert async SQLAlchemy URL to sync (e.g. postgresql+asyncpg -> postgresql)."""
@@ -52,6 +55,7 @@ def get_sync_database_url() -> str | None:
         return None
 
     return async_to_sync_database_url(database_url)
+
 
 # Database configuration from environment
 DATABASE_URL = os.getenv("DATABASE_URL")

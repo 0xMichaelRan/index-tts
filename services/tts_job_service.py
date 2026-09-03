@@ -61,7 +61,9 @@ class TTSJobService:
     def __init__(self):
         self.enabled = DB_AVAILABLE and os.getenv("DATABASE_URL") is not None
         if not self.enabled:
-            logger.warning("TTSJobService: DATABASE_URL not configured or DB unavailable")
+            logger.warning(
+                "TTSJobService: DATABASE_URL not configured or DB unavailable"
+            )
 
     def create_job_record(self, job_data: dict[str, Any]) -> int | None:
         """
@@ -80,11 +82,17 @@ class TTSJobService:
             return None
 
         if not self.enabled:
-            raise RuntimeError("DATABASE_CONNECTION_FAILED: DATABASE_URL is required for TTS tracking")
+            raise RuntimeError(
+                "DATABASE_CONNECTION_FAILED: DATABASE_URL is required for TTS tracking"
+            )
 
         async def _create() -> int:
             async with DatabaseSession() as db_session:
-                raw_job_id = job_data.get("jobId") if job_data.get("jobId") is not None else job_data.get("job_id")
+                raw_job_id = (
+                    job_data.get("jobId")
+                    if job_data.get("jobId") is not None
+                    else job_data.get("job_id")
+                )
                 try:
                     job_id_int = int(raw_job_id)
                 except (ValueError, TypeError):
