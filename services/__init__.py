@@ -9,14 +9,10 @@ This package provides a set of modular, single-responsibility services:
 - CacheManager: Synthesis caching with database backend
 - SynthesisPipeline: Orchestrates synthesis, alignment, and upload
 - IndexTTSWorker: Main orchestrator that ties everything together
-"""
 
-from services.audio_processor import AudioProcessor
-from services.cache_manager import CacheManager
-from services.rabbitmq_manager import RabbitMQManager
-from services.storage_manager import StorageManager
-from services.synthesis_pipeline import SynthesisPipeline
-from services.tts_worker import IndexTTSWorker
+NOTE: Services are lazily imported to avoid circular imports during initialization
+(e.g., during alembic migrations). Import them directly from their modules as needed.
+"""
 
 __all__ = [
     "AudioProcessor",

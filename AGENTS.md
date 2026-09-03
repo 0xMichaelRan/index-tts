@@ -329,6 +329,9 @@ uv run pytest tests/test_audio_normalization.py::TestNormalizeLoudness -v
 Set **all** of these variables:
 
 ```bash
+# Database (PostgreSQL - REQUIRED for ttsId generation and synthesis cache)
+DATABASE_URL=postgresql+asyncpg://user:pass@host:5432/indextts_worker
+
 # RabbitMQ
 RABBITMQ_URL=amqp://user:pass@host:5672/
 
