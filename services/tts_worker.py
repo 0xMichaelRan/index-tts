@@ -734,11 +734,9 @@ class IndexTTSWorker:
             job_id = str(job_id)
 
         text = job_data.get("text", "")
-        audio_prompt_path = job_data.get("audioPromptPath") or job_data.get(
-            "audio_prompt_path"
-        )
-        language = job_data.get("language", "en")
-        job_type = job_data.get("jobType") or job_data.get("job_type", "studio")
+        audio_prompt_path = job_data.get("audioPromptPath")
+        language = job_data.get("spokenLang", "en")  # spokenLang is the standard field
+        job_type = job_data.get("jobType", "studio")
 
         # Validate job_type (support studio, playground, rem)
         if job_type not in ("studio", "playground", "rem"):
@@ -748,19 +746,16 @@ class IndexTTSWorker:
             job_type = "studio"
 
         # Note: output_path_template is legacy and no longer used; paths are built dynamically
-        ratio = job_data.get("ratio", 1.0)
+        speed_ratio = job_data.get("speedRatio", 1.0)  # NEW: renamed from 'ratio'
         environment = job_data.get("environment", "prod")
-        voice_id = (
-            job_data.get("voiceId")
-            if job_data.get("voiceId") is not None
-            else job_data.get("voice_id", 0)
-        )
+        voice_id = job_data.get("voiceId", 0)
+        anon = job_data.get("anon", False)  # NEW: anonymous voice flag
 
         retry_count = 0
         max_retries = 3
 
         logger.info(
-            f"[JOB {job_id}] Processing TTS request (type: {job_type}, language: {language}, ratio: {ratio})"
+            f"[JOB {job_id}] Processing TTS request (type: {job_type}, language: {language}, speedRatio: {speed_ratio})"
         )
 
         # Check for duplicate processing
@@ -790,7 +785,7 @@ class IndexTTSWorker:
                 cached_audio_path = None
                 if self.cache_enabled:
                     cache_hit, cached_audio_path = self._process_cache_lookup(
-                        job_id, text, audio_prompt_path, ratio
+                        job_id, text, audio_prompt_path, speed_ratio
                     )
                     if cache_hit and cached_audio_path:
                         local_output = cached_audio_path
@@ -857,10 +852,10 @@ class IndexTTSWorker:
                             synthesis_start,
                         )
 
-                    # Apply time-stretching if ratio != 1.0
-                    if ratio != 1.0:
+                    # Apply time-stretching if speed_ratio != 1.0
+                    if speed_ratio != 1.0:
                         local_output = self._apply_ratio_to_cached_audio(
-                            base_audio_path, ratio, job_id
+                            base_audio_path, speed_ratio, job_id
                         )
                     else:
                         local_output = base_audio_path
@@ -931,7 +926,7 @@ class IndexTTSWorker:
                     job_type=job_type,
                     job_id=job_id,
                     language=detected_language,
-                    ratio=ratio,
+                    ratio=speed_ratio,
                     environment=environment,
                     voice_id=voice_id,
                     file_extension=file_extension,
@@ -1052,32 +1047,21 @@ class IndexTTSWorker:
                     result["isTest"] = True
 
                 # For Remotion jobs (jobType="rem"), echo back video parameters for chaining
-                # Read from BOTH old and new field names (camelCase) for backward compatibility
                 if job_type == "rem":
-                    # Priority: new field names (v2) → old field names (v1)
-                    theme = (
-                        job_data.get("remotionStyle")  # New v2 name
-                        or job_data.get("theme")  # Old v1 name
-                    )
+                    remotion_style = job_data.get("remotionStyle")
                     resolution = job_data.get("resolution")
-                    aspect_ratio = (
-                        job_data.get("aspectRatio")  # New v2 name
-                        or job_data.get("ratioFormat")  # Old v1 name
-                    )
-                    spoken_lang = (
-                        job_data.get("spokenLang")  # New v2 name
-                        or job_data.get("language")  # Old v1 name
-                    )
+                    aspect_ratio = job_data.get("aspectRatio")
+                    spoken_lang = job_data.get("spokenLang")
                     
-                    # Echo back using old field names for orchestrator compatibility
-                    if theme:
-                        result["theme"] = theme
+                    # Echo back video parameters (no backward compatibility)
+                    if remotion_style:
+                        result["remotionStyle"] = remotion_style
                     if resolution:
                         result["resolution"] = resolution
                     if aspect_ratio:
-                        result["ratioFormat"] = aspect_ratio
+                        result["aspectRatio"] = aspect_ratio
                     if spoken_lang:
-                        result["language"] = spoken_lang
+                        result["spokenLang"] = spoken_lang
 
                 cache_status = "cache HIT" if cache_hit else "full synthesis"
                 logger.success(
@@ -1112,32 +1096,21 @@ class IndexTTSWorker:
                     }
 
                     # For Remotion jobs, echo back video parameters even on failure
-                    # Read from BOTH old and new field names (camelCase) for backward compatibility
                     if job_type == "rem":
-                        # Priority: new field names (v2) → old field names (v1)
-                        theme = (
-                            job_data.get("remotionStyle")  # New v2 name
-                            or job_data.get("theme")  # Old v1 name
-                        )
+                        remotion_style = job_data.get("remotionStyle")
                         resolution = job_data.get("resolution")
-                        aspect_ratio = (
-                            job_data.get("aspectRatio")  # New v2 name
-                            or job_data.get("ratioFormat")  # Old v1 name
-                        )
-                        spoken_lang = (
-                            job_data.get("spokenLang")  # New v2 name
-                            or job_data.get("language")  # Old v1 name
-                        )
+                        aspect_ratio = job_data.get("aspectRatio")
+                        spoken_lang = job_data.get("spokenLang")
                         
-                        # Echo back using old field names for orchestrator compatibility
-                        if theme:
-                            failure_result["theme"] = theme
+                        # Echo back video parameters (no backward compatibility)
+                        if remotion_style:
+                            failure_result["remotionStyle"] = remotion_style
                         if resolution:
                             failure_result["resolution"] = resolution
                         if aspect_ratio:
-                            failure_result["ratioFormat"] = aspect_ratio
+                            failure_result["aspectRatio"] = aspect_ratio
                         if spoken_lang:
-                            failure_result["language"] = spoken_lang
+                            failure_result["spokenLang"] = spoken_lang
 
                     return failure_result
 
@@ -1160,7 +1133,7 @@ class IndexTTSWorker:
                 # Read from BOTH old and new field names (camelCase) for backward compatibility
                 if job_type == "rem":
                     # Priority: new field names (v2) → old field names (v1)
-                    theme = (
+                    remotion_style = (
                         job_data.get("remotionStyle")  # New v2 name
                         or job_data.get("theme")  # Old v1 name
                     )
@@ -1174,15 +1147,15 @@ class IndexTTSWorker:
                         or job_data.get("language")  # Old v1 name
                     )
                     
-                    # Echo back using old field names for orchestrator compatibility
-                    if theme:
-                        failure_result["theme"] = theme
+                    # Echo back using NEW field names for consistency
+                    if remotion_style:
+                        failure_result["remotionStyle"] = remotion_style
                     if resolution:
                         failure_result["resolution"] = resolution
                     if aspect_ratio:
-                        failure_result["ratioFormat"] = aspect_ratio
+                        failure_result["aspectRatio"] = aspect_ratio
                     if spoken_lang:
-                        failure_result["language"] = spoken_lang
+                        failure_result["spokenLang"] = spoken_lang
 
                 return failure_result
 
