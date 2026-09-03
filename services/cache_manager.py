@@ -61,7 +61,7 @@ class CacheManager:
         """
         try:
             async with DatabaseSession() as db_session:
-                cache_service = TTSCacheService(self.cache_dir, db_session)
+                cache_service = TTSCacheService(db_session, self.cache_dir)
                 cache_entry = await cache_service.lookup(text, audio_prompt_path)
 
                 if cache_entry:
@@ -95,7 +95,7 @@ class CacheManager:
         """
         try:
             async with DatabaseSession() as db_session:
-                cache_service = TTSCacheService(self.cache_dir, db_session)
+                cache_service = TTSCacheService(db_session, self.cache_dir)
                 await cache_service.store(
                     text=text,
                     audio_prompt_path=audio_prompt_path,

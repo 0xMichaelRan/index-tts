@@ -69,22 +69,21 @@ class TTSJobService:
         """
         Create a tts_jobs record and return the generated ttsId.
 
-        Test jobs (isTest=True) skip database creation and return None.
+        All jobs (test and production) are persisted to the database.
+        Test jobs are marked with is_test=True for filtering/analytics.
 
         Args:
             job_data: RabbitMQ job payload
 
         Returns:
-            int ttsId if created, None if test job
+            int ttsId (always generated, even for test jobs)
         """
-        if job_data.get("isTest"):
-            logger.info("Test job: skipping tts_jobs database record creation")
-            return None
-
         if not self.enabled:
             raise RuntimeError(
                 "DATABASE_CONNECTION_FAILED: DATABASE_URL is required for TTS tracking"
             )
+
+        is_test = job_data.get("isTest", False)
 
         async def _create() -> int:
             async with DatabaseSession() as db_session:
@@ -112,6 +111,7 @@ class TTSJobService:
                     job_id=job_id_int,
                     job_type=job_type,
                     status="processing",
+                    is_test=is_test,
                     text=job_data.get("text"),
                     audio_prompt_path=job_data.get("audioPromptPath"),
                     language=job_data.get("spokenLang", "en"),
@@ -125,7 +125,8 @@ class TTSJobService:
 
         try:
             tts_id = _run_coroutine(_create())
-            logger.info(f"[JOB {job_data.get('jobId')}] Generated ttsId={tts_id}")
+            job_label = "[TEST]" if is_test else ""
+            logger.info(f"[JOB {job_data.get('jobId')}] {job_label} Generated ttsId={tts_id}")
             return tts_id
         except Exception as e:
             logger.error(f"Failed to create tts_jobs record: {e}")

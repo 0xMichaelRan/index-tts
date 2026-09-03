@@ -7,6 +7,7 @@ requested with different speed ratios.
 """
 
 from sqlalchemy import (
+    Boolean,
     Column,
     String,
     Text,
@@ -167,6 +168,16 @@ class TTSJob(Base):
     job_type = Column(String(20), nullable=False)
     status = Column(
         String(20), nullable=False, default="queued", server_default="queued"
+    )
+
+    # Test flag
+    is_test = Column(
+        Boolean(),
+        nullable=False,
+        default=False,
+        server_default="false",
+        index=True,
+        comment="Whether this is a test job (isTest=true in message)",
     )
 
     # TTS parameters
