@@ -54,65 +54,19 @@ Never use:
 - **`services/logging_config.py`** - Structured logging with visual hierarchy
 - **`indextts/`** - TTS engine (BigVGAN vocoder, FastSpeech2 acoustic model)
 
-### S3 Dual-Bucket Architecture
+### S3 Configuration
 
-The worker now supports **completely independent S3 configurations** for misc and voice buckets:
+The worker uses **dual-bucket S3 architecture**:
+- **Misc Bucket** (`S3_MISC_*`): Voice recordings, audio prompts (read-only)
+- **Voice Bucket** (`R2_VOICE_*`): TTS synthesis output (write-only)
 
-- **Misc Bucket** (`S3_MISC_*`): Voice recordings, audio prompts (read-only during synthesis)
-- **Voice Bucket** (`R2_VOICE_*`): TTS synthesis results (write-only during synthesis)
+**Path structure** and **environment configuration** are documented in the **studio-backend master reference**:
+- [CROSS_REPO_INTEGRATION.md](https://github.com/your-org/studio-backend/blob/main/docs/CROSS_REPO_INTEGRATION.md) — S3 setup, path conventions, queue schemas
 
-Each bucket can have:
-- Different S3 endpoints (different providers or regions)
-- Separate credentials (different access keys)
-- Different regions and SSL settings
-- Independent retention/lifecycle policies
-
-**Example**: Use Supabase S3 for voices (premium, reliable) and Cloudflare R2 for TTS output (cheaper, high throughput).
-
-### S3 Storage Structure
-
-```
-Misc Bucket:
-├── audio-prompts/
-│   ├── {voice_id}.wav               # Worker reads voice prompts
-│   └── {voice_id}.json              # Voice metadata
-
-Voice Bucket:
-├── {job_type}/                      # studio or playground
-│   └── {YYYYMMDD}/                  # Date folder (local timezone, e.g., 20260902)
-│       └── {job_id}/                # Job-specific directory
-│           ├── {filename}.mp3       # Audio output
-│           └── {filename}.json      # Alignment sidecar
-```
-
-**Filename format**: `{language}_r{ratio}_{environment}[_voice{voice_id}].{ext}`
-
-**Ratio format**: `r` + (ratio × 10, zero-padded to 2 digits)
-- `1.0` → `r10`
-- `1.2` → `r12`
-- `0.7` → `r07`
-
-**Path examples**:
-```
-# Studio with voice clone
-studio/20260902/abc123/zh_r10_prod_voice42.mp3
-studio/20260902/abc123/zh_r10_prod_voice42.json
-
-# Playground without voice, faster speed
-playground/20260902/xyz789/en_r15_dev.mp3
-playground/20260902/xyz789/en_r15_dev.json
-
-# Studio with slower speed
-studio/20260902/def456/mixed_r07_prod.mp3
-studio/20260902/def456/mixed_r07_prod.json
-```
-
-**Notes**: 
-- Date is in local server timezone (YYYYMMDD format)
-- Ratio format is compact: multiply by 10 and zero-pad (e.g., `r10`, `r12`, `r07`)
-- `voice_id` only included in filename if > 0
-- Language is detected from alignment (e.g., `zh`, `en`, `mixed_fallback`)
-- Both buckets are logged clearly in startup summary
+**Key Points**:
+- Both buckets must be configured (all `S3_MISC_*` and `R2_VOICE_*` env vars)
+- Bucket names must match across all services (backend, TTS worker, video worker)
+- Output paths follow: `{job_type}/{YYYYMMDD}/{job_id}/{filename}.{ext}`
 
 ### Voice Caching
 
