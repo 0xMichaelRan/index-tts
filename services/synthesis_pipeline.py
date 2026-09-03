@@ -18,6 +18,7 @@ from services.circuit_breaker import CircuitBreakerError, get_circuit_breaker
 from services.logging_config import get_logger
 from services.s3_config import S3ConfigError
 from services.storage_manager import StorageManager
+from services.tts_job_service import TTSJobService
 
 logger = get_logger(__name__)
 
@@ -43,6 +44,7 @@ class SynthesisPipeline:
         use_fast_inference: bool = True,
         normalization_enabled: bool = True,
         normalization_target_lufs: float = -16.0,
+        job_service: Optional[TTSJobService] = None,
     ):
         """
         Initialize synthesis pipeline.
@@ -54,10 +56,12 @@ class SynthesisPipeline:
             use_fast_inference: Use fast inference method (Windows/Linux)
             normalization_enabled: Enable audio loudness normalization
             normalization_target_lufs: Target LUFS for normalization
+            job_service: Optional TTSJobService instance for job tracking
         """
         self.tts_engine = tts_engine
         self.storage_manager = storage_manager
         self.cache_manager = cache_manager
+        self.job_service = job_service or TTSJobService()
         self.audio_processor = AudioProcessor()
 
         self.use_fast_inference = use_fast_inference
@@ -165,6 +169,24 @@ class SynthesisPipeline:
         local_alignment_json = None
         cache_hit = False
 
+        # Create tts_jobs database record and generate ttsId
+        tts_id = None
+        try:
+            tts_id = self.job_service.create_job_record(job_data)
+            if tts_id is not None:
+                job_data["ttsId"] = tts_id
+        except Exception as e:
+            logger.error(f"[JOB {job_id}] Failed to create TTS job record: {e}")
+            return self._build_failure_result(
+                job_type,
+                job_id,
+                "DATABASE_CONNECTION_FAILED",
+                str(e),
+                0,
+                job_started_at,
+                job_data,
+            )
+
         # Retry loop for transient failures
         while retry_count < max_retries:
             try:
@@ -222,6 +244,17 @@ class SynthesisPipeline:
                 audio_duration = self.audio_processor.get_audio_duration(local_output)
                 total_duration = time.time() - job_start_time
 
+                # Update tts_jobs status in database
+                if tts_id is not None:
+                    self.job_service.update_job_status(
+                        tts_id,
+                        "completed",
+                        audio_path=audio_path,
+                        alignment_path=alignment_s3_path,
+                        audio_duration_seconds=audio_duration,
+                        retry_count=retry_count,
+                    )
+
                 # Build success result
                 result = self._build_success_result(
                     job_type,
@@ -256,6 +289,14 @@ class SynthesisPipeline:
                     logger.error(
                         f"[JOB {job_id}] All {max_retries} attempts failed: {e!s}"
                     )
+                    if tts_id is not None:
+                        self.job_service.update_job_status(
+                            tts_id,
+                            "failed",
+                            error_code="RETRYABLE_ERROR_EXHAUSTED",
+                            error_message=str(e),
+                            retry_count=retry_count,
+                        )
                     return self._build_failure_result(
                         job_type,
                         job_id,
@@ -268,6 +309,14 @@ class SynthesisPipeline:
 
             except Exception as e:
                 logger.error(f"[JOB {job_id}] Non-retryable error: {e!s}")
+                if tts_id is not None:
+                    self.job_service.update_job_status(
+                        tts_id,
+                        "failed",
+                        error_code="NON_RETRYABLE_ERROR",
+                        error_message=str(e),
+                        retry_count=retry_count,
+                    )
                 return self._build_failure_result(
                     job_type,
                     job_id,
@@ -289,6 +338,14 @@ class SynthesisPipeline:
                 if local_alignment_json and os.path.exists(local_alignment_json):
                     self.storage_manager.cleanup_local_files(local_alignment_json)
 
+        if tts_id is not None:
+            self.job_service.update_job_status(
+                tts_id,
+                "failed",
+                error_code="MAX_RETRIES_EXHAUSTED",
+                error_message="Max retries exhausted",
+                retry_count=retry_count,
+            )
         return self._build_failure_result(
             job_type,
             job_id,
@@ -561,6 +618,10 @@ class SynthesisPipeline:
             "alignmentDurationSeconds": alignment_duration_seconds,
         }
 
+        # Include ttsId if present
+        if "ttsId" in job_data and job_data["ttsId"] is not None:
+            result["ttsId"] = job_data["ttsId"]
+
         # Preserve test flag
         if job_data.get("isTest"):
             result["isTest"] = True
@@ -596,6 +657,10 @@ class SynthesisPipeline:
             "isTest": job_data.get("isTest", False),
         }
 
+        # Include ttsId if present
+        if "ttsId" in job_data and job_data["ttsId"] is not None:
+            result["ttsId"] = job_data["ttsId"]
+
         # Echo Remotion parameters even on failure
         if job_type == "rem":
             for key in ["remotionStyle", "resolution", "aspectRatio", "spokenLang"]:
@@ -603,3 +668,4 @@ class SynthesisPipeline:
                     result[key] = job_data[key]
 
         return result
+

@@ -13,6 +13,7 @@ from sqlalchemy import (
     Float,
     Integer,
     BigInteger,
+    Numeric,
     DateTime,
     CheckConstraint,
     func,
@@ -20,6 +21,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import declarative_base
 
 Base = declarative_base()
+
 
 
 class TTSSynthesisCache(Base):
@@ -154,3 +156,56 @@ class TTSSynthesisCache(Base):
             "language": self.language,
             "tts_engine": self.tts_engine,
         }
+
+
+class TTSJob(Base):
+    """TTS job tracking for retry detection, analytics, and lifecycle management."""
+
+    __tablename__ = "tts_jobs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)  # ttsId
+    job_id = Column(Integer, nullable=False, index=True)
+    job_type = Column(String(20), nullable=False)
+    status = Column(
+        String(20), nullable=False, default="queued", server_default="queued"
+    )
+
+    # TTS parameters
+    text = Column(Text, nullable=True)
+    audio_prompt_path = Column(Text, nullable=True)
+    language = Column(String(10), nullable=True)
+    ratio = Column(Numeric(3, 1), nullable=True)
+
+    # Results
+    cache_key = Column(String(64), nullable=True, index=True)
+    audio_path = Column(Text, nullable=True)
+    alignment_path = Column(Text, nullable=True)
+    audio_duration_seconds = Column(Numeric(10, 2), nullable=True)
+    synthesis_duration_seconds = Column(Numeric(10, 2), nullable=True)
+
+    # Error tracking
+    error_code = Column(String(50), nullable=True)
+    error_message = Column(Text, nullable=True)
+    retry_count = Column(Integer, nullable=False, default=0, server_default="0")
+
+    # Timestamps
+    created_at = Column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('queued', 'processing', 'completed', 'failed')",
+            name="ck_tts_jobs_status",
+        ),
+        CheckConstraint(
+            "job_type IN ('studio', 'playground', 'rem')",
+            name="ck_tts_jobs_job_type",
+        ),
+    )
+
+    def __repr__(self):
+        return f"<TTSJob(id={self.id}, job_id={self.job_id}, status='{self.status}')>"
+
