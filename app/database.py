@@ -36,7 +36,7 @@ def _get_logger():
 
 def async_to_sync_database_url(database_url: str) -> str:
     """Convert async SQLAlchemy URL to sync (e.g. postgresql+asyncpg -> postgresql).
-    
+
     IMPORTANT: Must rebuild the URL string directly without using str() on the URL object,
     since SQLAlchemy's str() method hides the password with ***, which then becomes
     the literal password when parsed again.
@@ -46,15 +46,19 @@ def async_to_sync_database_url(database_url: str) -> str:
     parsed = make_url(database_url)
     if "+asyncpg" not in parsed.drivername:
         return database_url
-    
+
     # Build URL string directly from components to preserve password
     new_driver = parsed.drivername.replace("+asyncpg", "", 1)
-    
+
     # Reconstruct URL string: drivername://user:password@host:port/database?query
-    user_part = f"{parsed.username}:{parsed.password}@" if parsed.password else f"{parsed.username}@"
+    user_part = (
+        f"{parsed.username}:{parsed.password}@"
+        if parsed.password
+        else f"{parsed.username}@"
+    )
     port_part = f":{parsed.port}" if parsed.port else ""
     query_part = f"?{parsed.query}" if parsed.query else ""
-    
+
     return f"{new_driver}://{user_part}{parsed.host}{port_part}/{parsed.database}{query_part}"
 
 

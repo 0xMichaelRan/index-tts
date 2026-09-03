@@ -46,8 +46,10 @@ def test_tts_job_service_create_and_update():
     service = TTSJobService()
     service.enabled = True
 
-    with patch("services.tts_job_service.DatabaseSession"), \
-         patch("services.tts_job_service._run_coroutine") as mock_run:
+    with (
+        patch("services.tts_job_service.DatabaseSession"),
+        patch("services.tts_job_service._run_coroutine") as mock_run,
+    ):
         # Mock _run_coroutine to simulate return of tts_id
         def mock_runner(coro, timeout=10.0):
             coro.close()

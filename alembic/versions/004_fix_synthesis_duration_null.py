@@ -30,7 +30,7 @@ def upgrade() -> None:
             "UPDATE tts_jobs SET synthesis_duration_seconds = 0.0 WHERE synthesis_duration_seconds IS NULL"
         )
     )
-    
+
     # Change column to NOT NULL with a default
     op.alter_column(
         "tts_jobs",

@@ -265,3 +265,12 @@ class TTSJob(Base):
 
     def __repr__(self):
         return f"<TTSJob(id={self.id}, job_id={self.job_id}, status='{self.status}')>"
+
+    def __init__(self, **kwargs):
+        """Initialize TTSJob with defaults for observability fields."""
+        # Set defaults for fields that need Python-level defaults
+        if "cache_hit" not in kwargs:
+            kwargs["cache_hit"] = False
+        if "time_stretched" not in kwargs:
+            kwargs["time_stretched"] = False
+        super().__init__(**kwargs)
