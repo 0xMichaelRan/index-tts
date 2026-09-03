@@ -191,7 +191,9 @@ class TTSJob(Base):
     audio_path = Column(Text, nullable=True)
     alignment_path = Column(Text, nullable=True)
     audio_duration_seconds = Column(Numeric(10, 2), nullable=True)
-    synthesis_duration_seconds = Column(Numeric(10, 2), nullable=True)
+    synthesis_duration_seconds = Column(
+        Numeric(10, 2), nullable=False, default=0.0, server_default="0.0"
+    )
 
     # Error tracking
     error_code = Column(String(50), nullable=True)

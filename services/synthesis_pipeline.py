@@ -262,6 +262,7 @@ class SynthesisPipeline:
                         audio_path=audio_path,
                         alignment_path=alignment_s3_path,
                         audio_duration_seconds=audio_duration,
+                        synthesis_duration_seconds=total_duration,
                         retry_count=retry_count,
                     )
 
@@ -277,6 +278,7 @@ class SynthesisPipeline:
                     cache_hit,
                     retry_count,
                     job_data,
+                    synthesis_duration_seconds=total_duration,
                 )
 
                 cache_status = "cache HIT" if cache_hit else "full synthesis"
@@ -621,6 +623,7 @@ class SynthesisPipeline:
         cache_hit: bool,
         retry_count: int,
         job_data: dict[str, Any],
+        synthesis_duration_seconds: float = 0.0,
     ) -> dict[str, Any]:
         """Build success result dictionary."""
         result = {
@@ -629,7 +632,7 @@ class SynthesisPipeline:
             "status": "completed",
             "audioPath": audio_path,
             "audioDurationSeconds": audio_duration,
-            "synthesisDurationSeconds": 0,  # Placeholder
+            "synthesisDurationSeconds": synthesis_duration_seconds,
             "startedAt": job_started_at.isoformat(),
             "completedAt": datetime.now().isoformat(),
             "cacheHit": cache_hit,
