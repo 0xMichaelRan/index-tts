@@ -244,12 +244,6 @@ class TTSJob(Base):
     )
     started_at = Column(DateTime(timezone=True), nullable=True)
     completed_at = Column(DateTime(timezone=True), nullable=True)
-    archived_at = Column(
-        DateTime(timezone=True),
-        nullable=True,
-        index=True,
-        comment="Timestamp when job was archived",
-    )
 
     __table_args__ = (
         CheckConstraint(

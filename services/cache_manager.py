@@ -5,7 +5,6 @@ TTS synthesis cache management with database and file storage.
 import asyncio
 import logging
 import threading
-import time
 from typing import Optional, Tuple
 
 from services.logging_config import get_logger
@@ -26,7 +25,9 @@ except ImportError as e:
 class CacheManager:
     """Manages TTS synthesis caching with async database operations."""
 
-    def __init__(self, cache_dir: str, max_entries: int = 10000, eviction_threshold: int = 9000):
+    def __init__(
+        self, cache_dir: str, max_entries: int = 10000, eviction_threshold: int = 9000
+    ):
         """
         Initialize cache manager.
 
@@ -65,7 +66,11 @@ class CacheManager:
                 cache_entry = await cache_service.lookup(text, audio_prompt_path)
 
                 if cache_entry:
-                    return (True, cache_entry.base_audio_local_path, cache_entry.cache_key)
+                    return (
+                        True,
+                        cache_entry.base_audio_local_path,
+                        cache_entry.cache_key,
+                    )
 
                 return (False, None, None)
 

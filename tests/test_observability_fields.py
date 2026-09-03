@@ -7,10 +7,8 @@ Tests:
 - Migration 007: Foreign key constraint on tts_jobs.cache_key
 """
 
-import pytest
 from datetime import datetime, timezone
-from sqlalchemy.exc import IntegrityError
-from app.models import TTSJob, TTSSynthesisCache
+from app.models import TTSJob
 
 
 class TestJobIdUniqueConstraint:

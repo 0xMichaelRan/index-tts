@@ -14,10 +14,8 @@ Tests verify:
 from __future__ import annotations
 
 import json
-import os
-import tempfile
 import wave
-from unittest.mock import MagicMock, Mock, patch, call
+from unittest.mock import MagicMock
 
 import pytest
 

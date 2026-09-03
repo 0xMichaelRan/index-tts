@@ -145,7 +145,9 @@ class TTSJobService:
         try:
             tts_id = _run_coroutine(_create())
             job_label = "[TEST]" if is_test else ""
-            logger.info(f"[JOB {job_data.get('jobId')}] {job_label} Generated ttsId={tts_id}")
+            logger.info(
+                f"[JOB {job_data.get('jobId')}] {job_label} Generated ttsId={tts_id}"
+            )
             return tts_id
         except Exception as e:
             logger.error(f"Failed to create tts_jobs record: {e}")

@@ -3,7 +3,6 @@ RabbitMQ connection management with automatic reconnection and DLX support.
 """
 
 import json
-import logging
 import time
 from typing import Any, Callable
 from urllib.parse import urlparse
@@ -238,7 +237,7 @@ class RabbitMQManager:
         )
 
         logger.info("Starting message consumption...")
-        
+
         try:
             self.channel.start_consuming()
         except KeyboardInterrupt:

@@ -195,10 +195,10 @@ class IndexTTSWorker:
             logger.info(f"\n{signal_name} received, initiating graceful shutdown...")
             self._shutdown_requested = True
             self.rabbitmq_manager.request_shutdown()
-            
+
             # Immediately stop consuming to unblock start_consuming()
             if (
-                self.rabbitmq_manager.channel 
+                self.rabbitmq_manager.channel
                 and not self.rabbitmq_manager.channel.is_closed
             ):
                 try:

@@ -6,7 +6,6 @@ import os
 import shutil
 import wave
 from datetime import datetime
-from typing import Optional
 
 from services.logging_config import get_logger
 

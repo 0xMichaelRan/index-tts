@@ -113,7 +113,7 @@ def migrate_queues(rabbitmq_url: str) -> bool:
         conn_params_dict = _parse_rabbitmq_url(rabbitmq_url)
         connection_params = pika.ConnectionParameters(**conn_params_dict)
 
-        logger.info(f"Connecting to RabbitMQ...")
+        logger.info("Connecting to RabbitMQ...")
         logger.info(f"  Host: {conn_params_dict['host']}:{conn_params_dict['port']}")
         logger.info(f"  VHost: {conn_params_dict['virtual_host']}")
 
