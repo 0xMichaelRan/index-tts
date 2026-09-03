@@ -52,12 +52,12 @@ class CacheManager:
 
     async def _lookup_async(
         self, text: str, audio_prompt_path: str
-    ) -> Optional[Tuple[bool, Optional[str]]]:
+    ) -> Optional[Tuple[bool, Optional[str], Optional[str]]]:
         """
         Async cache lookup.
 
         Returns:
-            (cache_hit, cached_audio_path) tuple
+            (cache_hit, cached_audio_path, cache_key) tuple
         """
         try:
             async with DatabaseSession() as db_session:
@@ -65,13 +65,13 @@ class CacheManager:
                 cache_entry = await cache_service.lookup(text, audio_prompt_path)
 
                 if cache_entry:
-                    return (True, cache_entry.base_audio_local_path)
+                    return (True, cache_entry.base_audio_local_path, cache_entry.cache_key)
 
-                return (False, None)
+                return (False, None, None)
 
         except Exception as e:
             logger.warning(f"Cache lookup failed: {e}")
-            return (False, None)
+            return (False, None, None)
 
     async def _store_async(
         self,
@@ -81,7 +81,7 @@ class CacheManager:
         audio_duration: float,
         synthesis_duration_ms: int,
         language: str,
-    ) -> None:
+    ) -> Optional[str]:
         """
         Async cache storage.
 
@@ -92,11 +92,14 @@ class CacheManager:
             audio_duration: Audio duration in seconds
             synthesis_duration_ms: Synthesis time in milliseconds
             language: Language code
+
+        Returns:
+            cache_key if successful, None otherwise
         """
         try:
             async with DatabaseSession() as db_session:
                 cache_service = TTSCacheService(db_session, self.cache_dir)
-                await cache_service.store(
+                entry = await cache_service.store(
                     text=text,
                     audio_prompt_path=audio_prompt_path,
                     base_audio_local_path=base_audio_path,
@@ -106,13 +109,15 @@ class CacheManager:
                 )
 
                 logger.success("Base audio cached for future reuse")
+                return entry.cache_key
 
         except Exception as e:
             logger.warning(f"Failed to cache synthesis: {e}")
+            return None
 
     def lookup(
         self, job_id: str, text: str, audio_prompt_path: str, ratio: float
-    ) -> Tuple[bool, Optional[str]]:
+    ) -> Tuple[bool, Optional[str], Optional[str]]:
         """
         Synchronous wrapper for cache lookup.
 
@@ -123,10 +128,10 @@ class CacheManager:
             ratio: Speed ratio
 
         Returns:
-            (cache_hit, cached_audio_path) tuple
+            (cache_hit, cached_audio_path, cache_key) tuple
         """
         if not self.enabled:
-            return (False, None)
+            return (False, None, None)
 
         result_container = {}
 
@@ -151,9 +156,9 @@ class CacheManager:
             logger.warning(
                 f"[JOB {job_id}] Cache lookup failed: {result_container['error']}"
             )
-            return (False, None)
+            return (False, None, None)
 
-        result = result_container.get("result", (False, None))
+        result = result_container.get("result", (False, None, None))
         if result and result[0]:
             logger.success(f"[JOB {job_id}] Cache HIT - reusing base audio")
 
@@ -168,7 +173,7 @@ class CacheManager:
         audio_duration: float,
         synthesis_duration: float,
         language: str,
-    ) -> None:
+    ) -> Optional[str]:
         """
         Synchronous wrapper for cache storage.
 
@@ -180,15 +185,20 @@ class CacheManager:
             audio_duration: Audio duration in seconds
             synthesis_duration: Synthesis time in seconds
             language: Language code
+
+        Returns:
+            cache_key if successful, None otherwise
         """
         if not self.enabled:
-            return
+            return None
+
+        result_container = {}
 
         def run_async():
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
-                loop.run_until_complete(
+                result = loop.run_until_complete(
                     self._store_async(
                         text,
                         audio_prompt_path,
@@ -198,11 +208,18 @@ class CacheManager:
                         language,
                     )
                 )
+                result_container["result"] = result
             except Exception as e:
                 logger.warning(f"[JOB {job_id}] Cache store failed: {e}")
+                result_container["error"] = e
             finally:
                 loop.close()
 
         thread = threading.Thread(target=run_async)
         thread.start()
         thread.join(timeout=10.0)
+
+        if "error" in result_container:
+            return None
+
+        return result_container.get("result")

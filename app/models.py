@@ -17,6 +17,8 @@ from sqlalchemy import (
     Numeric,
     DateTime,
     CheckConstraint,
+    ForeignKey,
+    Index,
     func,
 )
 from sqlalchemy.orm import declarative_base
@@ -164,7 +166,7 @@ class TTSJob(Base):
     __tablename__ = "tts_jobs"
 
     id = Column(Integer, primary_key=True, autoincrement=True)  # ttsId
-    job_id = Column(Integer, nullable=False, index=True)
+    job_id = Column(Integer, nullable=False, unique=True, index=True)
     job_type = Column(String(20), nullable=False)
     status = Column(
         String(20), nullable=False, default="queued", server_default="queued"
@@ -187,12 +189,48 @@ class TTSJob(Base):
     ratio = Column(Numeric(3, 1), nullable=True)
 
     # Results
-    cache_key = Column(String(64), nullable=True, index=True)
+    cache_key = Column(
+        String(64),
+        ForeignKey("tts_synthesis_cache.cache_key", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     audio_path = Column(Text, nullable=True)
     alignment_path = Column(Text, nullable=True)
     audio_duration_seconds = Column(Numeric(10, 2), nullable=True)
     synthesis_duration_seconds = Column(
         Numeric(10, 2), nullable=False, default=0.0, server_default="0.0"
+    )
+
+    # Observability and timing breakdown
+    cache_hit = Column(
+        Boolean(),
+        nullable=False,
+        default=False,
+        server_default="false",
+        comment="Whether synthesis result came from cache",
+    )
+    alignment_duration_seconds = Column(
+        Numeric(10, 2),
+        nullable=True,
+        comment="Time spent on forced alignment (seconds)",
+    )
+    time_stretched = Column(
+        Boolean(),
+        nullable=False,
+        default=False,
+        server_default="false",
+        comment="Whether audio was time-stretched (ratio != 1.0)",
+    )
+    source_ratio = Column(
+        Numeric(3, 1),
+        nullable=True,
+        comment="Original synthesis ratio (always 1.0 for cache)",
+    )
+    target_ratio = Column(
+        Numeric(3, 1),
+        nullable=True,
+        comment="Target playback speed ratio requested",
     )
 
     # Error tracking
@@ -206,6 +244,12 @@ class TTSJob(Base):
     )
     started_at = Column(DateTime(timezone=True), nullable=True)
     completed_at = Column(DateTime(timezone=True), nullable=True)
+    archived_at = Column(
+        DateTime(timezone=True),
+        nullable=True,
+        index=True,
+        comment="Timestamp when job was archived",
+    )
 
     __table_args__ = (
         CheckConstraint(
@@ -216,6 +260,7 @@ class TTSJob(Base):
             "job_type IN ('studio', 'playground', 'rem')",
             name="ck_tts_jobs_job_type",
         ),
+        Index("idx_tts_jobs_created_status", "created_at", "status"),
     )
 
     def __repr__(self):

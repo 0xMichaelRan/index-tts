@@ -174,6 +174,7 @@ class SynthesisPipeline:
         local_output = None
         local_alignment_json = None
         cache_hit = False
+        cache_key = None
 
         # Create tts_jobs database record and generate ttsId
         tts_id = None
@@ -198,7 +199,7 @@ class SynthesisPipeline:
             try:
                 # Stage 1: Cache lookup
                 if self.cache_manager.enabled:
-                    cache_hit, cached_audio_path = self.cache_manager.lookup(
+                    cache_hit, cached_audio_path, cache_key = self.cache_manager.lookup(
                         job_id, text, audio_prompt_path, speed_ratio
                     )
                     if cache_hit and cached_audio_path:
@@ -206,7 +207,7 @@ class SynthesisPipeline:
 
                 # Stage 2: Synthesis (if no cache hit)
                 if not cache_hit:
-                    local_audio_prompt, local_output = self._run_synthesis(
+                    local_audio_prompt, local_output, cache_key = self._run_synthesis(
                         job_id,
                         text,
                         audio_prompt_path,
@@ -264,6 +265,12 @@ class SynthesisPipeline:
                         audio_duration_seconds=audio_duration,
                         synthesis_duration_seconds=total_duration,
                         retry_count=retry_count,
+                        cache_hit=cache_hit,
+                        cache_key=cache_key,
+                        alignment_duration_seconds=alignment_duration_seconds,
+                        time_stretched=(speed_ratio != 1.0),
+                        source_ratio=1.0 if cache_hit else speed_ratio,
+                        target_ratio=speed_ratio,
                     )
 
                 # Build success result
@@ -376,12 +383,12 @@ class SynthesisPipeline:
         language: str,
         speed_ratio: float,
         job_data: dict[str, Any],
-    ) -> tuple[str, str]:
+    ) -> tuple[str, str, Optional[str]]:
         """
         Execute synthesis stage: download prompt, synthesize, apply cache/time-stretch.
 
         Returns:
-            (local_audio_prompt_path, local_output_path) tuple
+            (local_audio_prompt_path, local_output_path, cache_key) tuple
         """
         synthesis_start = time.time()
 
@@ -415,10 +422,11 @@ class SynthesisPipeline:
             raise RuntimeError(error_msg)
 
         # Stage 2c: Store in cache (if enabled)
+        cache_key = None
         if self.cache_manager.enabled:
             audio_duration = self.audio_processor.get_audio_duration(base_audio_path)
             synthesis_duration = time.time() - synthesis_start
-            self.cache_manager.store(
+            cache_key = self.cache_manager.store(
                 job_id,
                 text,
                 audio_prompt_path,
@@ -439,7 +447,7 @@ class SynthesisPipeline:
                 base_audio_path, job_id, output_dir
             )
 
-        return local_audio_prompt, local_output
+        return local_audio_prompt, local_output, cache_key
 
     def _synthesize_audio(
         self,

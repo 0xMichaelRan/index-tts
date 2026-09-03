@@ -18,6 +18,9 @@ logger = get_logger(__name__)
 
 # Try importing database session and models
 try:
+    from sqlalchemy import select
+    from sqlalchemy.exc import IntegrityError
+
     from app.database import DatabaseSession
     from app.models import TTSJob
 
@@ -118,10 +121,26 @@ class TTSJobService:
                     ratio=ratio_val,
                     started_at=datetime.now(timezone.utc),
                 )
-                db_session.add(tts_job)
-                await db_session.commit()
-                await db_session.refresh(tts_job)
-                return tts_job.id
+                try:
+                    db_session.add(tts_job)
+                    await db_session.commit()
+                    await db_session.refresh(tts_job)
+                    return tts_job.id
+                except IntegrityError as e:
+                    await db_session.rollback()
+                    if "uq_tts_jobs_job_id" in str(e) or "job_id" in str(e):
+                        logger.warning(
+                            f"Job {job_id_int} already exists in database (retry/redelivery detected)"
+                        )
+                        stmt = select(TTSJob).where(TTSJob.job_id == job_id_int)
+                        result = await db_session.execute(stmt)
+                        existing_job = result.scalar_one_or_none()
+                        if existing_job:
+                            existing_job.status = "processing"
+                            existing_job.started_at = datetime.now(timezone.utc)
+                            await db_session.commit()
+                            return existing_job.id
+                    raise
 
         try:
             tts_id = _run_coroutine(_create())
