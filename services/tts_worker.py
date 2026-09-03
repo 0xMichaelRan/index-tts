@@ -195,6 +195,17 @@ class IndexTTSWorker:
             logger.info(f"\n{signal_name} received, initiating graceful shutdown...")
             self._shutdown_requested = True
             self.rabbitmq_manager.request_shutdown()
+            
+            # Immediately stop consuming to unblock start_consuming()
+            if (
+                self.rabbitmq_manager.channel 
+                and not self.rabbitmq_manager.channel.is_closed
+            ):
+                try:
+                    self.rabbitmq_manager.channel.stop_consuming()
+                    logger.info("Message consumption stopped")
+                except Exception as e:
+                    logger.warning_icon(f"Error stopping consumption: {e}")
 
         signal.signal(signal.SIGTERM, signal_handler)
         signal.signal(signal.SIGINT, signal_handler)
@@ -289,7 +300,7 @@ class IndexTTSWorker:
                     if not self.rabbitmq_manager.reconnect_with_backoff():
                         break
 
-                # Start consuming
+                # Start consuming (blocking call - will exit when stop_consuming() is called)
                 self.rabbitmq_manager.consume_messages(
                     callback=message_callback,
                     prefetch_count=1,
@@ -298,6 +309,9 @@ class IndexTTSWorker:
             except KeyboardInterrupt:
                 logger.info("\nShutting down worker (KeyboardInterrupt)...")
                 self._shutdown_requested = True
+                # Stop consuming to unblock start_consuming()
+                if self.rabbitmq_manager.channel:
+                    self.rabbitmq_manager.channel.stop_consuming()
                 break
 
             except Exception as e:

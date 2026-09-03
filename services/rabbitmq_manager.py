@@ -238,7 +238,14 @@ class RabbitMQManager:
         )
 
         logger.info("Starting message consumption...")
-        self.channel.start_consuming()
+        
+        try:
+            self.channel.start_consuming()
+        except KeyboardInterrupt:
+            # Gracefully stop consuming when interrupted
+            logger.info("Stopping message consumption...")
+            self.channel.stop_consuming()
+            raise
 
     def publish_result(self, result: dict[str, Any], max_retries: int = 3) -> None:
         """
