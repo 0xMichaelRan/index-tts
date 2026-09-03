@@ -13,6 +13,7 @@ import threading
 from typing import Any
 
 from services.logging_config import get_logger
+from services.text_metrics import count_words
 
 logger = get_logger(__name__)
 
@@ -110,15 +111,17 @@ class TTSJobService:
                 except (ValueError, TypeError):
                     ratio_val = 1.0
 
+                text = job_data.get("text")
                 tts_job = TTSJob(
                     job_id=job_id_int,
                     job_type=job_type,
                     status="processing",
                     is_test=is_test,
-                    text=job_data.get("text"),
+                    text=text,
                     audio_prompt_path=job_data.get("audioPromptPath"),
                     language=job_data.get("spokenLang", "en"),
                     ratio=ratio_val,
+                    word_count=count_words(text),
                     started_at=datetime.now(timezone.utc),
                 )
                 try:
@@ -138,6 +141,9 @@ class TTSJobService:
                         if existing_job:
                             existing_job.status = "processing"
                             existing_job.started_at = datetime.now(timezone.utc)
+                            # Refresh word_count on retry/redelivery (text may be same)
+                            if existing_job.word_count is None and text:
+                                existing_job.word_count = count_words(text)
                             await db_session.commit()
                             return existing_job.id
                     raise

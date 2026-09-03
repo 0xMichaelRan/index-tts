@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import TTSSynthesisCache
 from services.logging_config import get_logger
+from services.text_metrics import count_words
 
 logger = get_logger(__name__)
 
@@ -270,6 +271,7 @@ class TTSCacheService:
             synthesis_duration_ms=synthesis_duration_ms,
             file_size_bytes=file_size_bytes,
             language=language,
+            word_count=count_words(text),
         )
 
         self.db.add(entry)

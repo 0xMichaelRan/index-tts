@@ -114,6 +114,11 @@ class TTSSynthesisCache(Base):
     language = Column(
         String(10), nullable=True, comment="Language code (e.g., 'en', 'zh')"
     )
+    word_count = Column(
+        Integer,
+        nullable=True,
+        comment="Speaking units: CJK chars + Latin tokens (for duration estimation)",
+    )
     tts_engine = Column(
         String(50), default="IndexTTS-1.5", comment="TTS engine version"
     )
@@ -156,6 +161,7 @@ class TTSSynthesisCache(Base):
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
             "language": self.language,
+            "word_count": self.word_count,
             "tts_engine": self.tts_engine,
         }
 
@@ -187,6 +193,12 @@ class TTSJob(Base):
     audio_prompt_path = Column(Text, nullable=True)
     language = Column(String(10), nullable=True)
     ratio = Column(Numeric(3, 1), nullable=True)
+    word_count = Column(
+        Integer,
+        nullable=True,
+        index=True,
+        comment="Speaking units: CJK chars + Latin tokens (for duration estimation)",
+    )
 
     # Results
     cache_key = Column(
