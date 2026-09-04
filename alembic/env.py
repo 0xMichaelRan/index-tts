@@ -13,7 +13,7 @@ load_dotenv()
 config = context.config
 
 # Override sqlalchemy.url from environment (derived from DATABASE_URL)
-from app.database import get_sync_database_url
+from app.database import get_sync_database_url  # noqa: E402
 
 sync_database_url = get_sync_database_url()
 if sync_database_url:

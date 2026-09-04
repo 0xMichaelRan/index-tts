@@ -2,10 +2,14 @@
 #   Licensed under the MIT license.
 
 import os
-import sys
 import pathlib
-import subprocess
 import platform
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+
 from torch.utils import cpp_extension
 
 """
@@ -13,11 +17,6 @@ Setting this param to a list has a problem of generating different compilation c
 Set it to empty stringo avoid recompilation and assign arch flags explicity in extra_cuda_cflags below
 """
 os.environ["TORCH_CUDA_ARCH_LIST"] = ""
-
-
-import re
-import shutil
-import tempfile
 
 
 # 补丁修复：sources 路径含中文字符时，生成 build.ninja 乱码导致编译失败

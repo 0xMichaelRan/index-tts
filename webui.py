@@ -13,7 +13,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(current_dir)
 sys.path.append(os.path.join(current_dir, "indextts"))
 
-import argparse
+import argparse  # noqa: E402
 
 parser = argparse.ArgumentParser(description="IndexTTS WebUI")
 parser.add_argument(
@@ -45,10 +45,10 @@ for file in [
         print(f"Required file {file_path} does not exist. Please download it.")
         sys.exit(1)
 
-import gradio as gr
+import gradio as gr  # noqa: E402
 
-from indextts.infer import IndexTTS
-from tools.i18n.i18n import I18nAuto
+from indextts.infer import IndexTTS  # noqa: E402
+from tools.i18n.i18n import I18nAuto  # noqa: E402
 
 i18n = I18nAuto(language="zh_CN")
 MODE = "local"
