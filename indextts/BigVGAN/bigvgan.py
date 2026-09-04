@@ -11,13 +11,14 @@ from typing import Dict, Optional, Union
 
 import torch
 import torch.nn as nn
-from huggingface_hub import PyTorchModelHubMixin, hf_hub_download
+from huggingface_hub import hf_hub_download
 from torch.nn import Conv1d, ConvTranspose1d
 from torch.nn.utils import remove_weight_norm, weight_norm
 
 import indextts.BigVGAN.activations as activations
-from indextts.BigVGAN.alias_free_activation.torch.act import \
-    Activation1d as TorchActivation1d
+from indextts.BigVGAN.alias_free_activation.torch.act import (
+    Activation1d as TorchActivation1d,
+)
 from indextts.BigVGAN.ECAPA_TDNN import ECAPA_TDNN
 from indextts.BigVGAN.env import AttrDict
 from indextts.BigVGAN.utils import get_padding, init_weights
@@ -94,8 +95,9 @@ class AMPBlock1(torch.nn.Module):
 
         # Select which Activation1d, lazy-load cuda version to ensure backward compatibility
         if self.h.get("use_cuda_kernel", False):
-            from alias_free_activation.cuda.activation1d import \
-                Activation1d as CudaActivation1d
+            from alias_free_activation.cuda.activation1d import (
+                Activation1d as CudaActivation1d,
+            )
 
             Activation1d = CudaActivation1d
         else:
@@ -193,8 +195,9 @@ class AMPBlock2(torch.nn.Module):
 
         # Select which Activation1d, lazy-load cuda version to ensure backward compatibility
         if self.h.get("use_cuda_kernel", False):
-            from alias_free_activation.cuda.activation1d import \
-                Activation1d as CudaActivation1d
+            from alias_free_activation.cuda.activation1d import (
+                Activation1d as CudaActivation1d,
+            )
 
             Activation1d = CudaActivation1d
         else:
@@ -240,7 +243,7 @@ class AMPBlock2(torch.nn.Module):
             remove_weight_norm(l)
 
 
-'''
+"""
     PyTorchModelHubMixin,
     library_name="bigvgan",
     repo_url="https://github.com/NVIDIA/BigVGAN",
@@ -248,7 +251,7 @@ class AMPBlock2(torch.nn.Module):
     pipeline_tag="audio-to-audio",
     license="mit",
     tags=["neural-vocoder", "audio-generation", "arxiv:2206.04658"],
-'''
+"""
 
 
 class BigVGAN(
@@ -274,8 +277,9 @@ class BigVGAN(
 
         # Select which Activation1d, lazy-load cuda version to ensure backward compatibility
         if self.h.get("use_cuda_kernel", False):
-            from alias_free_activation.cuda.activation1d import \
-                Activation1d as CudaActivation1d
+            from alias_free_activation.cuda.activation1d import (
+                Activation1d as CudaActivation1d,
+            )
 
             Activation1d = CudaActivation1d
         else:
@@ -363,8 +367,12 @@ class BigVGAN(
         # Final tanh activation. Defaults to True for backward compatibility
         self.use_tanh_at_final = h.get("use_tanh_at_final", True)
 
-        self.speaker_encoder = ECAPA_TDNN(h.num_mels, lin_neurons=h.speaker_embedding_dim)
-        self.cond_layer = nn.Conv1d(h.speaker_embedding_dim, h.upsample_initial_channel, 1)
+        self.speaker_encoder = ECAPA_TDNN(
+            h.num_mels, lin_neurons=h.speaker_embedding_dim
+        )
+        self.cond_layer = nn.Conv1d(
+            h.speaker_embedding_dim, h.upsample_initial_channel, 1
+        )
         if self.cond_in_each_up_layer:
             self.conds = nn.ModuleList()
             for i in range(len(self.ups)):
@@ -377,9 +385,15 @@ class BigVGAN(
         n_batch = x.size(0)
         contrastive_loss = None
         if n_batch * 2 == speaker_embedding.size(0):
-            spe_emb_chunk1, spe_emb_chunk2 = speaker_embedding[:n_batch, :, :], speaker_embedding[n_batch:, :, :]
-            contrastive_loss = self.cal_clip_loss(spe_emb_chunk1.squeeze(1), spe_emb_chunk2.squeeze(1),
-                                                  self.logit_scale.exp())
+            spe_emb_chunk1, spe_emb_chunk2 = (
+                speaker_embedding[:n_batch, :, :],
+                speaker_embedding[n_batch:, :, :],
+            )
+            contrastive_loss = self.cal_clip_loss(
+                spe_emb_chunk1.squeeze(1),
+                spe_emb_chunk2.squeeze(1),
+                self.logit_scale.exp(),
+            )
 
             speaker_embedding = speaker_embedding[:n_batch, :, :]
         speaker_embedding = speaker_embedding.transpose(1, 2)
@@ -492,13 +506,13 @@ class BigVGAN(
         # instantiate BigVGAN using h
         if use_cuda_kernel:
             print(
-                f"[WARNING] You have specified use_cuda_kernel=True during BigVGAN.from_pretrained(). Only inference is supported (training is not implemented)!"
+                "[WARNING] You have specified use_cuda_kernel=True during BigVGAN.from_pretrained(). Only inference is supported (training is not implemented)!"
             )
             print(
-                f"[WARNING] You need nvcc and ninja installed in your system that matches your PyTorch build is using to build the kernel. If not, the model will fail to initialize or generate incorrect waveform!"
+                "[WARNING] You need nvcc and ninja installed in your system that matches your PyTorch build is using to build the kernel. If not, the model will fail to initialize or generate incorrect waveform!"
             )
             print(
-                f"[WARNING] For detail, see the official GitHub repository: https://github.com/NVIDIA/BigVGAN?tab=readme-ov-file#using-custom-cuda-kernel-for-synthesis"
+                "[WARNING] For detail, see the official GitHub repository: https://github.com/NVIDIA/BigVGAN?tab=readme-ov-file#using-custom-cuda-kernel-for-synthesis"
             )
         model = cls(h, use_cuda_kernel=use_cuda_kernel)
 
@@ -526,7 +540,7 @@ class BigVGAN(
             model.load_state_dict(checkpoint_dict["generator"])
         except RuntimeError:
             print(
-                f"[INFO] the pretrained checkpoint does not contain weight norm. Loading the checkpoint after removing weight norm!"
+                "[INFO] the pretrained checkpoint does not contain weight norm. Loading the checkpoint after removing weight norm!"
             )
             model.remove_weight_norm()
             model.load_state_dict(checkpoint_dict["generator"])

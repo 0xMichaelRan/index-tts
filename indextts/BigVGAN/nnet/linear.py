@@ -5,8 +5,6 @@ Authors
  * Davide Borra 2021
 """
 
-import logging
-
 import torch
 import torch.nn as nn
 

@@ -72,8 +72,9 @@ class TextNormalizer:
     """
 
     # 匹配常见英语缩写 's，仅用于替换为 is，不匹配所有 's
-    ENGLISH_CONTRACTION_PATTERN = r"(what|where|who|which|how|t?here|it|s?he|that|this)'s"
-
+    ENGLISH_CONTRACTION_PATTERN = (
+        r"(what|where|who|which|how|t?here|it|s?he|that|this)'s"
+    )
 
     def use_chinese(self, s):
         has_chinese = bool(re.search(r"[\u4e00-\u9fff]", s))
@@ -82,31 +83,42 @@ class TextNormalizer:
         if has_chinese or not has_alpha or is_email:
             return True
 
-        has_pinyin = bool(re.search(TextNormalizer.PINYIN_TONE_PATTERN, s, re.IGNORECASE))
+        has_pinyin = bool(
+            re.search(TextNormalizer.PINYIN_TONE_PATTERN, s, re.IGNORECASE)
+        )
         return has_pinyin
 
     def load(self):
         # print(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
         # sys.path.append(model_dir)
         import platform
+
         if self.zh_normalizer is not None and self.en_normalizer is not None:
             return
         if platform.system() == "Darwin":
             from wetext import Normalizer
 
-            self.zh_normalizer = Normalizer(remove_erhua=False, lang="zh", operator="tn")
+            self.zh_normalizer = Normalizer(
+                remove_erhua=False, lang="zh", operator="tn"
+            )
             self.en_normalizer = Normalizer(lang="en", operator="tn")
         else:
             from tn.chinese.normalizer import Normalizer as NormalizerZh
             from tn.english.normalizer import Normalizer as NormalizerEn
+
             # use new cache dir for build tagger rules with disable remove_interjections and remove_erhua
-            cache_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tagger_cache")
+            cache_dir = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)), "tagger_cache"
+            )
             if not os.path.exists(cache_dir):
                 os.makedirs(cache_dir)
                 with open(os.path.join(cache_dir, ".gitignore"), "w") as f:
                     f.write("*\n")
             self.zh_normalizer = NormalizerZh(
-                cache_dir=cache_dir, remove_interjections=False, remove_erhua=False, overwrite_cache=False
+                cache_dir=cache_dir,
+                remove_interjections=False,
+                remove_erhua=False,
+                overwrite_cache=False,
             )
             self.en_normalizer = NormalizerEn(overwrite_cache=False)
 
@@ -116,9 +128,14 @@ class TextNormalizer:
             print("Error, text normalizer is not initialized !!!")
             return ""
         if self.use_chinese(text):
-            text = re.sub(TextNormalizer.ENGLISH_CONTRACTION_PATTERN, r"\1 is", text, flags=re.IGNORECASE)
+            text = re.sub(
+                TextNormalizer.ENGLISH_CONTRACTION_PATTERN,
+                r"\1 is",
+                text,
+                flags=re.IGNORECASE,
+            )
             replaced_text, pinyin_list = self.save_pinyin_tones(text.rstrip())
-            
+
             replaced_text, original_name_list = self.save_names(replaced_text)
             try:
                 result = self.zh_normalizer.normalize(replaced_text)
@@ -129,16 +146,25 @@ class TextNormalizer:
             result = self.restore_names(result, original_name_list)
             # 恢复拼音声调
             result = self.restore_pinyin_tones(result, pinyin_list)
-            pattern = re.compile("|".join(re.escape(p) for p in self.zh_char_rep_map.keys()))
+            pattern = re.compile(
+                "|".join(re.escape(p) for p in self.zh_char_rep_map.keys())
+            )
             result = pattern.sub(lambda x: self.zh_char_rep_map[x.group()], result)
         else:
             try:
-                text = re.sub(TextNormalizer.ENGLISH_CONTRACTION_PATTERN, r"\1 is", text, flags=re.IGNORECASE)
+                text = re.sub(
+                    TextNormalizer.ENGLISH_CONTRACTION_PATTERN,
+                    r"\1 is",
+                    text,
+                    flags=re.IGNORECASE,
+                )
                 result = self.en_normalizer.normalize(text)
             except Exception:
                 result = text
                 print(traceback.format_exc())
-            pattern = re.compile("|".join(re.escape(p) for p in self.char_rep_map.keys()))
+            pattern = re.compile(
+                "|".join(re.escape(p) for p in self.char_rep_map.keys())
+            )
             result = pattern.sub(lambda x: self.char_rep_map[x.group()], result)
         return result
 
@@ -195,7 +221,9 @@ class TextNormalizer:
         例如：xuan4 -> <pinyin_a>
         """
         # 声母韵母+声调数字
-        origin_pinyin_pattern = re.compile(TextNormalizer.PINYIN_TONE_PATTERN, re.IGNORECASE)
+        origin_pinyin_pattern = re.compile(
+            TextNormalizer.PINYIN_TONE_PATTERN, re.IGNORECASE
+        )
         original_pinyin_list = re.findall(origin_pinyin_pattern, original_text)
         if len(original_pinyin_list) == 0:
             return (original_text, None)
@@ -318,14 +346,18 @@ class TextTokenizer:
         if len(text) == 0:
             return []
         if len(text.strip()) == 1:
-            return self.sp_model.Encode(text, out_type=kwargs.pop("out_type", int), **kwargs)
+            return self.sp_model.Encode(
+                text, out_type=kwargs.pop("out_type", int), **kwargs
+            )
         # 预处理
         if self.normalizer:
             text = self.normalizer.normalize(text)
         if len(self.pre_tokenizers) > 0:
             for pre_tokenizer in self.pre_tokenizers:
                 text = pre_tokenizer(text)
-        return self.sp_model.Encode(text, out_type=kwargs.pop("out_type", int), **kwargs)
+        return self.sp_model.Encode(
+            text, out_type=kwargs.pop("out_type", int), **kwargs
+        )
 
     def batch_encode(self, texts: List[str], **kwargs):
         # 预处理
@@ -334,12 +366,16 @@ class TextTokenizer:
         if len(self.pre_tokenizers) > 0:
             for pre_tokenizer in self.pre_tokenizers:
                 texts = [pre_tokenizer(text) for text in texts]
-        return self.sp_model.Encode(texts, out_type=kwargs.pop("out_type", int), **kwargs)
+        return self.sp_model.Encode(
+            texts, out_type=kwargs.pop("out_type", int), **kwargs
+        )
 
     def decode(self, ids: Union[List[int], int], do_lower_case=False, **kwargs):
         if isinstance(ids, int):
             ids = [ids]
-        decoded = self.sp_model.Decode(ids, out_type=kwargs.pop("out_type", str), **kwargs)
+        decoded = self.sp_model.Decode(
+            ids, out_type=kwargs.pop("out_type", str), **kwargs
+        )
         return de_tokenized_by_CJK_char(decoded, do_lower_case=do_lower_case)
 
     @staticmethod
@@ -371,22 +407,30 @@ class TextTokenizer:
                     current_sentence_tokens_len = 0
                 continue
             # 如果当前tokens的长度超过最大限制
-            if not  ("," in split_tokens or "▁," in split_tokens ) and ("," in current_sentence or "▁," in current_sentence): 
+            if not ("," in split_tokens or "▁," in split_tokens) and (
+                "," in current_sentence or "▁," in current_sentence
+            ):
                 # 如果当前tokens中有,，则按,分割
                 sub_sentences = TextTokenizer.split_sentences_by_token(
-                    current_sentence, [",", "▁,"], max_tokens_per_sentence=max_tokens_per_sentence
+                    current_sentence,
+                    [",", "▁,"],
+                    max_tokens_per_sentence=max_tokens_per_sentence,
                 )
             elif "-" not in split_tokens and "-" in current_sentence:
                 # 没有,，则按-分割
                 sub_sentences = TextTokenizer.split_sentences_by_token(
-                    current_sentence, ["-"], max_tokens_per_sentence=max_tokens_per_sentence
+                    current_sentence,
+                    ["-"],
+                    max_tokens_per_sentence=max_tokens_per_sentence,
                 )
             else:
                 # 按照长度分割
                 sub_sentences = []
                 for j in range(0, len(current_sentence), max_tokens_per_sentence):
                     if j + max_tokens_per_sentence < len(current_sentence):
-                        sub_sentences.append(current_sentence[j : j + max_tokens_per_sentence])
+                        sub_sentences.append(
+                            current_sentence[j : j + max_tokens_per_sentence]
+                        )
                     else:
                         sub_sentences.append(current_sentence[j:])
                 warnings.warn(
@@ -421,11 +465,16 @@ class TextTokenizer:
         "▁.",
         # "▁!", # unk
         "▁?",
-        "▁...", # ellipsis
+        "▁...",  # ellipsis
     ]
-    def split_sentences(self, tokenized: List[str], max_tokens_per_sentence=120) -> List[List[str]]:
+
+    def split_sentences(
+        self, tokenized: List[str], max_tokens_per_sentence=120
+    ) -> List[List[str]]:
         return TextTokenizer.split_sentences_by_token(
-            tokenized, self.punctuation_marks_tokens, max_tokens_per_sentence=max_tokens_per_sentence
+            tokenized,
+            self.punctuation_marks_tokens,
+            max_tokens_per_sentence=max_tokens_per_sentence,
         )
 
 
@@ -502,10 +551,11 @@ if __name__ == "__main__":
         pinyin = tokenizer.convert_ids_to_tokens(id)
         if re.match(TextNormalizer.PINYIN_TONE_PATTERN, pinyin, re.IGNORECASE) is None:
             print(f"{pinyin} should be matched")
-    for badcase in [
-        "beta1", "better1", "voice2", "bala2", "babala2", "hunger2"
-    ]:
-        if re.match(TextNormalizer.PINYIN_TONE_PATTERN, badcase, re.IGNORECASE) is not None:
+    for badcase in ["beta1", "better1", "voice2", "bala2", "babala2", "hunger2"]:
+        if (
+            re.match(TextNormalizer.PINYIN_TONE_PATTERN, badcase, re.IGNORECASE)
+            is not None
+        ):
             print(f"{badcase} should not be matched!")
     # 不应该有 unk_token_id
     for t in set([*TextTokenizer.punctuation_marks_tokens, ",", "▁,", "-", "▁..."]):
@@ -517,20 +567,29 @@ if __name__ == "__main__":
         # 测试 normalize后的字符能被分词器识别
         print(f"`{ch}`", "->", tokenizer.sp_model.Encode(ch, out_type=str))
         print(f"` {ch}`", "->", tokenizer.sp_model.Encode(f" {ch}", out_type=str))
-    max_tokens_per_sentence=120
+    max_tokens_per_sentence = 120
     for i in range(len(cases)):
         print(f"原始文本: {cases[i]}")
         print(f"Normalized: {text_normalizer.normalize(cases[i])}")
         tokens = tokenizer.tokenize(cases[i])
         print("Tokenzied: ", ", ".join([f"`{t}`" for t in tokens]))
-        sentences = tokenizer.split_sentences(tokens, max_tokens_per_sentence=max_tokens_per_sentence)
+        sentences = tokenizer.split_sentences(
+            tokens, max_tokens_per_sentence=max_tokens_per_sentence
+        )
         print("Splitted sentences count:", len(sentences))
         if len(sentences) > 1:
             for j in range(len(sentences)):
-                print(f"  {j}, count:", len(sentences[j]), ", tokens:", "".join(sentences[j]))
+                print(
+                    f"  {j}, count:",
+                    len(sentences[j]),
+                    ", tokens:",
+                    "".join(sentences[j]),
+                )
                 if len(sentences[j]) > max_tokens_per_sentence:
-                    print(f"Warning: sentence {j} is too long, length: {len(sentences[j])}")
-        #print(f"Token IDs (first 10): {codes[i][:10]}")
+                    print(
+                        f"Warning: sentence {j} is too long, length: {len(sentences[j])}"
+                    )
+        # print(f"Token IDs (first 10): {codes[i][:10]}")
         if tokenizer.unk_token in codes[i]:
             print(f"Warning: `{cases[i]}` contains UNKNOWN token")
         print(f"Decoded: {tokenizer.decode(codes[i], do_lower_case=True)}")

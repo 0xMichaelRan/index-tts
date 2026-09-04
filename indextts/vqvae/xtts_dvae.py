@@ -25,7 +25,10 @@ def eval_decorator(fn):
 
 
 def dvae_wav_to_mel(
-    wav, mel_norms_file="../experiments/clips_mel_norms.pth", mel_norms=None, device=torch.device("cpu")
+    wav,
+    mel_norms_file="../experiments/clips_mel_norms.pth",
+    mel_norms=None,
+    device=torch.device("cpu"),
 ):
     mel_stft = torchaudio.transforms.MelSpectrogram(
         n_fft=1024,
@@ -49,7 +52,15 @@ def dvae_wav_to_mel(
 
 
 class Quantize(nn.Module):
-    def __init__(self, dim, n_embed, decay=0.99, eps=1e-5, balancing_heuristic=False, new_return_order=False):
+    def __init__(
+        self,
+        dim,
+        n_embed,
+        decay=0.99,
+        eps=1e-5,
+        balancing_heuristic=False,
+        new_return_order=False,
+    ):
         super().__init__()
 
         self.dim = dim
@@ -70,7 +81,9 @@ class Quantize(nn.Module):
 
     def forward(self, input, return_soft_codes=False):
         if self.balancing_heuristic and self.codes_full:
-            h = torch.histc(self.codes, bins=self.n_embed, min=0, max=self.n_embed) / len(self.codes)
+            h = torch.histc(
+                self.codes, bins=self.n_embed, min=0, max=self.n_embed
+            ) / len(self.codes)
             mask = torch.logical_or(h > 0.9, h < 0.01).unsqueeze(1)
             ep = self.embed.permute(1, 0)
             ea = self.embed_avg.permute(1, 0)
@@ -84,7 +97,11 @@ class Quantize(nn.Module):
                 self.codes_full = False
 
         flatten = input.reshape(-1, self.dim)
-        dist = flatten.pow(2).sum(1, keepdim=True) - 2 * flatten @ self.embed + self.embed.pow(2).sum(0, keepdim=True)
+        dist = (
+            flatten.pow(2).sum(1, keepdim=True)
+            - 2 * flatten @ self.embed
+            + self.embed.pow(2).sum(0, keepdim=True)
+        )
         soft_codes = -dist
         _, embed_ind = soft_codes.max(1)
         embed_onehot = F.one_hot(embed_ind, self.n_embed).type(flatten.dtype)
@@ -108,10 +125,14 @@ class Quantize(nn.Module):
                 distributed.all_reduce(embed_onehot_sum)
                 distributed.all_reduce(embed_sum)
 
-            self.cluster_size.data.mul_(self.decay).add_(embed_onehot_sum, alpha=1 - self.decay)
+            self.cluster_size.data.mul_(self.decay).add_(
+                embed_onehot_sum, alpha=1 - self.decay
+            )
             self.embed_avg.data.mul_(self.decay).add_(embed_sum, alpha=1 - self.decay)
             n = self.cluster_size.sum()
-            cluster_size = (self.cluster_size + self.eps) / (n + self.n_embed * self.eps) * n
+            cluster_size = (
+                (self.cluster_size + self.eps) / (n + self.n_embed * self.eps) * n
+            )
             embed_normalized = self.embed_avg / cluster_size.unsqueeze(0)
             self.embed.data.copy_(embed_normalized)
 
@@ -140,8 +161,12 @@ class DiscretizationLoss(nn.Module):
         self.dist = torch.distributions.Normal(0, scale=expected_variance)
         if store_past > 0:
             self.record_past = True
-            self.register_buffer("accumulator_index", torch.zeros(1, dtype=torch.long, device="cpu"))
-            self.register_buffer("accumulator_filled", torch.zeros(1, dtype=torch.long, device="cpu"))
+            self.register_buffer(
+                "accumulator_index", torch.zeros(1, dtype=torch.long, device="cpu")
+            )
+            self.register_buffer(
+                "accumulator_filled", torch.zeros(1, dtype=torch.long, device="cpu")
+            )
             self.register_buffer("accumulator", torch.zeros(store_past, discrete_bins))
         else:
             self.record_past = False
@@ -155,7 +180,10 @@ class DiscretizationLoss(nn.Module):
             acc_count = self.accumulator.shape[0]
             avg = averaged.detach().clone()
             if self.accumulator_filled > 0:
-                averaged = torch.mean(self.accumulator, dim=0) * (acc_count - 1) / acc_count + averaged / acc_count
+                averaged = (
+                    torch.mean(self.accumulator, dim=0) * (acc_count - 1) / acc_count
+                    + averaged / acc_count
+                )
 
             # Also push averaged into the accumulator.
             self.accumulator[self.accumulator_index] = avg
@@ -231,7 +259,9 @@ class DiscreteVAE(nn.Module):
             num_tokens, 2, 1 / (num_tokens * 2), discretization_loss_averaging_steps
         )
 
-        assert positional_dims > 0 and positional_dims < 3  # This VAE only supports 1d and 2d inputs for now.
+        assert (
+            positional_dims > 0 and positional_dims < 3
+        )  # This VAE only supports 1d and 2d inputs for now.
         if positional_dims == 2:
             conv = nn.Conv2d
             conv_transpose = nn.ConvTranspose2d
@@ -260,15 +290,27 @@ class DiscreteVAE(nn.Module):
             dec_init_chan = codebook_dim if not has_resblocks else dec_chans[0]
             dec_chans = [dec_init_chan, *dec_chans]
 
-            enc_chans_io, dec_chans_io = map(lambda t: list(zip(t[:-1], t[1:])), (enc_chans, dec_chans))
+            enc_chans_io, dec_chans_io = map(
+                lambda t: list(zip(t[:-1], t[1:])), (enc_chans, dec_chans)
+            )
 
             pad = (kernel_size - 1) // 2
             for (enc_in, enc_out), (dec_in, dec_out) in zip(enc_chans_io, dec_chans_io):
-                enc_layers.append(nn.Sequential(conv(enc_in, enc_out, kernel_size, stride=stride, padding=pad), act()))
+                enc_layers.append(
+                    nn.Sequential(
+                        conv(enc_in, enc_out, kernel_size, stride=stride, padding=pad),
+                        act(),
+                    )
+                )
                 if encoder_norm:
                     enc_layers.append(nn.GroupNorm(8, enc_out))
                 dec_layers.append(
-                    nn.Sequential(conv_transpose(dec_in, dec_out, kernel_size, stride=stride, padding=pad), act())
+                    nn.Sequential(
+                        conv_transpose(
+                            dec_in, dec_out, kernel_size, stride=stride, padding=pad
+                        ),
+                        act(),
+                    )
                 )
             dec_out_chans = dec_chans[-1]
             innermost_dim = dec_chans[0]
@@ -324,7 +366,9 @@ class DiscreteVAE(nn.Module):
     @eval_decorator
     def get_codebook_indices(self, images):
         img = self.norm(images)
-        logits = self.encoder(img).permute((0, 2, 3, 1) if len(img.shape) == 4 else (0, 2, 1))
+        logits = self.encoder(img).permute(
+            (0, 2, 3, 1) if len(img.shape) == 4 else (0, 2, 1)
+        )
         sampled, codes, _ = self.codebook(logits)
         self.log_codes(codes)
         return codes
@@ -352,7 +396,9 @@ class DiscreteVAE(nn.Module):
 
     def infer(self, img):
         img = self.norm(img)
-        logits = self.encoder(img).permute((0, 2, 3, 1) if len(img.shape) == 4 else (0, 2, 1))
+        logits = self.encoder(img).permute(
+            (0, 2, 3, 1) if len(img.shape) == 4 else (0, 2, 1)
+        )
         sampled, codes, commitment_loss = self.codebook(logits)
         return self.decode(codes)
 
@@ -361,7 +407,9 @@ class DiscreteVAE(nn.Module):
     # more lossy (but useful for determining network performance).
     def forward(self, img):
         img = self.norm(img)
-        logits = self.encoder(img).permute((0, 2, 3, 1) if len(img.shape) == 4 else (0, 2, 1))
+        logits = self.encoder(img).permute(
+            (0, 2, 3, 1) if len(img.shape) == 4 else (0, 2, 1)
+        )
         sampled, codes, commitment_loss = self.codebook(logits)
         sampled = sampled.permute((0, 3, 1, 2) if len(img.shape) == 4 else (0, 2, 1))
 
@@ -375,7 +423,7 @@ class DiscreteVAE(nn.Module):
             out, _ = self.decode(codes)
 
         # reconstruction loss
-        out = out[..., :img.shape[-1]]
+        out = out[..., : img.shape[-1]]
         recon_loss = self.loss_fn(img, out, reduction="mean")
         ssim_loss = torch.zeros(size=(1,)).cuda()
 
@@ -386,7 +434,11 @@ class DiscreteVAE(nn.Module):
         if self.record_codes and self.internal_step % 10 == 0:
             codes = codes.flatten()
             l = codes.shape[0]
-            i = self.code_ind if (self.codes.shape[0] - self.code_ind) > l else self.codes.shape[0] - l
+            i = (
+                self.code_ind
+                if (self.codes.shape[0] - self.code_ind) > l
+                else self.codes.shape[0] - l
+            )
             self.codes[i : i + l] = codes.cpu()
             self.code_ind = self.code_ind + l
             if self.code_ind >= self.codes.shape[0]:

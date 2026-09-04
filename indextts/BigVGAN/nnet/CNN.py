@@ -9,15 +9,12 @@ Authors
  * Sarthak Yadav 2022
 """
 
-import logging
 import math
-from typing import Tuple
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torchaudio
 
 
 class SincConv(nn.Module):
@@ -127,9 +124,7 @@ class SincConv(nn.Module):
             x = x.unsqueeze(1)
 
         if self.padding == "same":
-            x = self._manage_padding(
-                x, self.kernel_size, self.dilation, self.stride
-            )
+            x = self._manage_padding(x, self.kernel_size, self.dilation, self.stride)
 
         elif self.padding == "causal":
             num_pad = (self.kernel_size - 1) * self.dilation
@@ -140,8 +135,7 @@ class SincConv(nn.Module):
 
         else:
             raise ValueError(
-                "Padding must be 'same', 'valid' or 'causal'. Got %s."
-                % (self.padding)
+                "Padding must be 'same', 'valid' or 'causal'. Got %s." % (self.padding)
             )
 
         sinc_filters = self._get_sinc_filters()
@@ -170,9 +164,7 @@ class SincConv(nn.Module):
         elif len(shape) == 3:
             in_channels = shape[-1]
         else:
-            raise ValueError(
-                "sincconv expects 2d or 3d inputs. Got " + str(len(shape))
-            )
+            raise ValueError("sincconv expects 2d or 3d inputs. Got " + str(len(shape)))
 
         # Kernel size must be odd
         if self.kernel_size % 2 == 0:
@@ -203,8 +195,7 @@ class SincConv(nn.Module):
 
         # Left part of the filters.
         band_pass_left = (
-            (torch.sin(f_times_t_high) - torch.sin(f_times_t_low))
-            / (self.n_ / 2)
+            (torch.sin(f_times_t_high) - torch.sin(f_times_t_low)) / (self.n_ / 2)
         ) * self.window_
 
         # Central element of the filter
@@ -252,15 +243,11 @@ class SincConv(nn.Module):
         n_lin = torch.linspace(
             0, (self.kernel_size / 2) - 1, steps=int((self.kernel_size / 2))
         )
-        self.window_ = 0.54 - 0.46 * torch.cos(
-            2 * math.pi * n_lin / self.kernel_size
-        )
+        self.window_ = 0.54 - 0.46 * torch.cos(2 * math.pi * n_lin / self.kernel_size)
 
         # Time axis  (only half is needed due to symmetry)
         n = (self.kernel_size - 1) / 2.0
-        self.n_ = (
-            2 * math.pi * torch.arange(-n, 0).view(1, -1) / self.sample_rate
-        )
+        self.n_ = 2 * math.pi * torch.arange(-n, 0).view(1, -1) / self.sample_rate
 
     def _to_mel(self, hz):
         """Converts frequency in Hz to the mel scale."""
@@ -428,9 +415,7 @@ class Conv1d(nn.Module):
             x = x.unsqueeze(1)
 
         if self.padding == "same":
-            x = self._manage_padding(
-                x, self.kernel_size, self.dilation, self.stride
-            )
+            x = self._manage_padding(x, self.kernel_size, self.dilation, self.stride)
 
         elif self.padding == "causal":
             num_pad = (self.kernel_size - 1) * self.dilation
@@ -441,8 +426,7 @@ class Conv1d(nn.Module):
 
         else:
             raise ValueError(
-                "Padding must be 'same', 'valid' or 'causal'. Got "
-                + self.padding
+                "Padding must be 'same', 'valid' or 'causal'. Got " + self.padding
             )
 
         wx = self.conv(x)
@@ -498,9 +482,7 @@ class Conv1d(nn.Module):
         elif len(shape) == 3:
             in_channels = shape[2]
         else:
-            raise ValueError(
-                "conv1d expects 2d, 3d inputs. Got " + str(len(shape))
-            )
+            raise ValueError("conv1d expects 2d, 3d inputs. Got " + str(len(shape)))
 
         # Kernel size must be odd
         if not self.padding == "valid" and self.kernel_size % 2 == 0:
@@ -535,12 +517,9 @@ def get_padding_elem(L_in: int, stride: int, kernel_size: int, dilation: int):
         padding = [math.floor(kernel_size / 2), math.floor(kernel_size / 2)]
 
     else:
-        L_out = (
-            math.floor((L_in - dilation * (kernel_size - 1) - 1) / stride) + 1
-        )
+        L_out = math.floor((L_in - dilation * (kernel_size - 1) - 1) / stride) + 1
         padding = [
             math.floor((L_in - L_out) / 2),
             math.floor((L_in - L_out) / 2),
         ]
     return padding
-
