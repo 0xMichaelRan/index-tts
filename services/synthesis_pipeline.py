@@ -119,6 +119,16 @@ class SynthesisPipeline:
             success_threshold=2,
         )
 
+        self.s3_breaker = get_circuit_breaker(
+            name="S3Download",
+            failure_threshold=int(
+                os.getenv("CIRCUIT_BREAKER_S3_FAILURE_THRESHOLD", "5")
+            ),
+            reset_timeout=int(
+                os.getenv("CIRCUIT_BREAKER_S3_RESET_TIMEOUT", "60")
+            ),
+        )
+
     def process_job(self, job_data: dict[str, Any]) -> dict[str, Any]:
         """
         Process a single TTS job through the complete pipeline.
@@ -397,12 +407,7 @@ class SynthesisPipeline:
         # Stage 2a: Download audio prompt
         logger.info(f"[JOB {job_id}] Downloading audio prompt from S3...")
         try:
-            from services.circuit_breaker import get_circuit_breaker
-
-            s3_breaker = get_circuit_breaker(
-                "S3Download", failure_threshold=5, reset_timeout=60
-            )
-            with s3_breaker:
+            with self.s3_breaker:
                 local_audio_prompt = self.storage_manager.download_audio_prompt(
                     job_id, audio_prompt_path
                 )
@@ -565,12 +570,7 @@ class SynthesisPipeline:
         logger.info(f"[JOB {job_id}] Uploading to S3...")
 
         try:
-            from services.circuit_breaker import get_circuit_breaker
-
-            s3_breaker = get_circuit_breaker(
-                "S3Download", failure_threshold=5, reset_timeout=60
-            )
-            with s3_breaker:
+            with self.s3_breaker:
                 audio_path = self.storage_manager.upload_audio(
                     job_id, local_path, remote_path
                 )
@@ -591,12 +591,7 @@ class SynthesisPipeline:
             raise RuntimeError(error_msg)
 
         try:
-            from services.circuit_breaker import get_circuit_breaker
-
-            s3_breaker = get_circuit_breaker(
-                "S3Download", failure_threshold=5, reset_timeout=60
-            )
-            with s3_breaker:
+            with self.s3_breaker:
                 alignment_s3_path = self.storage_manager.upload_alignment_json(
                     job_id, local_parsed_json, output_s3_path
                 )

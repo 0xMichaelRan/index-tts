@@ -160,8 +160,8 @@ finally:
 | # | Suggestion | Files Affected | Effort | Impact |
 |---|------------|----------------|--------|--------|
 | 1 | `WorkerConfig` dataclass | `tts_worker.py` + new file | Medium | High |
-| 2 | `extract_job_id()` helper | `tts_worker.py`, `synthesis_pipeline.py` | Low | Medium |
-| 3 | Deduplicate S3 circuit breaker | `synthesis_pipeline.py` | Low | Medium |
+| 2 | ~~`extract_job_id()` helper~~ ✅ | `services/job_utils.py` (new), `tts_worker.py`, `synthesis_pipeline.py`, `tts_job_service.py` | Low | Medium |
+| 3 | ~~Deduplicate S3 circuit breaker~~ ✅ | `synthesis_pipeline.py` | Low | Medium |
 | 4 | `_handle_message` method | `tts_worker.py` | Low | High |
 | 5 | `max_retries` from env | `synthesis_pipeline.py` | Low | Low |
 | 6 | Move `_run_coroutine` | `tts_job_service.py` | Low | Low |
