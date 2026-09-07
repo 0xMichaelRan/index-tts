@@ -112,6 +112,14 @@ class TTSJobService:
                     ratio_val = 1.0
 
                 text = job_data.get("text")
+
+                # Resolve and clamp priority (0=lowest, 10=highest, 5=default)
+                raw_priority = job_data.get("priority", 5)
+                try:
+                    priority_val = max(0, min(int(raw_priority), 10))
+                except (ValueError, TypeError):
+                    priority_val = 5
+
                 tts_job = TTSJob(
                     job_id=job_id_int,
                     job_type=job_type,
@@ -122,6 +130,7 @@ class TTSJobService:
                     language=job_data.get("spokenLang", "en"),
                     ratio=ratio_val,
                     word_count=count_words(text),
+                    priority=priority_val,
                     started_at=datetime.now(timezone.utc),
                 )
                 try:
