@@ -17,6 +17,7 @@ from services.cache_manager import CacheManager
 from services.circuit_breaker import CircuitBreakerError, get_circuit_breaker
 from services.logging_config import get_logger
 from services.s3_config import S3ConfigError
+from services.job_utils import extract_job_id
 from services.storage_manager import StorageManager
 from services.text_sanitizer import sanitize_tts_text
 from services.tts_job_service import TTSJobService
@@ -137,13 +138,7 @@ class SynthesisPipeline:
             Result dictionary with status, paths, and metadata
         """
         # Extract job parameters
-        job_id = (
-            job_data.get("jobId")
-            if job_data.get("jobId") is not None
-            else job_data.get("job_id")
-        )
-        if job_id is not None:
-            job_id = str(job_id)
+        job_id = extract_job_id(job_data)
 
         raw_text = job_data.get("text", "")
         text = sanitize_tts_text(raw_text)

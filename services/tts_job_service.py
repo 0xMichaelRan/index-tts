@@ -12,6 +12,7 @@ import os
 import threading
 from typing import Any
 
+from services.job_utils import extract_job_id
 from services.logging_config import get_logger
 from services.text_metrics import count_words
 
@@ -91,13 +92,9 @@ class TTSJobService:
 
         async def _create() -> int:
             async with DatabaseSession() as db_session:
-                raw_job_id = (
-                    job_data.get("jobId")
-                    if job_data.get("jobId") is not None
-                    else job_data.get("job_id")
-                )
+                raw_job_id = extract_job_id(job_data)
                 try:
-                    job_id_int = int(raw_job_id)
+                    job_id_int = int(raw_job_id) if raw_job_id is not None else 0
                 except (ValueError, TypeError):
                     job_id_int = 0
 

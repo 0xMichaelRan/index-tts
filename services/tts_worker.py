@@ -20,6 +20,7 @@ from services.logging_config import (
     log_shutdown_summary,
     log_startup_summary,
 )
+from services.job_utils import extract_job_id
 from services.rabbitmq_config import MQ_PRIORITY_DEFAULT, MQ_PRIORITY_MAX
 from services.rabbitmq_manager import RabbitMQManager
 from services.storage_manager import StorageManager
@@ -182,11 +183,7 @@ class IndexTTSWorker:
         job_data = None
         try:
             job_data = json.loads(body)
-            job_id = (
-                job_data.get("jobId")
-                if job_data.get("jobId") is not None
-                else job_data.get("job_id")
-            )
+            job_id = extract_job_id(job_data)
 
             # Resolve priority: AMQP header takes precedence over JSON field
             amqp_priority = getattr(properties, "priority", None)
@@ -227,11 +224,7 @@ class IndexTTSWorker:
         except Exception as e:
             logger.error(f"Error processing job: {e!s}")
             if job_data:
-                job_id = (
-                    job_data.get("jobId")
-                    if job_data.get("jobId") is not None
-                    else job_data.get("job_id")
-                )
+                job_id = extract_job_id(job_data)
                 logger.error(f"[JOB {job_id}] Processing failed, sending to DLQ")
             self.rabbitmq_manager.reject_message(
                 method.delivery_tag, requeue=False
