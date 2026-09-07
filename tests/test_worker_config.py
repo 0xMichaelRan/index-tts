@@ -162,11 +162,16 @@ class TestFromEnv:
     def test_from_env_defaults_when_nothing_set(self, monkeypatch):
         """All optional vars absent → defaults match dataclass field defaults."""
         vars_to_clear = [
-            "LOG_LEVEL", "LOG_FILE_ENABLED", "LOG_FILE_PATH",
+            "LOG_LEVEL",
+            "LOG_FILE_ENABLED",
+            "LOG_FILE_PATH",
             "TTS_USE_FAST_INFERENCE",
-            "TTS_CACHE_ENABLED", "TTS_CACHE_MAX_ENTRIES",
-            "TTS_CACHE_EVICTION_THRESHOLD", "TTS_CACHE_LOCAL_DIR",
-            "TTS_NORMALIZATION_ENABLED", "TTS_NORMALIZATION_TARGET_LUFS",
+            "TTS_CACHE_ENABLED",
+            "TTS_CACHE_MAX_ENTRIES",
+            "TTS_CACHE_EVICTION_THRESHOLD",
+            "TTS_CACHE_LOCAL_DIR",
+            "TTS_NORMALIZATION_ENABLED",
+            "TTS_NORMALIZATION_TARGET_LUFS",
         ]
         for var in vars_to_clear:
             monkeypatch.delenv(var, raising=False)

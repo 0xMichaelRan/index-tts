@@ -194,9 +194,7 @@ class IndexTTSWorker:
             # Clamp to valid range
             priority = max(0, min(priority, MQ_PRIORITY_MAX))
 
-            logger.info(
-                f"[JOB {job_id}] Received from queue (priority={priority})"
-            )
+            logger.info(f"[JOB {job_id}] Received from queue (priority={priority})")
 
             # Process job through pipeline
             result = self.synthesis_pipeline.process_job(job_data)
@@ -217,18 +215,14 @@ class IndexTTSWorker:
 
         except json.JSONDecodeError as e:
             logger.error(f"Invalid JSON in message: {e!s}")
-            self.rabbitmq_manager.reject_message(
-                method.delivery_tag, requeue=False
-            )
+            self.rabbitmq_manager.reject_message(method.delivery_tag, requeue=False)
 
         except Exception as e:
             logger.error(f"Error processing job: {e!s}")
             if job_data:
                 job_id = extract_job_id(job_data)
                 logger.error(f"[JOB {job_id}] Processing failed, sending to DLQ")
-            self.rabbitmq_manager.reject_message(
-                method.delivery_tag, requeue=False
-            )
+            self.rabbitmq_manager.reject_message(method.delivery_tag, requeue=False)
 
     def start(self):
         """
@@ -266,9 +260,7 @@ class IndexTTSWorker:
             try:
                 # Ensure connection is healthy
                 if not self.rabbitmq_manager.is_connected():
-                    logger.warning(
-                        "Connection is not open, attempting to reconnect..."
-                    )
+                    logger.warning("Connection is not open, attempting to reconnect...")
                     if not self.rabbitmq_manager.reconnect_with_backoff():
                         break
 

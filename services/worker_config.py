@@ -162,8 +162,7 @@ class WorkerConfig:
         """
         if not self.rabbitmq_url:
             raise ValueError(
-                "RABBITMQ_URL is required. "
-                "See .env.example for configuration template."
+                "RABBITMQ_URL is required. See .env.example for configuration template."
             )
 
         if not (-60.0 <= self.normalization_target_lufs <= 0.0):

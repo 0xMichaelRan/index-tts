@@ -166,9 +166,6 @@ filterwarnings = [
     "ignore::DeprecationWarning",
 ]
 
-[tool.ruff]
-line-length = 120
-
 [tool.ruff.lint]
 # Rules enabled project-wide
 select = ["E", "F", "W"]

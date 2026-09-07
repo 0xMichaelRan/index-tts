@@ -124,9 +124,7 @@ class SynthesisPipeline:
             failure_threshold=int(
                 os.getenv("CIRCUIT_BREAKER_S3_FAILURE_THRESHOLD", "5")
             ),
-            reset_timeout=int(
-                os.getenv("CIRCUIT_BREAKER_S3_RESET_TIMEOUT", "60")
-            ),
+            reset_timeout=int(os.getenv("CIRCUIT_BREAKER_S3_RESET_TIMEOUT", "60")),
         )
 
     def process_job(self, job_data: dict[str, Any]) -> dict[str, Any]:

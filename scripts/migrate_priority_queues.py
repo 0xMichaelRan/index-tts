@@ -287,7 +287,9 @@ def main():
                 else:
                     actual = arguments.get("x-max-priority")
                     if actual is None:
-                        priority_note = f"(priority: NOT SET — will add priority={MQ_PRIORITY_MAX})"
+                        priority_note = (
+                            f"(priority: NOT SET — will add priority={MQ_PRIORITY_MAX})"
+                        )
                     elif actual == MQ_PRIORITY_MAX:
                         priority_note = f"(priority={actual} ✓)"
                     else:
@@ -295,9 +297,8 @@ def main():
             else:
                 priority_note = ""
 
-            status = (
-                f"{state:8s} | messages={msgs:5d} | consumers={consumers}"
-                + (f" {priority_note}" if priority_note else "")
+            status = f"{state:8s} | messages={msgs:5d} | consumers={consumers}" + (
+                f" {priority_note}" if priority_note else ""
             )
             print(f"  {name:25s}: {status}")
         print()

@@ -55,7 +55,9 @@ class TestMgmtUrlFromAmqp(unittest.TestCase):
         result = _mgmt_url_from_amqp("not-a-url")
         # Should not raise; may return None or a partial URL — either is acceptable
         # as long as it doesn't crash
-        self.assertIsNone(result) if result is None else self.assertIsInstance(result, str)
+        self.assertIsNone(result) if result is None else self.assertIsInstance(
+            result, str
+        )
 
 
 class TestFetchQueueArgsViaMgmt(unittest.TestCase):
@@ -63,6 +65,7 @@ class TestFetchQueueArgsViaMgmt(unittest.TestCase):
 
     def _make_response(self, data: dict, status: int = 200):
         import io
+
         body = json.dumps(data).encode()
         mock_resp = MagicMock()
         mock_resp.read.return_value = body
@@ -89,7 +92,9 @@ class TestFetchQueueArgsViaMgmt(unittest.TestCase):
 
         with patch(
             "urllib.request.urlopen",
-            side_effect=urllib.error.HTTPError(url="", code=404, msg="", hdrs=None, fp=None),
+            side_effect=urllib.error.HTTPError(
+                url="", code=404, msg="", hdrs=None, fp=None
+            ),
         ):
             result = _fetch_queue_args_via_management(
                 "http://user:pass@host:15672", "jtdiqgdu", "tts_jobs"
@@ -203,7 +208,9 @@ class TestCheckQueuesRegression(unittest.TestCase):
                 data = info[q]
                 self.assertTrue(data["exists"])
                 args = data.get("arguments")
-                self.assertIsNotNone(args, "arguments must be populated from management API")
+                self.assertIsNotNone(
+                    args, "arguments must be populated from management API"
+                )
                 self.assertEqual(
                     args.get("x-max-priority"),
                     MQ_PRIORITY_MAX,
@@ -283,7 +290,11 @@ class TestCheckOutputFormatting(unittest.TestCase):
             return f"(priority={actual} ✗ — expected {MQ_PRIORITY_MAX}, will recreate)"
 
     def test_correct_priority_shows_check_mark(self):
-        data = {"exists": True, "arguments": {"x-max-priority": 10}, "mgmt_available": True}
+        data = {
+            "exists": True,
+            "arguments": {"x-max-priority": 10},
+            "mgmt_available": True,
+        }
         note = self._priority_note("tts_jobs", data)
         self.assertIn("✓", note)
         self.assertNotIn("will add", note)
@@ -296,7 +307,11 @@ class TestCheckOutputFormatting(unittest.TestCase):
         self.assertIn("will add", note)
 
     def test_wrong_priority_shows_cross_and_will_recreate(self):
-        data = {"exists": True, "arguments": {"x-max-priority": 5}, "mgmt_available": True}
+        data = {
+            "exists": True,
+            "arguments": {"x-max-priority": 5},
+            "mgmt_available": True,
+        }
         note = self._priority_note("tts_jobs", data)
         self.assertIn("✗", note)
         self.assertIn("will recreate", note)

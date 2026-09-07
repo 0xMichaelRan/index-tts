@@ -15,6 +15,7 @@ from unittest.mock import MagicMock, patch
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_worker():
     """Return an IndexTTSWorker whose heavy __init__ is fully mocked."""
     with (
@@ -34,6 +35,7 @@ def _make_worker():
         worker = IndexTTSWorker(config=cfg)
         # Silence the module-level logger that __init__ swapped in
         import services.tts_worker as tw_mod
+
         tw_mod.logger = MagicMock()
         return worker
 
@@ -51,6 +53,7 @@ def _make_amqp_args(body_dict, amqp_priority=None):
 # Tests: shutdown guard
 # ---------------------------------------------------------------------------
 
+
 class TestHandleMessageShutdown:
     def test_rejects_and_requeues_when_shutdown_requested(self):
         worker = _make_worker()
@@ -67,11 +70,14 @@ class TestHandleMessageShutdown:
 # Tests: happy path
 # ---------------------------------------------------------------------------
 
+
 class TestHandleMessageSuccess:
     def test_processes_job_and_acknowledges(self):
         worker = _make_worker()
         worker.synthesis_pipeline.process_job.return_value = {
-            "jobId": "j1", "ttsId": "t1", "audioUrl": "s3://bucket/j1.mp3"
+            "jobId": "j1",
+            "ttsId": "t1",
+            "audioUrl": "s3://bucket/j1.mp3",
         }
 
         ch, method, properties, body = _make_amqp_args(
@@ -109,6 +115,7 @@ class TestHandleMessageSuccess:
 # ---------------------------------------------------------------------------
 # Tests: priority resolution
 # ---------------------------------------------------------------------------
+
 
 class TestHandleMessagePriority:
     def test_amqp_priority_takes_precedence_over_json(self):
@@ -167,6 +174,7 @@ class TestHandleMessagePriority:
 # Tests: error handling
 # ---------------------------------------------------------------------------
 
+
 class TestHandleMessageErrors:
     def test_invalid_json_rejects_without_requeue(self):
         worker = _make_worker()
@@ -178,7 +186,9 @@ class TestHandleMessageErrors:
 
         worker._handle_message(ch, method, properties, body)
 
-        worker.rabbitmq_manager.reject_message.assert_called_once_with(99, requeue=False)
+        worker.rabbitmq_manager.reject_message.assert_called_once_with(
+            99, requeue=False
+        )
         worker.synthesis_pipeline.process_job.assert_not_called()
 
     def test_pipeline_exception_rejects_without_requeue(self):
@@ -188,7 +198,9 @@ class TestHandleMessageErrors:
         ch, method, properties, body = _make_amqp_args({"jobId": "fail1", "text": "x"})
         worker._handle_message(ch, method, properties, body)
 
-        worker.rabbitmq_manager.reject_message.assert_called_once_with(42, requeue=False)
+        worker.rabbitmq_manager.reject_message.assert_called_once_with(
+            42, requeue=False
+        )
         worker.rabbitmq_manager.acknowledge_message.assert_not_called()
 
     def test_pipeline_exception_does_not_track_job(self):
@@ -206,8 +218,12 @@ class TestHandleMessageErrors:
         worker.synthesis_pipeline.process_job.return_value = {"jobId": "pub_fail"}
         worker.rabbitmq_manager.publish_result.side_effect = RuntimeError("MQ down")
 
-        ch, method, properties, body = _make_amqp_args({"jobId": "pub_fail", "text": "x"})
+        ch, method, properties, body = _make_amqp_args(
+            {"jobId": "pub_fail", "text": "x"}
+        )
         worker._handle_message(ch, method, properties, body)
 
         worker.rabbitmq_manager.acknowledge_message.assert_not_called()
-        worker.rabbitmq_manager.reject_message.assert_called_once_with(42, requeue=False)
+        worker.rabbitmq_manager.reject_message.assert_called_once_with(
+            42, requeue=False
+        )
