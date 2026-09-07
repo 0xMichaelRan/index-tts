@@ -166,6 +166,27 @@ filterwarnings = [
     "ignore::DeprecationWarning",
 ]
 
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+# Rules enabled project-wide
+select = ["E", "F", "W"]
+# E501: long lines are not auto-wrappable when they contain long strings, Chinese text, or URLs
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# BigVGAN — upstream vocoder code
+"indextts/BigVGAN/**" = ["E741", "E712", "F403", "F401", "F821", "F841", "W291"]
+# x-transformers — upstream attention library
+"indextts/utils/xtransformers.py" = ["E741", "E731", "F841"]
+# VQVAE / DVAE — upstream codec
+"indextts/vqvae/*.py" = ["E741", "F841"]
+# GPT perceiver — upstream module
+"indextts/gpt/perceiver.py" = ["F841", "F811"]
+# Main inference entry point — mixes owned and upstream logic
+"indextts/infer.py" = ["E741"]
+
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
