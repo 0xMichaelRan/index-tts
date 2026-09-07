@@ -7,18 +7,12 @@ Environment variables are loaded from .env file in project root.
 See .env.example for configuration template.
 """
 
-import os
-
 from services.tts_worker import IndexTTSWorker
+from services.worker_config import WorkerConfig
 
 if __name__ == "__main__":
-    # RabbitMQ configuration via RABBITMQ_URL
-    rabbitmq_url = os.getenv("RABBITMQ_URL")
-    if not rabbitmq_url:
-        raise ValueError(
-            "RABBITMQ_URL environment variable is required. "
-            "See .env.example for configuration template."
-        )
+    config = WorkerConfig.from_env()
+    config.validate()  # raises ValueError if RABBITMQ_URL is missing
 
-    worker = IndexTTSWorker(rabbitmq_url=rabbitmq_url)
+    worker = IndexTTSWorker(config=config)
     worker.start()
