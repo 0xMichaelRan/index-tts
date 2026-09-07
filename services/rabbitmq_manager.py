@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 import pika
 
 from services.logging_config import get_logger
+from services.rabbitmq_config import MQ_PRIORITY_DEFAULT, MQ_PRIORITY_MAX
 
 logger = get_logger(__name__)
 
@@ -124,7 +125,7 @@ class RabbitMQManager:
             routing_key="",
         )
 
-        # Declare main queue with DLX routing
+        # Declare main queue with DLX routing and priority support
         self.channel.queue_declare(
             queue="tts_jobs",
             durable=True,
@@ -134,6 +135,7 @@ class RabbitMQManager:
                 "x-message-ttl": 86400000,  # 24 hours TTL
                 "x-max-length": 10000,
                 "x-overflow": "reject-publish",
+                "x-max-priority": MQ_PRIORITY_MAX,  # Enable priority ordering (0-10)
             },
         )
 
@@ -246,12 +248,18 @@ class RabbitMQManager:
             self.channel.stop_consuming()
             raise
 
-    def publish_result(self, result: dict[str, Any], max_retries: int = 3) -> None:
+    def publish_result(
+        self,
+        result: dict[str, Any],
+        priority: int = MQ_PRIORITY_DEFAULT,
+        max_retries: int = 3,
+    ) -> None:
         """
         Publish job result to tts_results queue with retry.
 
         Args:
             result: Job result dictionary
+            priority: Message priority (0=lowest, 10=highest, default=5)
             max_retries: Maximum retry attempts
 
         Raises:
@@ -259,6 +267,8 @@ class RabbitMQManager:
         """
         retry_count = 0
         job_id = result.get("jobId") or result.get("job_id")
+        # Clamp priority to valid range
+        priority = max(0, min(priority, MQ_PRIORITY_MAX))
 
         while retry_count < max_retries:
             try:
@@ -277,6 +287,7 @@ class RabbitMQManager:
                     properties=pika.BasicProperties(
                         delivery_mode=pika.DeliveryMode.Persistent,
                         content_type="application/json",
+                        priority=priority,
                     ),
                 )
                 logger.info(f"✓ Published result for job {job_id}")

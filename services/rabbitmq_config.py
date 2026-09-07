@@ -5,9 +5,9 @@ This module provides idempotent RabbitMQ queue configuration for the TTS service
 including main queues and dead-letter queues (DLQ) for failed message handling.
 
 Queue Architecture (Standardized DLX Pattern):
-    Main Queues (Durable):
-    ├── tts_jobs (TTL: 24h) → DLX: tts_jobs.dlx → DLQ: tts_jobs_failed
-    └── tts_results (TTL: 7d) → DLX: tts_results.dlx → DLQ: tts_results_failed
+    Main Queues (Durable, Priority-enabled x-max-priority=10):
+    ├── tts_jobs (TTL: 24h, priority 0-10) → DLX: tts_jobs.dlx → DLQ: tts_jobs_failed
+    └── tts_results (TTL: 7d, priority 0-10) → DLX: tts_results.dlx → DLQ: tts_results_failed
 
     Dead-Letter Exchanges (Fanout):
     ├── tts_jobs.dlx → routes to tts_jobs_failed
@@ -51,6 +51,12 @@ logger = logging.getLogger(__name__)
 # Queue Configuration Constants
 # NOTE: Using standardized DLX pattern (consistent with studio-backend)
 # Pattern: {queue_name}.dlx (fanout exchange) → {queue_name}_failed (DLQ)
+# Priority levels for TTS jobs (0=lowest, 10=highest)
+# Conventional mapping: 1=low, 5=normal (default), 10=urgent
+MQ_PRIORITY_MIN = 0
+MQ_PRIORITY_MAX = 10
+MQ_PRIORITY_DEFAULT = 5
+
 QUEUE_CONFIGS = {
     "tts_jobs": {
         "durable": True,
@@ -60,6 +66,7 @@ QUEUE_CONFIGS = {
             "x-message-ttl": 86400000,  # 24 hours in milliseconds
             "x-max-length": 10000,  # Prevent unlimited queue buildup
             "x-overflow": "reject-publish",  # Reject new messages when full
+            "x-max-priority": MQ_PRIORITY_MAX,  # Enable priority ordering (0-10)
         },
     },
     "tts_results": {
@@ -69,6 +76,7 @@ QUEUE_CONFIGS = {
             "x-dead-letter-routing-key": "tts_results_failed",  # DLQ name
             "x-message-ttl": 604800000,  # 7 days in milliseconds
             "x-max-length": 10000,
+            "x-max-priority": MQ_PRIORITY_MAX,  # Enable priority ordering (0-10)
         },
     },
     "tts_jobs_failed": {  # Renamed from tts_jobs_dlq
@@ -76,6 +84,7 @@ QUEUE_CONFIGS = {
         "arguments": {
             "x-message-ttl": 604800000,  # 7 days in milliseconds
             "x-max-length": 5000,
+            # No x-max-priority on DLQs — dead letters don't need priority routing
         },
     },
     "tts_results_failed": {  # Renamed from tts_results_dlq
@@ -83,6 +92,7 @@ QUEUE_CONFIGS = {
         "arguments": {
             "x-message-ttl": 604800000,  # 7 days in milliseconds
             "x-max-length": 5000,
+            # No x-max-priority on DLQs — dead letters don't need priority routing
         },
     },
 }

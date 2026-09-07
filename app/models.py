@@ -249,6 +249,14 @@ class TTSJob(Base):
     error_code = Column(String(50), nullable=True)
     error_message = Column(Text, nullable=True)
     retry_count = Column(Integer, nullable=False, default=0, server_default="0")
+    priority = Column(
+        Integer,
+        nullable=False,
+        default=5,
+        server_default="5",
+        index=True,
+        comment="Job priority (0=lowest, 10=highest, default=5=normal)",
+    )
 
     # Timestamps
     created_at = Column(

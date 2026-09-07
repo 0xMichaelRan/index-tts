@@ -22,6 +22,7 @@ from services.logging_config import (
     log_shutdown_summary,
     log_startup_summary,
 )
+from services.rabbitmq_config import MQ_PRIORITY_DEFAULT, MQ_PRIORITY_MAX
 from services.rabbitmq_manager import RabbitMQManager
 from services.storage_manager import StorageManager
 from services.synthesis_pipeline import SynthesisPipeline
@@ -257,13 +258,23 @@ class IndexTTSWorker:
                     if job_data.get("jobId") is not None
                     else job_data.get("job_id")
                 )
-                logger.info(f"[JOB {job_id}] Received from queue")
+
+                # Resolve priority: AMQP header takes precedence over JSON field
+                amqp_priority = getattr(properties, "priority", None)
+                if amqp_priority is not None:
+                    priority = int(amqp_priority)
+                else:
+                    priority = int(job_data.get("priority", MQ_PRIORITY_DEFAULT))
+                # Clamp to valid range
+                priority = max(0, min(priority, MQ_PRIORITY_MAX))
+
+                logger.info(f"[JOB {job_id}] Received from queue (priority={priority})")
 
                 # Process job through pipeline
                 result = self.synthesis_pipeline.process_job(job_data)
 
-                # Publish result
-                self.rabbitmq_manager.publish_result(result)
+                # Publish result with same priority as the inbound job
+                self.rabbitmq_manager.publish_result(result, priority=priority)
                 if result.get("ttsId"):
                     logger.info(
                         f"[JOB {job_id}] Result published with ttsId={result.get('ttsId')}"
