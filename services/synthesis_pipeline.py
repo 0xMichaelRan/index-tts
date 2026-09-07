@@ -18,6 +18,7 @@ from services.circuit_breaker import CircuitBreakerError, get_circuit_breaker
 from services.logging_config import get_logger
 from services.s3_config import S3ConfigError
 from services.storage_manager import StorageManager
+from services.text_sanitizer import sanitize_tts_text
 from services.tts_job_service import TTSJobService
 
 logger = get_logger(__name__)
@@ -144,7 +145,13 @@ class SynthesisPipeline:
         if job_id is not None:
             job_id = str(job_id)
 
-        text = job_data.get("text", "")
+        raw_text = job_data.get("text", "")
+        text = sanitize_tts_text(raw_text)
+        if text != raw_text:
+            logger.info(
+                f"[JOB {job_id}] Text sanitized: removed special characters "
+                f"(original {len(raw_text)} chars → sanitized {len(text)} chars)"
+            )
         audio_prompt_path = job_data.get("audioPromptPath")
         language = job_data.get("spokenLang", "en")
         job_type = job_data.get("jobType", "studio")
