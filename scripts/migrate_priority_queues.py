@@ -24,6 +24,9 @@ import argparse
 import os
 import sys
 import time
+import urllib.parse
+import urllib.request
+import json
 from pathlib import Path
 
 # Add project root to path
@@ -79,25 +82,102 @@ def _connect(rabbitmq_url: str) -> tuple[pika.BlockingConnection, pika.channel.C
     return connection, channel
 
 
+def _mgmt_url_from_amqp(amqp_url: str) -> str | None:
+    """
+    Derive the RabbitMQ Management HTTP API base URL from an AMQP URL.
+
+    Maps:  amqp://user:pass@host:5672/vhost  →  http://user:pass@host:15672
+           amqps://…:5671/…                  →  https://…:15671
+
+    Returns None if the URL cannot be parsed.
+    """
+    try:
+        parsed = urllib.parse.urlparse(amqp_url)
+        scheme = "https" if parsed.scheme in ("amqps", "amqp+ssl") else "http"
+        amqp_port = parsed.port or (5671 if scheme == "https" else 5672)
+        # Management API is conventionally on amqp_port + 10000
+        mgmt_port = amqp_port + 10000
+        host = parsed.hostname or "localhost"
+        if parsed.username and parsed.password:
+            netloc = f"{parsed.username}:{parsed.password}@{host}:{mgmt_port}"
+        else:
+            netloc = f"{host}:{mgmt_port}"
+        return f"{scheme}://{netloc}"
+    except Exception:
+        return None
+
+
+def _fetch_queue_args_via_management(
+    mgmt_base: str, vhost: str, queue_name: str, timeout: float = 5.0
+) -> dict | None:
+    """
+    Fetch queue arguments from the RabbitMQ Management HTTP API.
+
+    Returns the 'arguments' dict (e.g. {"x-max-priority": 10, ...}) on success,
+    or None if the queue does not exist or the API is unreachable.
+    """
+    encoded_vhost = urllib.parse.quote(vhost, safe="")
+    encoded_queue = urllib.parse.quote(queue_name, safe="")
+    url = f"{mgmt_base}/api/queues/{encoded_vhost}/{encoded_queue}"
+    try:
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read())
+            return data.get("arguments", {})
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return None  # Queue does not exist
+        return None  # API error — treat as unknown
+    except Exception:
+        return None  # Management API unreachable
+
+
 def check_queues(rabbitmq_url: str) -> dict:
-    """Return info about current queue state (message counts, args)."""
+    """
+    Return info about current queue state (message counts, priority arguments).
+
+    Uses AMQP passive declare for basic stats, then the RabbitMQ Management
+    HTTP API to reliably read queue arguments (e.g. x-max-priority), because
+    AMQP Queue.DeclareOk does NOT return queue arguments per the protocol spec.
+    """
     connection, channel = _connect(rabbitmq_url)
-    info = {}
+    amqp_info: dict = {}
     try:
         for name in PRIORITY_QUEUES + DLQ_QUEUES:
             try:
                 result = channel.queue_declare(queue=name, passive=True)
-                info[name] = {
+                amqp_info[name] = {
                     "exists": True,
                     "messages": result.method.message_count,
                     "consumers": result.method.consumer_count,
                 }
             except pika.exceptions.ChannelClosedByBroker:
-                info[name] = {"exists": False, "messages": 0}
+                amqp_info[name] = {"exists": False, "messages": 0, "consumers": 0}
                 channel = connection.channel()
     finally:
         connection.close()
-    return info
+
+    # Now enrich with queue arguments from the Management HTTP API.
+    # AMQP passive declare cannot return arguments — this is a protocol limitation.
+    parsed = urllib.parse.urlparse(rabbitmq_url)
+    vhost = parsed.path.lstrip("/") or "/"
+    mgmt_base = _mgmt_url_from_amqp(rabbitmq_url)
+
+    mgmt_available = mgmt_base is not None
+    for name, data in amqp_info.items():
+        if not data.get("exists"):
+            data["arguments"] = None  # Queue absent
+            data["mgmt_available"] = mgmt_available
+            continue
+        if mgmt_base is not None:
+            args = _fetch_queue_args_via_management(mgmt_base, vhost, name)
+            data["arguments"] = args  # None means API unreachable or queue gone
+            data["mgmt_available"] = args is not None
+        else:
+            data["arguments"] = None
+            data["mgmt_available"] = False
+
+    return amqp_info
 
 
 def delete_queue(channel: pika.channel.Channel, name: str) -> None:
@@ -194,10 +274,31 @@ def main():
             exists = data.get("exists", False)
             msgs = data.get("messages", 0)
             consumers = data.get("consumers", 0)
-            priority_support = (
-                "(will add priority)" if name in PRIORITY_QUEUES and exists else ""
+            state = "EXISTS" if exists else "MISSING"
+
+            if name in PRIORITY_QUEUES and exists:
+                arguments = data.get("arguments")
+                mgmt_ok = data.get("mgmt_available", False)
+                if not mgmt_ok:
+                    # Management API unreachable — cannot inspect arguments
+                    priority_note = "(priority: unknown — management API unavailable)"
+                elif arguments is None:
+                    priority_note = "(priority: unknown — management API error)"
+                else:
+                    actual = arguments.get("x-max-priority")
+                    if actual is None:
+                        priority_note = f"(priority: NOT SET — will add priority={MQ_PRIORITY_MAX})"
+                    elif actual == MQ_PRIORITY_MAX:
+                        priority_note = f"(priority={actual} ✓)"
+                    else:
+                        priority_note = f"(priority={actual} ✗ — expected {MQ_PRIORITY_MAX}, will recreate)"
+            else:
+                priority_note = ""
+
+            status = (
+                f"{state:8s} | messages={msgs:5d} | consumers={consumers}"
+                + (f" {priority_note}" if priority_note else "")
             )
-            status = f"{'EXISTS' if exists else 'MISSING':8s} | messages={msgs:5d} | consumers={consumers} {priority_support}"
             print(f"  {name:25s}: {status}")
         print()
         return 0
