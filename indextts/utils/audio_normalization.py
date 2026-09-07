@@ -21,9 +21,12 @@ The function preserves this range in the output to avoid truncation on int16 con
 """
 
 import warnings
-from typing import Optional, Tuple, Union
+from typing import TYPE_CHECKING, Optional, Tuple, Union
 
 import numpy as np
+
+if TYPE_CHECKING:
+    import torch
 
 try:
     import pyloudnorm as pyln

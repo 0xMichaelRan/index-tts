@@ -133,7 +133,7 @@ class IndexTTS:
         print(">> GPT weights restored from:", self.gpt_path)
         if self.is_fp16:
             try:
-                import deepspeed
+                import deepspeed  # noqa: F401
 
                 use_deepspeed = True
             except (ImportError, OSError, CalledProcessError) as e:
@@ -210,7 +210,6 @@ class IndexTTS:
         code_lens = []
         codes_list = []
         device = codes.device
-        dtype = codes.dtype
         isfix = False
         for i in range(0, codes.shape[0]):
             code = codes[i]
