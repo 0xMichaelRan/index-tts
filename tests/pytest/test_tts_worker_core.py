@@ -211,7 +211,7 @@ class TestGracefulShutdown:
     def test_signal_handler_registration(self, mock_s3):
         """Test that signal handlers are registered on initialization."""
         with patch("services.tts_worker.signal.signal") as mock_signal:
-            worker = IndexTTSWorker()
+            _ = IndexTTSWorker()
 
             # Verify SIGTERM and SIGINT handlers were registered
             calls = mock_signal.call_args_list
@@ -230,7 +230,7 @@ class TestGracefulShutdown:
         assert worker._shutdown_requested is False
 
         # Simulate SIGTERM signal
-        signal_handler = worker._setup_signal_handlers.__code__.co_consts[1]
+        # signal_handler introspection not needed; manually set shutdown flag
         # Manually set shutdown flag as we can't actually send signals in tests
         worker._shutdown_requested = True
 

@@ -220,7 +220,7 @@ class TestCacheLookup:
         voice = "audio-prompts/test_voice.wav"
 
         # Store entry
-        stored = await cache_service.store(
+        await cache_service.store(
             text=text,
             audio_prompt_path=voice,
             base_audio_local_path=temp_audio_file,
@@ -394,7 +394,7 @@ class TestCacheEviction:
         for entry in entries:
             try:
                 await cache_service.delete_entry(entry.cache_key)
-            except:
+            except Exception:
                 pass  # Entry may already be deleted
 
 

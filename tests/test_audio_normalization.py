@@ -43,12 +43,9 @@ class TestNormalizationAvailability:
         """Test that availability check matches actual import."""
         is_available = check_normalization_available()
 
-        try:
-            import pyloudnorm
+        import importlib.util
 
-            expected = True
-        except ImportError:
-            expected = False
+        expected = importlib.util.find_spec("pyloudnorm") is not None
 
         assert is_available == expected
 

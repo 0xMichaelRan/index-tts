@@ -14,11 +14,11 @@ import re
 # Each entry is documented with the reason it must be suppressed.
 _SUPPRESS_CHARS: str = (
     "\u3010\u3011"  # CJK square brackets \u2014 section/label markers
-    "\uff5c"        # Full-width vertical bar \u2014 formatting separator
-    "/"             # ASCII slash \u2014 ratio / path separator, never spoken
-    "\u3001"        # Ideographic comma \u2014 CJK enumeration pause; TTS vocalises it
+    "\uff5c"  # Full-width vertical bar \u2014 formatting separator
+    "/"  # ASCII slash \u2014 ratio / path separator, never spoken
+    "\u3001"  # Ideographic comma \u2014 CJK enumeration pause; TTS vocalises it
     "\uff08\uff09"  # Full-width parentheses \u2014 aside markers
-    "()"            # ASCII parentheses \u2014 same reason
+    "()"  # ASCII parentheses \u2014 same reason
 )
 
 # Build a compiled pattern for fast repeated calls.
