@@ -64,7 +64,6 @@ class TestFetchQueueArgsViaMgmt(unittest.TestCase):
     """_fetch_queue_args_via_management: HTTP API argument retrieval."""
 
     def _make_response(self, data: dict, status: int = 200):
-        import io
 
         body = json.dumps(data).encode()
         mock_resp = MagicMock()

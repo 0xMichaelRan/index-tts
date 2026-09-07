@@ -10,8 +10,6 @@ Covers:
 - None values are treated as absent
 """
 
-import pytest
-
 from services.job_utils import extract_job_id
 
 
