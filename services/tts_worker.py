@@ -5,8 +5,6 @@ Orchestrates modular components for synthesis, alignment, and upload.
 """
 
 import json
-import logging
-import os
 import platform
 import signal
 from pathlib import Path
@@ -26,49 +24,12 @@ from services.rabbitmq_config import MQ_PRIORITY_DEFAULT, MQ_PRIORITY_MAX
 from services.rabbitmq_manager import RabbitMQManager
 from services.storage_manager import StorageManager
 from services.synthesis_pipeline import SynthesisPipeline
+from services.worker_config import WorkerConfig
 
 # Load environment variables
-env_file = Path(__file__).parent.parent / ".env"
-if env_file.exists():
-    load_dotenv(str(env_file))
-
-
-def _env_bool(name: str, default: bool) -> bool:
-    """Parse boolean environment variable."""
-    value = os.getenv(name)
-    if value is None:
-        return default
-    return value.lower() in ("true", "1", "yes")
-
-
-def _env_int(name: str, default: int) -> int:
-    """Parse integer environment variable."""
-    value = os.getenv(name)
-    if value is None:
-        return default
-    return int(value)
-
-
-def _parse_log_level(level_name: str) -> int:
-    """Parse log level from string."""
-    level = getattr(logging, level_name.upper(), None)
-    if isinstance(level, int):
-        return level
-    return logging.INFO
-
-
-# Configure logging
-_log_level = _parse_log_level(os.getenv("LOG_LEVEL", "INFO"))
-_log_file_enabled = _env_bool("LOG_FILE_ENABLED", False)
-_log_file_path = os.getenv("LOG_FILE_PATH", "logs/worker.log")
-
-configure_logging(
-    level=_log_level,
-    use_file=_log_file_enabled,
-    file_path=_log_file_path,
-    use_color=True,
-)
-logger = get_logger(__name__)
+_env_file = Path(__file__).parent.parent / ".env"
+if _env_file.exists():
+    load_dotenv(str(_env_file))
 
 
 class IndexTTSWorker:
@@ -79,26 +40,39 @@ class IndexTTSWorker:
     Small, focused class that delegates to specialized components.
     """
 
-    def __init__(self, rabbitmq_url: str):
+    def __init__(self, config: WorkerConfig):
         """
         Initialize the TTS worker.
 
         Args:
-            rabbitmq_url: RabbitMQ connection URL (amqp://user:pass@host:5672/)
+            config: WorkerConfig instance with all runtime settings.
+                    Build from environment with ``WorkerConfig.from_env()``,
+                    or construct directly in tests.
         """
-        if not rabbitmq_url:
-            raise ValueError("RABBITMQ_URL is required")
-
+        config.validate()
+        self.config = config
         self.platform = platform.system()
         self._shutdown_requested = False
         self._processed_jobs = set()
 
+        # Configure logging from config (must happen before any logger use)
+        configure_logging(
+            level=config.log_level,
+            use_file=config.log_file_enabled,
+            file_path=config.log_file_path,
+            use_color=True,
+        )
+
+        # Module-level logger is now bound after logging is configured
+        global logger
+        logger = get_logger(__name__)
+
         # Log startup info
         logger.section("STARTUP")
         logger.info(f"Platform:         {self.platform}")
-        logger.info(f"Log level:        {logging.getLevelName(_log_level)}")
-        if _log_file_enabled:
-            logger.info(f"Log file:         {_log_file_path}")
+        logger.info(f"Log level:        {config.log_level_name}")
+        if config.log_file_enabled:
+            logger.info(f"Log file:         {config.log_file_path}")
 
         # Initialize TTS engine
         self.tts_engine = self._init_tts_engine()
@@ -115,43 +89,29 @@ class IndexTTSWorker:
             self.storage_manager = None
 
         # Initialize cache manager
-        cache_enabled = os.getenv("TTS_CACHE_ENABLED", "true").lower() == "true"
-        cache_max_entries = int(os.getenv("TTS_CACHE_MAX_ENTRIES", "10000"))
-        cache_eviction_threshold = int(
-            os.getenv("TTS_CACHE_EVICTION_THRESHOLD", "9000")
-        )
-        cache_dir = os.getenv("TTS_CACHE_LOCAL_DIR", "outputs/tts_cache")
-
-        if cache_enabled:
+        if config.cache_enabled:
             self.cache_manager = CacheManager(
-                cache_dir=cache_dir,
-                max_entries=cache_max_entries,
-                eviction_threshold=cache_eviction_threshold,
+                cache_dir=config.cache_dir,
+                max_entries=config.cache_max_entries,
+                eviction_threshold=config.cache_eviction_threshold,
             )
         else:
-            self.cache_manager = CacheManager(cache_dir=cache_dir)
+            self.cache_manager = CacheManager(cache_dir=config.cache_dir)
             logger.warning("TTS synthesis cache: DISABLED")
 
         # Initialize synthesis pipeline
-        use_fast_inference = (
-            os.getenv("TTS_USE_FAST_INFERENCE", "true").lower() == "true"
-        )
         if self.platform != "Darwin":
-            inference_method = "infer_fast()" if use_fast_inference else "infer()"
+            inference_method = (
+                "infer_fast()" if config.use_fast_inference else "infer()"
+            )
             logger.info(f"TTS inference method: {inference_method}")
         else:
             logger.info("TTS inference method: infer() (macOS native)")
 
-        normalization_enabled = (
-            os.getenv("TTS_NORMALIZATION_ENABLED", "true").lower() == "true"
-        )
-        normalization_target_lufs = float(
-            os.getenv("TTS_NORMALIZATION_TARGET_LUFS", "-16.0")
-        )
-
-        if normalization_enabled:
+        if config.normalization_enabled:
             logger.info(
-                f"Audio normalization: ENABLED (target: {normalization_target_lufs:.1f} LUFS)"
+                f"Audio normalization: ENABLED "
+                f"(target: {config.normalization_target_lufs:.1f} LUFS)"
             )
         else:
             logger.info("Audio normalization: DISABLED")
@@ -160,14 +120,14 @@ class IndexTTSWorker:
             tts_engine=self.tts_engine,
             storage_manager=self.storage_manager,
             cache_manager=self.cache_manager,
-            use_fast_inference=use_fast_inference,
-            normalization_enabled=normalization_enabled,
-            normalization_target_lufs=normalization_target_lufs,
+            use_fast_inference=config.use_fast_inference,
+            normalization_enabled=config.normalization_enabled,
+            normalization_target_lufs=config.normalization_target_lufs,
         )
         logger.success("Synthesis pipeline initialized")
 
         # Initialize RabbitMQ manager
-        self.rabbitmq_manager = RabbitMQManager(rabbitmq_url)
+        self.rabbitmq_manager = RabbitMQManager(config.rabbitmq_url)
 
         # Setup signal handlers
         self._setup_signal_handlers()
@@ -212,6 +172,71 @@ class IndexTTSWorker:
         signal.signal(signal.SIGINT, signal_handler)
         logger.success("Signal handlers registered (SIGTERM, SIGINT)")
 
+    def _handle_message(self, ch, method, properties, body):
+        """Handle a single incoming RabbitMQ job message."""
+        if self._shutdown_requested:
+            logger.info("Shutdown requested, rejecting new message")
+            ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
+            return
+
+        job_data = None
+        try:
+            job_data = json.loads(body)
+            job_id = (
+                job_data.get("jobId")
+                if job_data.get("jobId") is not None
+                else job_data.get("job_id")
+            )
+
+            # Resolve priority: AMQP header takes precedence over JSON field
+            amqp_priority = getattr(properties, "priority", None)
+            if amqp_priority is not None:
+                priority = int(amqp_priority)
+            else:
+                priority = int(job_data.get("priority", MQ_PRIORITY_DEFAULT))
+            # Clamp to valid range
+            priority = max(0, min(priority, MQ_PRIORITY_MAX))
+
+            logger.info(
+                f"[JOB {job_id}] Received from queue (priority={priority})"
+            )
+
+            # Process job through pipeline
+            result = self.synthesis_pipeline.process_job(job_data)
+
+            # Publish result with same priority as the inbound job
+            self.rabbitmq_manager.publish_result(result, priority=priority)
+            if result.get("ttsId"):
+                logger.info(
+                    f"[JOB {job_id}] Result published with ttsId={result.get('ttsId')}"
+                )
+
+            # Acknowledge message
+            self.rabbitmq_manager.acknowledge_message(method.delivery_tag)
+            logger.info(f"[JOB {job_id}] Acknowledged")
+
+            # Track processed jobs
+            self._processed_jobs.add(job_id)
+
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON in message: {e!s}")
+            self.rabbitmq_manager.reject_message(
+                method.delivery_tag, requeue=False
+            )
+
+        except Exception as e:
+            logger.error(f"Error processing job: {e!s}")
+            if job_data:
+                job_id = (
+                    job_data.get("jobId")
+                    if job_data.get("jobId") is not None
+                    else job_data.get("job_id")
+                )
+                logger.error(f"[JOB {job_id}] Processing failed, sending to DLQ")
+            self.rabbitmq_manager.reject_message(
+                method.delivery_tag, requeue=False
+            )
+
     def start(self):
         """
         Start the worker and begin consuming jobs from RabbitMQ.
@@ -243,84 +268,26 @@ class IndexTTSWorker:
             stats_dict=cb_stats,
         )
 
-        def message_callback(ch, method, properties, body):
-            """Handle incoming job message."""
-            if self._shutdown_requested:
-                logger.info("Shutdown requested, rejecting new message")
-                ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
-                return
-
-            job_data = None
-            try:
-                job_data = json.loads(body)
-                job_id = (
-                    job_data.get("jobId")
-                    if job_data.get("jobId") is not None
-                    else job_data.get("job_id")
-                )
-
-                # Resolve priority: AMQP header takes precedence over JSON field
-                amqp_priority = getattr(properties, "priority", None)
-                if amqp_priority is not None:
-                    priority = int(amqp_priority)
-                else:
-                    priority = int(job_data.get("priority", MQ_PRIORITY_DEFAULT))
-                # Clamp to valid range
-                priority = max(0, min(priority, MQ_PRIORITY_MAX))
-
-                logger.info(f"[JOB {job_id}] Received from queue (priority={priority})")
-
-                # Process job through pipeline
-                result = self.synthesis_pipeline.process_job(job_data)
-
-                # Publish result with same priority as the inbound job
-                self.rabbitmq_manager.publish_result(result, priority=priority)
-                if result.get("ttsId"):
-                    logger.info(
-                        f"[JOB {job_id}] Result published with ttsId={result.get('ttsId')}"
-                    )
-
-                # Acknowledge message
-                self.rabbitmq_manager.acknowledge_message(method.delivery_tag)
-                logger.info(f"[JOB {job_id}] Acknowledged")
-
-                # Track processed jobs
-                self._processed_jobs.add(job_id)
-
-            except json.JSONDecodeError as e:
-                logger.error(f"Invalid JSON in message: {e!s}")
-                self.rabbitmq_manager.reject_message(method.delivery_tag, requeue=False)
-
-            except Exception as e:
-                logger.error(f"Error processing job: {e!s}")
-                if job_data:
-                    job_id = (
-                        job_data.get("jobId")
-                        if job_data.get("jobId") is not None
-                        else job_data.get("job_id")
-                    )
-                    logger.error(f"[JOB {job_id}] Processing failed, sending to DLQ")
-                self.rabbitmq_manager.reject_message(method.delivery_tag, requeue=False)
-
         # Main consumption loop
         while not self._shutdown_requested:
             try:
                 # Ensure connection is healthy
                 if not self.rabbitmq_manager.is_connected():
-                    logger.warning("Connection is not open, attempting to reconnect...")
+                    logger.warning(
+                        "Connection is not open, attempting to reconnect..."
+                    )
                     if not self.rabbitmq_manager.reconnect_with_backoff():
                         break
 
-                # Start consuming (blocking call - will exit when stop_consuming() is called)
+                # Start consuming (blocking call)
                 self.rabbitmq_manager.consume_messages(
-                    callback=message_callback,
+                    callback=self._handle_message,
                     prefetch_count=1,
                 )
 
             except KeyboardInterrupt:
                 logger.info("\nShutting down worker (KeyboardInterrupt)...")
                 self._shutdown_requested = True
-                # Stop consuming to unblock start_consuming()
                 if self.rabbitmq_manager.channel:
                     self.rabbitmq_manager.channel.stop_consuming()
                 break
@@ -343,14 +310,15 @@ class IndexTTSWorker:
         self.rabbitmq_manager.disconnect()
 
 
-if __name__ == "__main__":
-    # Read RabbitMQ URL from environment
-    rabbitmq_url = os.getenv("RABBITMQ_URL")
-    if not rabbitmq_url:
-        raise ValueError(
-            "RABBITMQ_URL environment variable is required. "
-            "See .env.example for configuration template."
-        )
+# Module-level logger placeholder — real logger is set inside __init__
+# after configure_logging() runs.  This allows the module to be imported
+# without immediately emitting log output.
+logger = get_logger(__name__)
 
-    worker = IndexTTSWorker(rabbitmq_url=rabbitmq_url)
+
+if __name__ == "__main__":
+    config = WorkerConfig.from_env()
+    config.validate()
+
+    worker = IndexTTSWorker(config=config)
     worker.start()
