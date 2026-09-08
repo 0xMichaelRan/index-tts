@@ -276,6 +276,7 @@ def _process_clip_segment(
     height: int,
     fps: int = 30,
     ffmpeg_path: str = "ffmpeg",
+    skip_first_frame: bool = True,
 ) -> None:
     """
     Process a single video clip to fit ``window_duration`` using the given strategy.
@@ -292,15 +293,26 @@ def _process_clip_segment(
         width, height:   Target output dimensions.
         fps:             Target output frame rate.
         ffmpeg_path:     Path to the ffmpeg binary.
+        skip_first_frame: If True, drops the first frame (n=0) to prevent duplicate
+                         freeze-frames across clip transitions.
     """
     scale_pad = _build_scale_pad_filter(width, height, fps)
+    frame_duration = 1.0 / fps
+    effective_clip_duration = (
+        max(clip_duration - frame_duration, 0.001)
+        if skip_first_frame
+        else clip_duration
+    )
 
     if (
         strategy == ClipAlignmentStrategy.TRIM_LONG_SLOW_SHORT
         and clip_duration > window_duration
     ):
         # Option 1 — Long clip: trim from front, keep the ending at 1× speed.
-        start_time = clip_duration - window_duration
+        start_time = max(
+            clip_duration - window_duration,
+            frame_duration if skip_first_frame else 0.0,
+        )
         cmd = [
             ffmpeg_path, "-y",
             "-ss", f"{start_time:.3f}",
@@ -313,14 +325,15 @@ def _process_clip_segment(
         ]
     else:
         # Option 2 (default) or short clip in Option 1: adjust via setpts.
-        # pts_factor > 1 slows down, < 1 speeds up.
-        pts_factor = window_duration / max(clip_duration, 0.001)
+        # If skip_first_frame is enabled, drop frame 0 via select filter and reset PTS.
+        skip_filter = "select='gte(n\\,1)',setpts=PTS-STARTPTS," if skip_first_frame else ""
+        pts_factor = window_duration / max(effective_clip_duration, 0.001)
         # Clamp to inverse of speed bounds
         pts_factor = max(1.0 / _MAX_SPEED, min(1.0 / _MIN_SPEED, pts_factor))
         cmd = [
             ffmpeg_path, "-y",
             "-i", clip_path,
-            "-vf", f"{scale_pad},setpts={pts_factor:.6f}*PTS",
+            "-vf", f"{skip_filter}{scale_pad},setpts={pts_factor:.6f}*PTS",
             "-an",
             "-c:v", "libx264", "-preset", "fast", "-crf", "22",
             output_path,
@@ -464,6 +477,21 @@ class FlowRenderPipeline:
 
         logger.info(f"[FLOW {job_id}] Clip alignment strategy: {strategy.value}")
 
+        # Parse skip_first_frame (default: True)
+        raw_skip_first_frame = (
+            job_data.get("skipFirstFrame")
+            if job_data.get("skipFirstFrame") is not None
+            else job_data.get("skip_first_frame")
+        )
+        if raw_skip_first_frame is None:
+            skip_first_frame = True
+        elif isinstance(raw_skip_first_frame, str):
+            skip_first_frame = raw_skip_first_frame.lower() in ("true", "1", "yes")
+        else:
+            skip_first_frame = bool(raw_skip_first_frame)
+
+        logger.info(f"[FLOW {job_id}] Skip first frame: {skip_first_frame}")
+
         # Parse resolution / ratio
         resolution = job_data.get("resolution", "720p")
         ratio_format = (
@@ -538,6 +566,7 @@ class FlowRenderPipeline:
                     strategy=strategy,
                     width=width,
                     height=height,
+                    skip_first_frame=skip_first_frame,
                 )
 
                 # Upload
@@ -662,6 +691,7 @@ class FlowRenderPipeline:
         width: int,
         height: int,
         fps: int = 30,
+        skip_first_frame: bool = True,
     ) -> str:
         """
         Render a single locale video.
@@ -714,6 +744,7 @@ class FlowRenderPipeline:
         logger.info(
             f"[FLOW {job_id}] [{locale}] {source} → "
             f"{num_clips} windows (strategy: {strategy.value}, "
+            f"skip_first_frame: {skip_first_frame}, "
             f"audio_dur: {f'{total_audio_duration:.2f}s' if total_audio_duration else 'unknown'})"
         )
 
@@ -734,20 +765,32 @@ class FlowRenderPipeline:
 
             adjusted_path = os.path.join(locale_dir, f"adj_{i:02d}.mp4")
 
+            frame_dur = 1.0 / fps
+            eff_dur = (
+                max(clip_natural_duration - frame_dur, 0.001)
+                if skip_first_frame
+                else clip_natural_duration
+            )
+
             # Log the effective action for this clip
             if (
                 strategy == ClipAlignmentStrategy.TRIM_LONG_SLOW_SHORT
                 and clip_natural_duration > win_duration
             ):
+                cut = max(
+                    clip_natural_duration - win_duration,
+                    frame_dur if skip_first_frame else 0.0,
+                )
                 action = (
-                    f"trim-front ({clip_natural_duration - win_duration:.2f}s cut, "
+                    f"trim-front ({cut:.2f}s cut, "
                     f"keep last {win_duration:.2f}s at 1×)"
                 )
             else:
-                pts = win_duration / max(clip_natural_duration, 0.001)
+                pts = win_duration / max(eff_dur, 0.001)
                 pts = max(1.0 / _MAX_SPEED, min(1.0 / _MIN_SPEED, pts))
                 speed = 1.0 / pts
-                action = f"setpts×{pts:.3f} (speed={speed:.3f}×)"
+                skip_note = " [skip 1st frame]" if skip_first_frame else ""
+                action = f"setpts×{pts:.3f} (speed={speed:.3f}×){skip_note}"
 
             logger.debug(
                 f"[FLOW {job_id}] [{locale}] clip {i:02d}: "
@@ -764,6 +807,7 @@ class FlowRenderPipeline:
                 height=height,
                 fps=fps,
                 ffmpeg_path=self.ffmpeg_path,
+                skip_first_frame=skip_first_frame,
             )
             adjusted_clips.append(adjusted_path)
 
