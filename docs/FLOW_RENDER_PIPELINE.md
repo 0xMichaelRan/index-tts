@@ -129,7 +129,7 @@ For each clip `k`:
 - **Dedicated AMQP Connection**: Maintains its own blocking Pika connection separate from the TTS channel to prevent connection lock contention.
 - **Prefetch QoS**: Configured with `prefetch_count=1` to ensure only one resource-intensive rendering job is processed at a time.
 - **Queue Declaration**:
-  - Passive declaration for `flow_render_jobs` (queue owned by `studio-backend`).
+  - Active declaration for `flow_render_jobs` with durable exchange `flow_render_jobs.dlx` and DLQ `flow_render_jobs_failed`.
   - Active declaration for `flow_render_results` with durable exchange `flow_render_results.dlx` and DLQ `flow_render_results_failed`.
 - **Publish Resilience**: Exponential backoff retry (up to 3 attempts) when publishing to `flow_render_results`.
 

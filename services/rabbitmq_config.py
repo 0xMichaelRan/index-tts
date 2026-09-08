@@ -91,7 +91,7 @@ QUEUE_CONFIGS = {
             "x-dead-letter-exchange": "flow_render_jobs.dlx",
             "x-dead-letter-routing-key": "flow_render_jobs_failed",
             "x-message-ttl": 604800000,  # 7 days in milliseconds
-            "x-max-length": 5000,
+            "x-max-length": 10000,
         },
     },
     "flow_render_results": {
@@ -100,7 +100,7 @@ QUEUE_CONFIGS = {
             "x-dead-letter-exchange": "flow_render_results.dlx",
             "x-dead-letter-routing-key": "flow_render_results_failed",
             "x-message-ttl": 604800000,  # 7 days in milliseconds
-            "x-max-length": 5000,
+            "x-max-length": 10000,
         },
     },
     "tts_jobs_failed": {  # Renamed from tts_jobs_dlq

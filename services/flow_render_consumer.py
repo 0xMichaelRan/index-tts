@@ -201,7 +201,7 @@ class FlowRenderConsumer:
                 "x-dead-letter-exchange": f"{_INPUT_QUEUE}.dlx",
                 "x-dead-letter-routing-key": f"{_INPUT_QUEUE}_failed",
                 "x-message-ttl": 604800000,  # 7 days
-                "x-max-length": 5000,
+                "x-max-length": 10000,
             },
         )
 
@@ -231,7 +231,7 @@ class FlowRenderConsumer:
                 "x-dead-letter-exchange": f"{_OUTPUT_QUEUE}.dlx",
                 "x-dead-letter-routing-key": f"{_OUTPUT_QUEUE}_failed",
                 "x-message-ttl": 604800000,  # 7 days
-                "x-max-length": 5000,
+                "x-max-length": 10000,
             },
         )
 
