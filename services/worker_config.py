@@ -81,6 +81,9 @@ class WorkerConfig:
         cache_dir: Local directory for cached audio files.
         normalization_enabled: Apply LUFS loudness normalization to output audio.
         normalization_target_lufs: Target loudness in LUFS (default: -16.0).
+        flow_render_enabled: Enable the flow_render_jobs consumer (Linux/Windows only).
+        flow_render_workers: Number of parallel locale render threads per flow job.
+        flow_render_ffmpeg_path: Path to the ffmpeg binary.
     """
 
     rabbitmq_url: str
@@ -102,6 +105,11 @@ class WorkerConfig:
     # Audio normalization
     normalization_enabled: bool = True
     normalization_target_lufs: float = -16.0
+
+    # Flow render consumer (Linux/Windows only; disabled on macOS)
+    flow_render_enabled: bool = True
+    flow_render_workers: int = 3
+    flow_render_ffmpeg_path: str = "ffmpeg"
 
     # ---------------------------------------------------------------------------
     # Factories
@@ -126,6 +134,9 @@ class WorkerConfig:
             TTS_CACHE_LOCAL_DIR           Cache directory (default: outputs/tts_cache).
             TTS_NORMALIZATION_ENABLED     Enable LUFS normalization (default: true).
             TTS_NORMALIZATION_TARGET_LUFS Target LUFS (default: -16.0).
+            FLOW_RENDER_ENABLED           Enable flow render consumer (default: true).
+            FLOW_RENDER_WORKERS           Parallel locale render threads (default: 3).
+            FLOW_RENDER_FFMPEG_PATH       Path to ffmpeg binary (default: ffmpeg).
         """
         rabbitmq_url = os.getenv("RABBITMQ_URL", "")
 
@@ -147,6 +158,10 @@ class WorkerConfig:
             normalization_target_lufs=_env_float(
                 "TTS_NORMALIZATION_TARGET_LUFS", -16.0
             ),
+            # Flow render consumer
+            flow_render_enabled=_env_bool("FLOW_RENDER_ENABLED", True),
+            flow_render_workers=_env_int("FLOW_RENDER_WORKERS", 3),
+            flow_render_ffmpeg_path=os.getenv("FLOW_RENDER_FFMPEG_PATH", "ffmpeg"),
         )
         return config
 

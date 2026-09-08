@@ -1,0 +1,319 @@
+"""
+Flow render consumer.
+
+Runs as a daemon thread inside IndexTTSWorker on Linux/Windows
+(skipped on macOS where there is no GPU to run ffmpeg renders).
+
+Consumes from `flow_render_jobs` (passive declare — queue is owned by studio-backend)
+and publishes results to `flow_render_results`.
+
+Usage (from tts_worker.py)::
+
+    consumer = FlowRenderConsumer(
+        rabbitmq_url=config.rabbitmq_url,
+        ffmpeg_path=config.flow_render_ffmpeg_path,
+    )
+    consumer.start_in_thread()   # non-blocking, daemon thread
+    ...
+    consumer.stop()              # graceful shutdown
+"""
+
+from __future__ import annotations
+
+import json
+import threading
+import time
+from typing import Any
+from urllib.parse import urlparse
+
+import pika
+
+from services.flow_render_pipeline import FlowRenderPipeline
+from services.logging_config import get_logger
+from services.s3_config import S3Client
+
+logger = get_logger(__name__)
+
+# Queue names
+_INPUT_QUEUE = "flow_render_jobs"
+_OUTPUT_QUEUE = "flow_render_results"
+
+# Reconnect settings (mirror tts_worker pattern)
+_INITIAL_RECONNECT_DELAY = 5  # seconds
+_MAX_RECONNECT_DELAY = 300  # 5 minutes
+
+
+class FlowRenderConsumer:
+    """
+    RabbitMQ consumer for flow_render_jobs.
+
+    Designed to run in a background daemon thread alongside the main
+    TTS consumer.  Uses its own blocking pika connection (separate from
+    the TTS worker's connection) so the two consumers don't interfere.
+
+    Args:
+        rabbitmq_url: AMQP connection URL.
+        ffmpeg_path: Path to ffmpeg binary.
+        local_tts_output_dir: Directory where synthesis pipeline writes output
+            (checked before S3 download for audio/alignment files).
+    """
+
+    def __init__(
+        self,
+        rabbitmq_url: str,
+        ffmpeg_path: str = "ffmpeg",
+        local_tts_output_dir: str = "outputs/tts_output",
+    ) -> None:
+        self.rabbitmq_url = rabbitmq_url
+        self.ffmpeg_path = ffmpeg_path
+        self.local_tts_output_dir = local_tts_output_dir
+
+        self._shutdown_requested = False
+        self._thread: threading.Thread | None = None
+
+        # RabbitMQ connection state
+        self._connection: pika.BlockingConnection | None = None
+        self._channel: pika.adapters.blocking_connection.BlockingChannel | None = None
+        self._reconnect_delay = _INITIAL_RECONNECT_DELAY
+
+        # S3 client (shared for download + upload)
+        self._s3_client: S3Client | None = None
+        self._pipeline: FlowRenderPipeline | None = None
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def start_in_thread(self) -> threading.Thread:
+        """
+        Start the consumer in a daemon background thread.
+
+        Returns the thread so the caller can track it if needed.
+        """
+        self._thread = threading.Thread(
+            target=self._run,
+            name="FlowRenderConsumer",
+            daemon=True,
+        )
+        self._thread.start()
+        logger.info("FlowRenderConsumer: started in background thread")
+        return self._thread
+
+    def stop(self) -> None:
+        """Signal shutdown and unblock the consuming loop."""
+        logger.info("FlowRenderConsumer: shutdown requested")
+        self._shutdown_requested = True
+        try:
+            if self._channel and self._channel.is_open:
+                self._channel.stop_consuming()
+        except Exception as e:
+            logger.warning(f"FlowRenderConsumer: error stopping consumption: {e}")
+
+    def is_alive(self) -> bool:
+        """Return True if the consumer thread is running."""
+        return self._thread is not None and self._thread.is_alive()
+
+    # ------------------------------------------------------------------
+    # Internal run loop
+    # ------------------------------------------------------------------
+
+    def _run(self) -> None:
+        """Main loop: connect, consume, reconnect on failure."""
+        logger.info("FlowRenderConsumer: initialising S3 client and pipeline")
+        try:
+            self._s3_client = S3Client()
+            self._pipeline = FlowRenderPipeline(
+                s3_client=self._s3_client,
+                ffmpeg_path=self.ffmpeg_path,
+                local_tts_output_dir=self.local_tts_output_dir,
+            )
+            logger.success("FlowRenderConsumer: pipeline ready")
+        except Exception as exc:
+            logger.error(
+                f"FlowRenderConsumer: failed to initialise pipeline, "
+                f"consumer will not start: {exc}"
+            )
+            return
+
+        while not self._shutdown_requested:
+            try:
+                self._connect()
+                self._consume()  # blocks until channel stops
+            except Exception as exc:
+                if self._shutdown_requested:
+                    break
+                logger.error(
+                    f"FlowRenderConsumer: connection lost — {exc}. "
+                    f"Retrying in {self._reconnect_delay}s..."
+                )
+                time.sleep(self._reconnect_delay)
+                self._reconnect_delay = min(
+                    self._reconnect_delay * 2, _MAX_RECONNECT_DELAY
+                )
+            finally:
+                self._disconnect()
+
+        logger.info("FlowRenderConsumer: shutdown complete")
+
+    def _connect(self) -> None:
+        """Establish pika blocking connection and declare queues."""
+        parsed = urlparse(self.rabbitmq_url)
+        credentials = pika.PlainCredentials(
+            username=parsed.username or "guest",
+            password=parsed.password or "guest",
+        )
+        params = pika.ConnectionParameters(
+            host=parsed.hostname or "localhost",
+            port=parsed.port or 5672,
+            virtual_host=parsed.path.lstrip("/") or "/",
+            credentials=credentials,
+            connection_attempts=3,
+            retry_delay=2,
+            heartbeat=600,
+            blocked_connection_timeout=300,
+        )
+        self._connection = pika.BlockingConnection([params])
+        self._channel = self._connection.channel()
+
+        # Passive declare for flow_render_jobs (owned by studio-backend)
+        # This asserts the queue exists without modifying it.
+        self._channel.queue_declare(queue=_INPUT_QUEUE, passive=True)
+
+        # Active declare for flow_render_results (owned by this worker)
+        self._channel.exchange_declare(
+            exchange=f"{_OUTPUT_QUEUE}.dlx",
+            exchange_type="fanout",
+            durable=True,
+        )
+        self._channel.queue_declare(
+            queue=f"{_OUTPUT_QUEUE}_failed",
+            durable=True,
+            arguments={
+                "x-message-ttl": 604800000,  # 7 days
+                "x-max-length": 5000,
+            },
+        )
+        self._channel.queue_bind(
+            queue=f"{_OUTPUT_QUEUE}_failed",
+            exchange=f"{_OUTPUT_QUEUE}.dlx",
+            routing_key="",
+        )
+        self._channel.queue_declare(
+            queue=_OUTPUT_QUEUE,
+            durable=True,
+            arguments={
+                "x-dead-letter-exchange": f"{_OUTPUT_QUEUE}.dlx",
+                "x-dead-letter-routing-key": f"{_OUTPUT_QUEUE}_failed",
+                "x-message-ttl": 604800000,  # 7 days
+                "x-max-length": 5000,
+            },
+        )
+
+        # Reset reconnect delay after successful connect
+        self._reconnect_delay = _INITIAL_RECONNECT_DELAY
+        logger.success(
+            f"FlowRenderConsumer: connected to RabbitMQ, listening on '{_INPUT_QUEUE}'"
+        )
+
+    def _consume(self) -> None:
+        """Start blocking message consumption (one message at a time)."""
+        if not self._channel:
+            raise RuntimeError("Channel not initialised")
+
+        self._channel.basic_qos(prefetch_count=1)
+        self._channel.basic_consume(
+            queue=_INPUT_QUEUE,
+            on_message_callback=self._handle_message,
+            auto_ack=False,
+        )
+        self._channel.start_consuming()
+
+    def _disconnect(self) -> None:
+        """Safely close connection."""
+        try:
+            if self._connection and not self._connection.is_closed:
+                self._connection.close()
+        except Exception:
+            pass
+        self._connection = None
+        self._channel = None
+
+    # ------------------------------------------------------------------
+    # Message handler
+    # ------------------------------------------------------------------
+
+    def _handle_message(
+        self,
+        ch: pika.adapters.blocking_connection.BlockingChannel,
+        method: pika.spec.Basic.Deliver,
+        properties: pika.spec.BasicProperties,
+        body: bytes,
+    ) -> None:
+        """Process a single flow_render_jobs message."""
+        if self._shutdown_requested:
+            ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
+            return
+
+        job_id = "unknown"
+        try:
+            job_data: dict[str, Any] = json.loads(body)
+            job_id = str(job_data.get("jobId", "unknown"))
+            logger.info(f"[FLOW {job_id}] Received render job from queue")
+
+            if self._pipeline is None:
+                raise RuntimeError("Pipeline not initialised")
+
+            result = self._pipeline.process_job(job_data)
+
+            # Publish result to flow_render_results
+            self._publish_result(result)
+
+            ch.basic_ack(delivery_tag=method.delivery_tag)
+            logger.info(f"[FLOW {job_id}] Acknowledged")
+
+        except json.JSONDecodeError as exc:
+            logger.error(f"FlowRenderConsumer: invalid JSON — {exc}")
+            ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+
+        except Exception as exc:
+            logger.error(f"[FLOW {job_id}] Unexpected error — sending to DLQ: {exc!s}")
+            ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+
+    def _publish_result(self, result: dict[str, Any]) -> None:
+        """Publish result dict to flow_render_results queue (with retry)."""
+        job_id = result.get("jobId", "unknown")
+        max_retries = 3
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                if not self._channel or self._channel.is_closed:
+                    raise RuntimeError("Channel closed before publish")
+
+                self._channel.basic_publish(
+                    exchange="",
+                    routing_key=_OUTPUT_QUEUE,
+                    body=json.dumps(result),
+                    properties=pika.BasicProperties(
+                        delivery_mode=pika.DeliveryMode.Persistent,
+                        content_type="application/json",
+                    ),
+                )
+                logger.info(
+                    f"[FLOW {job_id}] Result published to '{_OUTPUT_QUEUE}' "
+                    f"(status={result.get('status')})"
+                )
+                return
+
+            except Exception as exc:
+                if attempt == max_retries:
+                    logger.error(
+                        f"[FLOW {job_id}] Failed to publish result after "
+                        f"{max_retries} attempts: {exc}"
+                    )
+                    raise
+                delay = 2**attempt
+                logger.warning(
+                    f"[FLOW {job_id}] Publish attempt {attempt} failed: {exc}. "
+                    f"Retrying in {delay}s..."
+                )
+                time.sleep(delay)
