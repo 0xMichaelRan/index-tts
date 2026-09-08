@@ -297,7 +297,7 @@ def _process_clip_segment(
                          freeze-frames across clip transitions.
     """
     scale_pad = _build_scale_pad_filter(width, height, fps)
-    frame_duration = 1.0 / fps
+    frame_duration = 2.0 / fps
     effective_clip_duration = (
         max(clip_duration - frame_duration, 0.001)
         if skip_first_frame
@@ -325,8 +325,8 @@ def _process_clip_segment(
         ]
     else:
         # Option 2 (default) or short clip in Option 1: adjust via setpts.
-        # If skip_first_frame is enabled, drop frame 0 via select filter and reset PTS.
-        skip_filter = "select='gte(n\\,1)',setpts=PTS-STARTPTS," if skip_first_frame else ""
+        # If skip_first_frame is enabled, drop first 2 frames (n=0, 1) via select filter and reset PTS.
+        skip_filter = "select='gte(n\\,2)',setpts=PTS-STARTPTS," if skip_first_frame else ""
         pts_factor = window_duration / max(effective_clip_duration, 0.001)
         # Clamp to inverse of speed bounds
         pts_factor = max(1.0 / _MAX_SPEED, min(1.0 / _MIN_SPEED, pts_factor))
@@ -765,7 +765,7 @@ class FlowRenderPipeline:
 
             adjusted_path = os.path.join(locale_dir, f"adj_{i:02d}.mp4")
 
-            frame_dur = 1.0 / fps
+            frame_dur = 2.0 / fps
             eff_dur = (
                 max(clip_natural_duration - frame_dur, 0.001)
                 if skip_first_frame
@@ -789,7 +789,7 @@ class FlowRenderPipeline:
                 pts = win_duration / max(eff_dur, 0.001)
                 pts = max(1.0 / _MAX_SPEED, min(1.0 / _MIN_SPEED, pts))
                 speed = 1.0 / pts
-                skip_note = " [skip 1st frame]" if skip_first_frame else ""
+                skip_note = " [skip 2 frames]" if skip_first_frame else ""
                 action = f"setpts×{pts:.3f} (speed={speed:.3f}×){skip_note}"
 
             logger.debug(
