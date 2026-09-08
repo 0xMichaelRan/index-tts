@@ -121,88 +121,79 @@ def _get_video_duration(path: str, ffmpeg_path: str = "ffmpeg") -> float:
 def _build_time_windows(
     segments: list[dict],
     num_clips: int,
+    total_audio_duration: float | None = None,
 ) -> list[tuple[float, float]]:
     """
-    Derive exactly ``num_clips`` (start_sec, end_sec) windows from stable-ts
-    sentence-level segments, using narration duration as the equalising metric.
+    Derive exactly ``num_clips`` contiguous (start_sec, end_sec) windows from
+    stable-ts sentence-level segments, using narration duration as the metric.
 
-    This algorithm works for any ``num_clips`` value (10, 15, 20, …) without
-    any reference to word or character counts.
+    This algorithm works for any ``num_clips`` (10, 15, 20, ...) without
+    relying on character or word counts. Windows are completely contiguous
+    with zero gaps (inter-sentence pauses are split at their midpoints),
+    ensuring sum(window_durations) == total_audio_duration.
 
     Three cases:
 
     n == num_clips
-        Perfect match — each segment becomes one window verbatim.
+        Natural 1:1 match — sentence boundaries with midpoint pause division.
 
-    n > num_clips  (more segments than clips — merge)
-        Greedily accumulate adjacent segments. After each closed window the
-        merge target is recomputed as::
+    n > num_clips (more sentences than clips — merge)
+        Optimal contiguous partition via dynamic programming minimizing variance
+        from equal duration (total_duration / num_clips).
 
-            target = (time_remaining_from_window_start) / remaining_clips
-
-        so windows stay balanced even when individual segment durations vary.
-
-    n < num_clips  (fewer segments than clips — split)
-        Iteratively split the longest window at its temporal midpoint until
-        the count equals ``num_clips``. Pure time-range split — no word or
-        character arithmetic needed; result stays proportional to narration.
+    n < num_clips (fewer sentences than clips — split)
+        Iteratively breaks down the longest segment at its temporal midpoint
+        until the count equals ``num_clips``.
 
     Args:
-        segments:  List of dicts with ``start`` and ``end`` float keys,
-                   as produced by stable-ts (alignment JSON ``segments`` field).
-        num_clips: Exact number of windows required (must equal input clip count).
+        segments: List of dicts with ``start`` and ``end`` float keys,
+                  as produced by stable-ts (alignment JSON ``segments`` field).
+        num_clips: Exact number of windows required (equals input clip count).
+        total_audio_duration: Optional duration of narration audio file.
+                              If provided, windows cover [0.0, total_audio_duration].
 
     Returns:
-        List of (start_sec, end_sec) tuples, length == num_clips, sorted by start.
+        List of (start_sec, end_sec) tuples, length == num_clips.
     """
     if not segments:
         raise ValueError("Empty segments list — cannot build time windows")
+    if num_clips <= 0:
+        raise ValueError(f"num_clips must be positive, got {num_clips}")
 
     n = len(segments)
-    total_start = float(segments[0].get("start", 0.0))
-    total_end = float(segments[-1].get("end", total_start + 1.0))
+    seg_starts = [float(s.get("start", 0.0)) for s in segments]
+    seg_ends = [float(s.get("end", seg_starts[i] + 0.1)) for i, s in enumerate(segments)]
 
+    total_start = 0.0 if total_audio_duration is not None else seg_starts[0]
+    total_end = (
+        max(float(total_audio_duration), seg_ends[-1])
+        if total_audio_duration is not None
+        else seg_ends[-1]
+    )
+
+    # Initial continuous boundaries for the n segments:
+    # boundary[0] = total_start, boundary[i] = midpoint of pause, boundary[n] = total_end
+    base_boundaries = [total_start]
+    for i in range(n - 1):
+        midpoint = (seg_ends[i] + seg_starts[i + 1]) / 2.0
+        # Ensure monotonically non-decreasing
+        midpoint = max(base_boundaries[-1], midpoint)
+        base_boundaries.append(midpoint)
+    base_boundaries.append(max(base_boundaries[-1], total_end))
+
+    # Case 1: Exactly matches num_clips
     if n == num_clips:
-        # Perfect match — use each segment's own timestamps directly
-        return [(float(s["start"]), float(s["end"])) for s in segments]
+        return [
+            (base_boundaries[i], base_boundaries[i + 1])
+            for i in range(num_clips)
+        ]
 
-    if n > num_clips:
-        # Merge: greedily accumulate segments aiming for equal-duration windows.
-        windows: list[tuple[float, float]] = []
-        window_start = total_start
-        accumulated = 0.0
-        remaining_clips = num_clips
-
-        for i, seg in enumerate(segments):
-            seg_dur = float(seg["end"]) - float(seg["start"])
-            accumulated += seg_dur
-            is_last_seg = i == n - 1
-
-            # Recalculate target from current window start each time
-            current_target = (
-                (total_end - window_start) / remaining_clips
-                if remaining_clips > 0
-                else accumulated + 1
-            )
-
-            if (accumulated >= current_target and remaining_clips > 1) or is_last_seg:
-                windows.append((window_start, float(seg["end"])))
-                window_start = float(seg["end"])
-                accumulated = 0.0
-                remaining_clips -= 1
-                if remaining_clips == 0:
-                    break
-
-        # Safety pad (shouldn't trigger but guards extreme edge cases)
-        while len(windows) < num_clips:
-            last_end = windows[-1][1] if windows else total_end
-            windows.append((last_end, last_end + 0.01))
-        return windows[:num_clips]
-
-    else:
-        # n < num_clips: iteratively split the longest window at its midpoint.
-        windows = [(float(s["start"]), float(s["end"])) for s in segments]
-
+    # Case 2: Fewer segments than clips — break down longest windows
+    if n < num_clips:
+        windows = [
+            (base_boundaries[i], base_boundaries[i + 1])
+            for i in range(n)
+        ]
         while len(windows) < num_clips:
             longest_idx = max(
                 range(len(windows)), key=lambda i: windows[i][1] - windows[i][0]
@@ -212,8 +203,53 @@ def _build_time_windows(
             windows[longest_idx] = (start, mid)
             windows.insert(longest_idx + 1, (mid, end))
 
-        windows.sort(key=lambda w: w[0])
-        return windows[:num_clips]
+        return windows
+
+    # Case 3: More segments than clips — optimal contiguous partition
+    # Group n segments into num_clips contiguous chunks minimizing squared error
+    # from target duration per clip.
+    target_dur = (total_end - total_start) / num_clips
+    base_durs = [base_boundaries[i + 1] - base_boundaries[i] for i in range(n)]
+
+    prefix = [0.0] * (n + 1)
+    for i in range(n):
+        prefix[i + 1] = prefix[i] + base_durs[i]
+
+    def cost(i: int, j: int) -> float:
+        w_dur = prefix[j] - prefix[i]
+        diff = w_dur - target_dur
+        return diff * diff
+
+    # dp[c][i] = min cost to partition first i segments into c windows
+    dp = [[float("inf")] * (n + 1) for _ in range(num_clips + 1)]
+    parent = [[0] * (n + 1) for _ in range(num_clips + 1)]
+    dp[0][0] = 0.0
+
+    for c in range(1, num_clips + 1):
+        for i in range(c, n - (num_clips - c) + 1):
+            for j in range(c - 1, i):
+                val = dp[c - 1][j] + cost(j, i)
+                if val < dp[c][i]:
+                    dp[c][i] = val
+                    parent[c][i] = j
+
+    # Reconstruct partition boundaries
+    splits = [n]
+    curr = n
+    for c in range(num_clips, 0, -1):
+        curr = parent[c][curr]
+        splits.append(curr)
+    splits.reverse()  # [0, s1, s2, ..., n]
+
+    windows: list[tuple[float, float]] = []
+    for c in range(num_clips):
+        start_idx = splits[c]
+        end_idx = splits[c + 1]
+        w_start = base_boundaries[start_idx]
+        w_end = base_boundaries[end_idx]
+        windows.append((w_start, w_end))
+
+    return windows
 
 
 def _build_scale_pad_filter(width: int, height: int, fps: int = 30) -> str:
@@ -412,9 +448,10 @@ class FlowRenderPipeline:
         start_time = time.time()
 
         # Parse clip alignment strategy (default: speed_long_slow_short)
-        raw_strategy = job_data.get(
-            "clipAlignmentStrategy",
-            ClipAlignmentStrategy.SPEED_LONG_SLOW_SHORT.value,
+        raw_strategy = (
+            job_data.get("clipAlignmentStrategy")
+            or job_data.get("clip_alignment_strategy")
+            or ClipAlignmentStrategy.SPEED_LONG_SLOW_SHORT.value
         )
         try:
             strategy = ClipAlignmentStrategy(raw_strategy)
@@ -429,7 +466,11 @@ class FlowRenderPipeline:
 
         # Parse resolution / ratio
         resolution = job_data.get("resolution", "720p")
-        ratio_format = job_data.get("ratioFormat", "16x9")
+        ratio_format = (
+            job_data.get("ratioFormat")
+            or job_data.get("ratio_format")
+            or "16x9"
+        )
         width, height = _resolve_dimensions(resolution, ratio_format)
         logger.info(
             f"[FLOW {job_id}] Output resolution: {width}x{height} "
@@ -442,19 +483,23 @@ class FlowRenderPipeline:
         try:
             # --- 1. Resolve S3 paths per locale ---
             locale_audio: dict[str, str] = {
-                "en": job_data["audioEnPath"],
-                "zh-CN": job_data["audioZhCnPath"],
-                "zh-TW": job_data["audioZhTwPath"],
+                "en": job_data.get("audioEnPath") or job_data.get("audio_en_path", ""),
+                "zh-CN": job_data.get("audioZhCnPath") or job_data.get("audio_zh_cn_path", ""),
+                "zh-TW": job_data.get("audioZhTwPath") or job_data.get("audio_zh_tw_path", ""),
             }
             locale_align: dict[str, str] = {
-                "en": job_data["alignEnPath"],
-                "zh-CN": job_data["alignZhCnPath"],
-                "zh-TW": job_data["alignZhTwPath"],
+                "en": job_data.get("alignEnPath") or job_data.get("align_en_path", ""),
+                "zh-CN": job_data.get("alignZhCnPath") or job_data.get("align_zh_cn_path", ""),
+                "zh-TW": job_data.get("alignZhTwPath") or job_data.get("align_zh_tw_path", ""),
             }
-            clip_s3_keys: list[str] = job_data["clipS3Keys"]
+            clip_s3_keys: list[str] = (
+                job_data.get("clipS3Keys")
+                or job_data.get("clip_s3_keys")
+                or []
+            )
 
-            if len(clip_s3_keys) != 10:
-                raise ValueError(f"Expected 10 clip S3 keys, got {len(clip_s3_keys)}")
+            if not clip_s3_keys:
+                raise ValueError(f"No clip S3 keys provided for job {job_id}")
 
             # --- 2. Resolve audio + alignment files (local cache → S3) ---
             logger.info(f"[FLOW {job_id}] Resolving audio and alignment files")
@@ -653,12 +698,23 @@ class FlowRenderPipeline:
             segments = [{"start": w["start"], "end": w["end"]} for w in words]
             source = f"{len(words)} words (no segments, word-level fallback)"
 
+        try:
+            total_audio_duration = _get_video_duration(audio_path, self.ffmpeg_path)
+        except Exception as e:
+            logger.warning(
+                f"[FLOW {job_id}] [{locale}] Could not probe audio duration: {e}"
+            )
+            total_audio_duration = None
+
         num_clips = len(clips)
-        windows = _build_time_windows(segments, num_clips)
+        windows = _build_time_windows(
+            segments, num_clips, total_audio_duration=total_audio_duration
+        )
 
         logger.info(
             f"[FLOW {job_id}] [{locale}] {source} → "
-            f"{num_clips} windows (strategy: {strategy.value})"
+            f"{num_clips} windows (strategy: {strategy.value}, "
+            f"audio_dur: {f'{total_audio_duration:.2f}s' if total_audio_duration else 'unknown'})"
         )
 
         # Process each clip to fit its window
