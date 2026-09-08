@@ -8,19 +8,20 @@ Queue Architecture (Standardized DLX Pattern):
     Main Queues (Durable, Priority-enabled x-max-priority=10):
     ├── tts_jobs (TTL: 24h, priority 0-10) → DLX: tts_jobs.dlx → DLQ: tts_jobs_failed
     ├── tts_results (TTL: 7d, priority 0-10) → DLX: tts_results.dlx → DLQ: tts_results_failed
+    ├── flow_render_jobs (TTL: 7d) → DLX: flow_render_jobs.dlx → DLQ: flow_render_jobs_failed
     └── flow_render_results (TTL: 7d) → DLX: flow_render_results.dlx → DLQ: flow_render_results_failed
 
     Dead-Letter Exchanges (Fanout):
     ├── tts_jobs.dlx → routes to tts_jobs_failed
     ├── tts_results.dlx → routes to tts_results_failed
+    ├── flow_render_jobs.dlx → routes to flow_render_jobs_failed
     └── flow_render_results.dlx → routes to flow_render_results_failed
 
     Dead-Letter Queues (Durable):
     ├── tts_jobs_failed (TTL: 7 days) - Messages rejected after 3 retries
     ├── tts_results_failed (TTL: 7 days) - Failed result processing
+    ├── flow_render_jobs_failed (TTL: 7 days) - Failed flow render requests
     └── flow_render_results_failed (TTL: 7 days) - Failed render result processing
-
-    Note: flow_render_jobs is owned by studio-backend; this worker declares it passively.
 
 Usage:
     from services.rabbitmq_config import configure_queues
@@ -84,6 +85,15 @@ QUEUE_CONFIGS = {
             "x-max-priority": MQ_PRIORITY_MAX,  # Enable priority ordering (0-10)
         },
     },
+    "flow_render_jobs": {
+        "durable": True,
+        "arguments": {
+            "x-dead-letter-exchange": "flow_render_jobs.dlx",
+            "x-dead-letter-routing-key": "flow_render_jobs_failed",
+            "x-message-ttl": 604800000,  # 7 days in milliseconds
+            "x-max-length": 5000,
+        },
+    },
     "flow_render_results": {
         "durable": True,
         "arguments": {
@@ -107,6 +117,13 @@ QUEUE_CONFIGS = {
             "x-message-ttl": 604800000,  # 7 days in milliseconds
             "x-max-length": 5000,
             # No x-max-priority on DLQs — dead letters don't need priority routing
+        },
+    },
+    "flow_render_jobs_failed": {
+        "durable": True,
+        "arguments": {
+            "x-message-ttl": 604800000,  # 7 days in milliseconds
+            "x-max-length": 5000,
         },
     },
     "flow_render_results_failed": {
@@ -241,7 +258,12 @@ def declare_dlx_exchanges(channel: pika.channel.Channel) -> None:
     Args:
         channel: RabbitMQ channel
     """
-    dlx_exchanges = ["tts_jobs.dlx", "tts_results.dlx", "flow_render_results.dlx"]
+    dlx_exchanges = [
+        "tts_jobs.dlx",
+        "tts_results.dlx",
+        "flow_render_jobs.dlx",
+        "flow_render_results.dlx",
+    ]
 
     for exchange_name in dlx_exchanges:
         try:
@@ -265,6 +287,7 @@ def bind_dlq_to_dlx(channel: pika.channel.Channel) -> None:
     Bindings:
     - tts_jobs_failed → tts_jobs.dlx
     - tts_results_failed → tts_results.dlx
+    - flow_render_jobs_failed → flow_render_jobs.dlx
     - flow_render_results_failed → flow_render_results.dlx
 
     Args:
@@ -273,6 +296,7 @@ def bind_dlq_to_dlx(channel: pika.channel.Channel) -> None:
     bindings = [
         ("tts_jobs_failed", "tts_jobs.dlx"),
         ("tts_results_failed", "tts_results.dlx"),
+        ("flow_render_jobs_failed", "flow_render_jobs.dlx"),
         ("flow_render_results_failed", "flow_render_results.dlx"),
     ]
 
@@ -374,6 +398,7 @@ def configure_queues(
         for queue_name in [
             "tts_jobs_failed",
             "tts_results_failed",
+            "flow_render_jobs_failed",
             "flow_render_results_failed",
         ]:
             configure_queue(channel, queue_name, QUEUE_CONFIGS[queue_name])
@@ -384,7 +409,12 @@ def configure_queues(
 
         # Step 4: Declare main queues with DLX routing
         logger.info("\nStep 4: Declaring main queues with DLX routing...")
-        for queue_name in ["tts_jobs", "tts_results", "flow_render_results"]:
+        for queue_name in [
+            "tts_jobs",
+            "tts_results",
+            "flow_render_jobs",
+            "flow_render_results",
+        ]:
             configure_queue(channel, queue_name, QUEUE_CONFIGS[queue_name])
 
         logger.info("-" * 70)

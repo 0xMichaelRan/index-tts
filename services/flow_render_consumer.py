@@ -4,8 +4,8 @@ Flow render consumer.
 Runs as a daemon thread inside IndexTTSWorker on Linux/Windows
 (skipped on macOS where there is no GPU to run ffmpeg renders).
 
-Consumes from `flow_render_jobs` (passive declare — queue is owned by studio-backend)
-and publishes results to `flow_render_results`.
+Consumes from `flow_render_jobs` (owned and declared by this worker with DLX)
+and publishes rendering results to `flow_render_results`.
 
 Usage (from tts_worker.py)::
 
@@ -175,9 +175,35 @@ class FlowRenderConsumer:
         self._connection = pika.BlockingConnection([params])
         self._channel = self._connection.channel()
 
-        # Passive declare for flow_render_jobs (owned by studio-backend)
-        # This asserts the queue exists without modifying it.
-        self._channel.queue_declare(queue=_INPUT_QUEUE, passive=True)
+        # Active declare for flow_render_jobs (owned by this worker)
+        self._channel.exchange_declare(
+            exchange=f"{_INPUT_QUEUE}.dlx",
+            exchange_type="fanout",
+            durable=True,
+        )
+        self._channel.queue_declare(
+            queue=f"{_INPUT_QUEUE}_failed",
+            durable=True,
+            arguments={
+                "x-message-ttl": 604800000,  # 7 days
+                "x-max-length": 5000,
+            },
+        )
+        self._channel.queue_bind(
+            queue=f"{_INPUT_QUEUE}_failed",
+            exchange=f"{_INPUT_QUEUE}.dlx",
+            routing_key="",
+        )
+        self._channel.queue_declare(
+            queue=_INPUT_QUEUE,
+            durable=True,
+            arguments={
+                "x-dead-letter-exchange": f"{_INPUT_QUEUE}.dlx",
+                "x-dead-letter-routing-key": f"{_INPUT_QUEUE}_failed",
+                "x-message-ttl": 604800000,  # 7 days
+                "x-max-length": 5000,
+            },
+        )
 
         # Active declare for flow_render_results (owned by this worker)
         self._channel.exchange_declare(
