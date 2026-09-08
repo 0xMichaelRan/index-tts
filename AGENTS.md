@@ -318,6 +318,25 @@ uv run pytest tests/test_audio_normalization.py -v
 uv run pytest tests/test_audio_normalization.py::TestNormalizeLoudness -v
 ```
 
+### Flow Video Render Pipeline ✅ IMPLEMENTED
+
+**Status**: Fully implemented and tested
+
+The worker implements the **flow multi-locale video render pipeline** using FFmpeg to compose multi-clip videos matched to TTS narration:
+
+- **Input Queue**: `flow_render_jobs` (consumed in daemon thread on Linux/Windows)
+- **Output Queue**: `flow_render_results` (with DLX and DLQ)
+- **Local Cache First**: Reuses locally synthesized audio and alignment JSON files from `outputs/tts_output` before downloading from S3
+- **Audio Window Segmentation**: Character-count proportional window division matching 10 input video clips
+- **Speed Adjustment**: FFmpeg `setpts=PTS/speed_factor` + chained `atempo` filters (clamped to `[0.25, 4.0]`)
+- **Output**: 3 final MP4 videos (`en`, `zh-CN`, `zh-TW`) uploaded to `flow/YYYYMMDD/{job_id}/{locale}.mp4`
+
+**Module Location**: `services/flow_render_pipeline.py`, `services/flow_render_consumer.py`
+
+**Documentation**: See [`docs/FLOW_RENDER_PIPELINE.md`](./docs/FLOW_RENDER_PIPELINE.md) for complete reference
+
+---
+
 ## Configuration
 
 ### Environment Variables
@@ -554,6 +573,7 @@ logger.error("Job processing failed")
 - `docs/FORCED_ALIGNMENT.md` - Forced alignment reference documentation
 - `docs/CACHE_IMPLEMENTATION_SUMMARY.md` - Synthesis cache implementation guide
 - `docs/LOUDNESS_NORMALIZATION_FIX.md` - Audio normalization implementation
+- `docs/FLOW_RENDER_PIPELINE.md` - Flow video render pipeline documentation
 - `docs/` - Complete documentation directory
 
 ## Performance Considerations
