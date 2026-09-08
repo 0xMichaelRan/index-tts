@@ -6,16 +6,22 @@ Consumes a flow_render_jobs message and produces 3 locale MP4 files:
 1. For each locale (en, zh-CN, zh-TW):
    a. Resolve audio + alignment files (local cache first, then S3 download).
    b. Parse word-level alignment JSON.
-   c. Segment audio into 10 time windows by character-count proportion.
-   d. For each video clip k:
-      - speed_factor = clip_natural_duration / window_duration_k  (clamped [0.25, 4])
-      - ffmpeg: setpts=PTS/speed_factor  (video stream)
-      - ffmpeg: atempo chain             (audio stream, each filter in [0.5, 2.0])
-   e. Concat 10 adjusted clips, replace audio with full locale MP3.
+   c. Segment audio into 10 time windows by WORD-COUNT proportion (not sentences).
+   d. For each video clip k, apply clip_alignment_strategy:
+      - speed_long_slow_short (default / Option 2):
+          speed_factor = clip_natural_duration / window_duration_k  (clamped [0.25, 4])
+          ffmpeg: setpts=pts_factor*PTS  (video only, -an)
+      - trim_long_slow_short (Option 1):
+          Long clip: trim from front (ss = clip_dur - window_dur), keep ending at 1x speed
+          Short clip: slow down via setpts (same as Option 2)
+   e. Concat 10 adjusted (video-only) clips, overlay full locale MP3 untouched.
    f. Output: flow/{YYYYMMDD}/{job_id}/{locale}.mp4
 
 2. Upload 3 MP4s to S3 output bucket.
 3. Return result dict for publishing to flow_render_results.
+
+Strict audio invariant: narration audio is NEVER trimmed, sped up, or slowed down.
+All temporal adjustments are performed exclusively on the video clips.
 """
 
 from __future__ import annotations
@@ -27,6 +33,7 @@ import subprocess
 import tempfile
 import time
 from datetime import datetime, timezone
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -38,42 +45,59 @@ logger = get_logger(__name__)
 # Speed factor bounds per the spec
 _MIN_SPEED = 0.25
 _MAX_SPEED = 4.0
-# atempo filter only accepts [0.5, 2.0] — chain filters for wider range
-_ATEMPO_MIN = 0.5
-_ATEMPO_MAX = 2.0
 
 LOCALES = ["en", "zh-CN", "zh-TW"]
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Strategy enum
 # ---------------------------------------------------------------------------
 
 
-def _atempo_chain(speed: float) -> list[str]:
+class ClipAlignmentStrategy(str, Enum):
     """
-    Build a list of atempo filter strings whose product equals `speed`.
+    Controls how each video clip is adjusted to match its audio window.
 
-    Each individual atempo value is clamped to [0.5, 2.0] as required by ffmpeg.
-    Multiple filters are chained when the target speed falls outside that range.
+    speed_long_slow_short (Default / Option 2):
+        Long clip  → speed up via setpts (all frames preserved, faster playback)
+        Short clip → slow down via setpts (all frames preserved, slower playback)
 
-    Examples:
-        _atempo_chain(1.5)  → ["atempo=1.5"]
-        _atempo_chain(0.25) → ["atempo=0.5", "atempo=0.5"]
-        _atempo_chain(3.0)  → ["atempo=2.0", "atempo=1.5"]
+    trim_long_slow_short (Option 1):
+        Long clip  → trim from front, keep climax/ending at natural 1× speed
+        Short clip → slow down via setpts (same as Option 2)
     """
-    filters: list[str] = []
-    remaining = speed
-    while remaining > _ATEMPO_MAX + 1e-6:
-        filters.append(f"atempo={_ATEMPO_MAX}")
-        remaining /= _ATEMPO_MAX
-    while remaining < _ATEMPO_MIN - 1e-6:
-        filters.append(f"atempo={_ATEMPO_MIN}")
-        remaining /= _ATEMPO_MIN
-    # Clamp final value
-    remaining = max(_ATEMPO_MIN, min(_ATEMPO_MAX, remaining))
-    filters.append(f"atempo={remaining:.6f}")
-    return filters
+
+    SPEED_LONG_SLOW_SHORT = "speed_long_slow_short"
+    TRIM_LONG_SLOW_SHORT = "trim_long_slow_short"
+
+
+# ---------------------------------------------------------------------------
+# Resolution helpers
+# ---------------------------------------------------------------------------
+
+# Maps (resolution_label, ratio_format) → (width, height)
+_RESOLUTION_MAP: dict[tuple[str, str], tuple[int, int]] = {
+    ("720p", "16x9"): (1280, 720),
+    ("720p", "9x16"): (720, 1280),
+    ("1080p", "16x9"): (1920, 1080),
+    ("1080p", "9x16"): (1080, 1920),
+    ("480p", "16x9"): (854, 480),
+    ("480p", "9x16"): (480, 854),
+    ("4k", "16x9"): (3840, 2160),
+    ("4k", "9x16"): (2160, 3840),
+}
+_DEFAULT_RESOLUTION = (1280, 720)
+
+
+def _resolve_dimensions(resolution: str, ratio_format: str) -> tuple[int, int]:
+    """Return (width, height) for the given resolution label and ratio format."""
+    key = (resolution.lower(), ratio_format.lower())
+    return _RESOLUTION_MAP.get(key, _DEFAULT_RESOLUTION)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 
 def _get_video_duration(path: str, ffmpeg_path: str = "ffmpeg") -> float:
@@ -94,17 +118,23 @@ def _get_video_duration(path: str, ffmpeg_path: str = "ffmpeg") -> float:
     return float(data["format"]["duration"])
 
 
-def _segment_audio_by_chars(
+def _segment_audio_by_words(
     words: list[dict],
     num_clips: int,
 ) -> list[tuple[float, float]]:
     """
-    Divide alignment word list into `num_clips` time windows by character proportion.
+    Divide stable-whisper word-level alignment into ``num_clips`` time windows
+    using word count as the proportional weight.
+
+    The input text is NOT assumed to have exactly ``num_clips`` sentences.
+    Break points are derived purely from word counts so each clip gets a
+    roughly equal share of narration words (≈ equal spoken duration).
 
     Algorithm:
-        1. Total chars across all words.
-        2. chars_per_clip = total / num_clips.
-        3. Walk words, accumulate chars; when crossing k * chars_per_clip, start clip k+1.
+        1. Total word count.
+        2. words_per_clip = total / num_clips.
+        3. Walk words; when cumulative count crosses k * words_per_clip, close
+           the current window and open the next.
 
     Returns:
         List of (start_sec, end_sec) tuples, length == num_clips.
@@ -113,31 +143,26 @@ def _segment_audio_by_chars(
     if not words:
         raise ValueError("Empty word list — cannot segment audio")
 
-    total_chars = sum(len(w.get("word", "")) for w in words)
-    if total_chars == 0:
-        raise ValueError("Zero total characters in alignment — cannot segment")
-
-    chars_per_clip = total_chars / num_clips
+    total_words = len(words)
+    words_per_clip = total_words / num_clips
 
     windows: list[tuple[float, float]] = []
-    accumulated = 0
     clip_start = words[0].get("start", 0.0)
-    next_boundary = chars_per_clip
+    next_boundary = words_per_clip
 
-    for word in words:
-        word_len = len(word.get("word", ""))
-        accumulated += word_len
+    for idx, word in enumerate(words):
         word_end = word.get("end", 0.0)
+        words_processed = idx + 1  # 1-indexed count
 
-        if accumulated >= next_boundary and len(windows) < num_clips - 1:
+        if words_processed >= next_boundary and len(windows) < num_clips - 1:
             windows.append((clip_start, word_end))
             clip_start = word_end
-            next_boundary += chars_per_clip
+            next_boundary += words_per_clip
 
     # Final window covers everything to the last word's end
     windows.append((clip_start, words[-1].get("end", clip_start + 1.0)))
 
-    # Pad or trim to exactly num_clips (edge cases)
+    # Pad or trim to exactly num_clips (edge cases: very few words)
     while len(windows) < num_clips:
         last_end = windows[-1][1] if windows else 0.0
         windows.append((last_end, last_end + 0.01))
@@ -146,40 +171,80 @@ def _segment_audio_by_chars(
     return windows
 
 
-def _speed_adjust_clip(
+def _build_scale_pad_filter(width: int, height: int, fps: int = 30) -> str:
+    """
+    Return a vf filter string that scales, pads to target frame, and sets fps.
+
+    Uses force_original_aspect_ratio=decrease so the clip is letterboxed /
+    pillarboxed into the target frame without cropping.
+    """
+    return (
+        f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
+        f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,"
+        f"fps={fps}"
+    )
+
+
+def _process_clip_segment(
     clip_path: str,
     output_path: str,
-    speed_factor: float,
+    window_duration: float,
+    clip_duration: float,
+    strategy: ClipAlignmentStrategy,
+    width: int,
+    height: int,
+    fps: int = 30,
     ffmpeg_path: str = "ffmpeg",
 ) -> None:
     """
-    Speed-adjust a single video clip using ffmpeg.
+    Process a single video clip to fit ``window_duration`` using the given strategy.
 
-    - Video: setpts=PTS/speed_factor
-    - Audio: atempo chain (each filter in [0.5, 2.0])
+    Audio is stripped (-an) because the full locale narration MP3 is overlaid
+    onto the concatenated video at the final step (strict audio invariant).
+
+    Args:
+        clip_path:       Local path to the raw downloaded clip.
+        output_path:     Local path for the processed segment.
+        window_duration: Target duration (seconds) from alignment windows.
+        clip_duration:   Natural duration of the input clip (seconds).
+        strategy:        Alignment strategy to apply.
+        width, height:   Target output dimensions.
+        fps:             Target output frame rate.
+        ffmpeg_path:     Path to the ffmpeg binary.
     """
-    speed_factor = max(_MIN_SPEED, min(_MAX_SPEED, speed_factor))
-    atempo_filters = _atempo_chain(speed_factor)
-    audio_filter = ",".join(atempo_filters)
-    video_filter = f"setpts={1.0 / speed_factor:.6f}*PTS"
+    scale_pad = _build_scale_pad_filter(width, height, fps)
 
-    cmd = [
-        ffmpeg_path,
-        "-y",
-        "-i",
-        clip_path,
-        "-filter:v",
-        video_filter,
-        "-filter:a",
-        audio_filter,
-        "-c:v",
-        "libx264",
-        "-preset",
-        "fast",
-        "-c:a",
-        "aac",
-        output_path,
-    ]
+    if (
+        strategy == ClipAlignmentStrategy.TRIM_LONG_SLOW_SHORT
+        and clip_duration > window_duration
+    ):
+        # Option 1 — Long clip: trim from front, keep the ending at 1× speed.
+        start_time = clip_duration - window_duration
+        cmd = [
+            ffmpeg_path, "-y",
+            "-ss", f"{start_time:.3f}",
+            "-t", f"{window_duration:.3f}",
+            "-i", clip_path,
+            "-vf", f"{scale_pad},setpts=PTS-STARTPTS",
+            "-an",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "22",
+            output_path,
+        ]
+    else:
+        # Option 2 (default) or short clip in Option 1: adjust via setpts.
+        # pts_factor > 1 slows down, < 1 speeds up.
+        pts_factor = window_duration / max(clip_duration, 0.001)
+        # Clamp to inverse of speed bounds
+        pts_factor = max(1.0 / _MAX_SPEED, min(1.0 / _MIN_SPEED, pts_factor))
+        cmd = [
+            ffmpeg_path, "-y",
+            "-i", clip_path,
+            "-vf", f"{scale_pad},setpts={pts_factor:.6f}*PTS",
+            "-an",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "22",
+            output_path,
+        ]
+
     subprocess.run(cmd, check=True, capture_output=True)
 
 
@@ -221,22 +286,22 @@ def _overlay_audio(
     output_path: str,
     ffmpeg_path: str = "ffmpeg",
 ) -> None:
-    """Replace audio track of video with locale MP3."""
+    """
+    Replace audio track of concatenated video with locale MP3.
+
+    The audio stream is copied verbatim — no speed, pitch, or duration
+    adjustments are applied (strict audio invariant).
+    """
     cmd = [
         ffmpeg_path,
         "-y",
-        "-i",
-        video_path,
-        "-i",
-        audio_path,
-        "-map",
-        "0:v:0",
-        "-map",
-        "1:a:0",
-        "-c:v",
-        "copy",
-        "-c:a",
-        "aac",
+        "-i", video_path,
+        "-i", audio_path,
+        "-map", "0:v:0",
+        "-map", "1:a:0",
+        "-c:v", "copy",
+        "-c:a", "aac",
+        "-b:a", "192k",
         "-shortest",
         output_path,
     ]
@@ -291,13 +356,40 @@ class FlowRenderPipeline:
             audioEnPath, audioZhCnPath, audioZhTwPath,
             alignEnPath, alignZhCnPath, alignZhTwPath,
             clipS3Keys  (list of 10 S3 keys),
-            resolution, ratioFormat, createdAt
+            resolution, ratioFormat,
+            clipAlignmentStrategy  ("speed_long_slow_short" | "trim_long_slow_short"),
+            createdAt
 
         Returns:
             Result dict suitable for publishing to flow_render_results.
         """
         job_id = str(job_data.get("jobId", "unknown"))
         start_time = time.time()
+
+        # Parse clip alignment strategy (default: speed_long_slow_short)
+        raw_strategy = job_data.get(
+            "clipAlignmentStrategy",
+            ClipAlignmentStrategy.SPEED_LONG_SLOW_SHORT.value,
+        )
+        try:
+            strategy = ClipAlignmentStrategy(raw_strategy)
+        except ValueError:
+            logger.warning(
+                f"[FLOW {job_id}] Unknown clipAlignmentStrategy '{raw_strategy}', "
+                f"falling back to 'speed_long_slow_short'"
+            )
+            strategy = ClipAlignmentStrategy.SPEED_LONG_SLOW_SHORT
+
+        logger.info(f"[FLOW {job_id}] Clip alignment strategy: {strategy.value}")
+
+        # Parse resolution / ratio
+        resolution = job_data.get("resolution", "720p")
+        ratio_format = job_data.get("ratioFormat", "16x9")
+        width, height = _resolve_dimensions(resolution, ratio_format)
+        logger.info(
+            f"[FLOW {job_id}] Output resolution: {width}x{height} "
+            f"({resolution}, {ratio_format})"
+        )
 
         logger.info(f"[FLOW {job_id}] Starting render pipeline")
 
@@ -353,6 +445,9 @@ class FlowRenderPipeline:
                     align_path=local_align[locale],
                     clips=local_clips,
                     work_dir=work_dir,
+                    strategy=strategy,
+                    width=width,
+                    height=height,
                 )
 
                 # Upload
@@ -473,16 +568,26 @@ class FlowRenderPipeline:
         align_path: str,
         clips: list[str],
         work_dir: str,
+        strategy: ClipAlignmentStrategy,
+        width: int,
+        height: int,
+        fps: int = 30,
     ) -> str:
         """
         Render a single locale video.
+
+        Steps:
+        1. Parse word-level alignment JSON → derive N time windows by word count.
+        2. For each clip apply the alignment strategy to fit its window.
+        3. Concatenate adjusted (video-only) clips.
+        4. Overlay the locale narration audio WITHOUT modification.
 
         Returns local path to the final MP4.
         """
         locale_dir = os.path.join(work_dir, locale.replace("-", "_"))
         os.makedirs(locale_dir, exist_ok=True)
 
-        # Load alignment words
+        # Load alignment words from stable-whisper output
         with open(align_path, encoding="utf-8") as fh:
             alignment = json.load(fh)
         words: list[dict] = alignment.get("words", [])
@@ -491,45 +596,70 @@ class FlowRenderPipeline:
                 f"[FLOW {job_id}] No words in alignment for locale {locale}"
             )
 
-        # Segment into 10 windows
+        # Derive N time windows from word count (NOT sentence boundaries)
         num_clips = len(clips)
-        windows = _segment_audio_by_chars(words, num_clips)
+        windows = _segment_audio_by_words(words, num_clips)
 
-        # Speed-adjust each clip
+        logger.info(
+            f"[FLOW {job_id}] [{locale}] {len(words)} words → "
+            f"{num_clips} windows via word-count segmentation"
+        )
+
+        # Process each clip to fit its window
         adjusted_clips: list[str] = []
         for i, (clip_path, (win_start, win_end)) in enumerate(zip(clips, windows)):
             win_duration = max(win_end - win_start, 0.01)  # guard zero-length
             try:
-                clip_natural_duration = _get_video_duration(clip_path, self.ffmpeg_path)
+                clip_natural_duration = _get_video_duration(
+                    clip_path, self.ffmpeg_path
+                )
             except Exception as e:
                 logger.warning(
-                    f"[FLOW {job_id}] Could not get clip {i} duration: {e}. "
-                    "Using window duration as fallback."
+                    f"[FLOW {job_id}] [{locale}] Could not probe clip {i} duration: "
+                    f"{e}. Falling back to window duration."
                 )
                 clip_natural_duration = win_duration
 
-            speed_factor = clip_natural_duration / win_duration
-            speed_factor = max(_MIN_SPEED, min(_MAX_SPEED, speed_factor))
-
             adjusted_path = os.path.join(locale_dir, f"adj_{i:02d}.mp4")
+
+            # Log the effective action for this clip
+            if (
+                strategy == ClipAlignmentStrategy.TRIM_LONG_SLOW_SHORT
+                and clip_natural_duration > win_duration
+            ):
+                action = (
+                    f"trim-front ({clip_natural_duration - win_duration:.2f}s cut, "
+                    f"keep last {win_duration:.2f}s at 1×)"
+                )
+            else:
+                pts = win_duration / max(clip_natural_duration, 0.001)
+                pts = max(1.0 / _MAX_SPEED, min(1.0 / _MIN_SPEED, pts))
+                speed = 1.0 / pts
+                action = f"setpts×{pts:.3f} (speed={speed:.3f}×)"
+
             logger.debug(
-                f"[FLOW {job_id}] {locale} clip {i}: "
-                f"speed={speed_factor:.3f} "
-                f"(clip={clip_natural_duration:.2f}s, window={win_duration:.2f}s)"
+                f"[FLOW {job_id}] [{locale}] clip {i:02d}: "
+                f"clip={clip_natural_duration:.2f}s window={win_duration:.2f}s → {action}"
             )
-            _speed_adjust_clip(
+
+            _process_clip_segment(
                 clip_path=clip_path,
                 output_path=adjusted_path,
-                speed_factor=speed_factor,
+                window_duration=win_duration,
+                clip_duration=clip_natural_duration,
+                strategy=strategy,
+                width=width,
+                height=height,
+                fps=fps,
                 ffmpeg_path=self.ffmpeg_path,
             )
             adjusted_clips.append(adjusted_path)
 
-        # Concatenate adjusted clips (video only, temp)
+        # Concatenate adjusted (video-only) clips
         concat_path = os.path.join(locale_dir, "concat.mp4")
         _concat_clips(adjusted_clips, concat_path, self.ffmpeg_path)
 
-        # Overlay locale audio
+        # Overlay locale narration audio (STRICT: audio is never modified)
         final_path = os.path.join(locale_dir, f"{locale}.mp4")
         _overlay_audio(
             video_path=concat_path,
