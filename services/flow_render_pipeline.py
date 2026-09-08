@@ -118,57 +118,102 @@ def _get_video_duration(path: str, ffmpeg_path: str = "ffmpeg") -> float:
     return float(data["format"]["duration"])
 
 
-def _segment_audio_by_words(
-    words: list[dict],
+def _build_time_windows(
+    segments: list[dict],
     num_clips: int,
 ) -> list[tuple[float, float]]:
     """
-    Divide stable-whisper word-level alignment into ``num_clips`` time windows
-    using word count as the proportional weight.
+    Derive exactly ``num_clips`` (start_sec, end_sec) windows from stable-ts
+    sentence-level segments, using narration duration as the equalising metric.
 
-    The input text is NOT assumed to have exactly ``num_clips`` sentences.
-    Break points are derived purely from word counts so each clip gets a
-    roughly equal share of narration words (≈ equal spoken duration).
+    This algorithm works for any ``num_clips`` value (10, 15, 20, …) without
+    any reference to word or character counts.
 
-    Algorithm:
-        1. Total word count.
-        2. words_per_clip = total / num_clips.
-        3. Walk words; when cumulative count crosses k * words_per_clip, close
-           the current window and open the next.
+    Three cases:
+
+    n == num_clips
+        Perfect match — each segment becomes one window verbatim.
+
+    n > num_clips  (more segments than clips — merge)
+        Greedily accumulate adjacent segments. After each closed window the
+        merge target is recomputed as::
+
+            target = (time_remaining_from_window_start) / remaining_clips
+
+        so windows stay balanced even when individual segment durations vary.
+
+    n < num_clips  (fewer segments than clips — split)
+        Iteratively split the longest window at its temporal midpoint until
+        the count equals ``num_clips``. Pure time-range split — no word or
+        character arithmetic needed; result stays proportional to narration.
+
+    Args:
+        segments:  List of dicts with ``start`` and ``end`` float keys,
+                   as produced by stable-ts (alignment JSON ``segments`` field).
+        num_clips: Exact number of windows required (must equal input clip count).
 
     Returns:
-        List of (start_sec, end_sec) tuples, length == num_clips.
-        The last window always extends to the final word's end timestamp.
+        List of (start_sec, end_sec) tuples, length == num_clips, sorted by start.
     """
-    if not words:
-        raise ValueError("Empty word list — cannot segment audio")
+    if not segments:
+        raise ValueError("Empty segments list — cannot build time windows")
 
-    total_words = len(words)
-    words_per_clip = total_words / num_clips
+    n = len(segments)
+    total_start = float(segments[0].get("start", 0.0))
+    total_end = float(segments[-1].get("end", total_start + 1.0))
 
-    windows: list[tuple[float, float]] = []
-    clip_start = words[0].get("start", 0.0)
-    next_boundary = words_per_clip
+    if n == num_clips:
+        # Perfect match — use each segment's own timestamps directly
+        return [(float(s["start"]), float(s["end"])) for s in segments]
 
-    for idx, word in enumerate(words):
-        word_end = word.get("end", 0.0)
-        words_processed = idx + 1  # 1-indexed count
+    if n > num_clips:
+        # Merge: greedily accumulate segments aiming for equal-duration windows.
+        windows: list[tuple[float, float]] = []
+        window_start = total_start
+        accumulated = 0.0
+        remaining_clips = num_clips
 
-        if words_processed >= next_boundary and len(windows) < num_clips - 1:
-            windows.append((clip_start, word_end))
-            clip_start = word_end
-            next_boundary += words_per_clip
+        for i, seg in enumerate(segments):
+            seg_dur = float(seg["end"]) - float(seg["start"])
+            accumulated += seg_dur
+            is_last_seg = i == n - 1
 
-    # Final window covers everything to the last word's end
-    windows.append((clip_start, words[-1].get("end", clip_start + 1.0)))
+            # Recalculate target from current window start each time
+            current_target = (
+                (total_end - window_start) / remaining_clips
+                if remaining_clips > 0
+                else accumulated + 1
+            )
 
-    # Pad or trim to exactly num_clips (edge cases: very few words)
-    while len(windows) < num_clips:
-        last_end = windows[-1][1] if windows else 0.0
-        windows.append((last_end, last_end + 0.01))
-    windows = windows[:num_clips]
+            if (accumulated >= current_target and remaining_clips > 1) or is_last_seg:
+                windows.append((window_start, float(seg["end"])))
+                window_start = float(seg["end"])
+                accumulated = 0.0
+                remaining_clips -= 1
+                if remaining_clips == 0:
+                    break
 
-    return windows
+        # Safety pad (shouldn't trigger but guards extreme edge cases)
+        while len(windows) < num_clips:
+            last_end = windows[-1][1] if windows else total_end
+            windows.append((last_end, last_end + 0.01))
+        return windows[:num_clips]
+
+    else:
+        # n < num_clips: iteratively split the longest window at its midpoint.
+        windows = [(float(s["start"]), float(s["end"])) for s in segments]
+
+        while len(windows) < num_clips:
+            longest_idx = max(
+                range(len(windows)), key=lambda i: windows[i][1] - windows[i][0]
+            )
+            start, end = windows[longest_idx]
+            mid = (start + end) / 2.0
+            windows[longest_idx] = (start, mid)
+            windows.insert(longest_idx + 1, (mid, end))
+
+        windows.sort(key=lambda w: w[0])
+        return windows[:num_clips]
 
 
 def _build_scale_pad_filter(width: int, height: int, fps: int = 30) -> str:
@@ -587,22 +632,33 @@ class FlowRenderPipeline:
         locale_dir = os.path.join(work_dir, locale.replace("-", "_"))
         os.makedirs(locale_dir, exist_ok=True)
 
-        # Load alignment words from stable-whisper output
+        # Load stable-ts alignment output
         with open(align_path, encoding="utf-8") as fh:
             alignment = json.load(fh)
-        words: list[dict] = alignment.get("words", [])
-        if not words:
-            raise ValueError(
-                f"[FLOW {job_id}] No words in alignment for locale {locale}"
-            )
 
-        # Derive N time windows from word count (NOT sentence boundaries)
+        # Prefer sentence-level segments (stable-ts provides start/end per sentence).
+        # Fall back to synthesising pseudo-segments from word timestamps only if
+        # the segments field is absent or empty.
+        raw_segments: list[dict] = alignment.get("segments", [])
+        if raw_segments:
+            segments = raw_segments
+            source = f"{len(segments)} segments"
+        else:
+            words: list[dict] = alignment.get("words", [])
+            if not words:
+                raise ValueError(
+                    f"[FLOW {job_id}] No segments or words in alignment for locale {locale}"
+                )
+            # Build one pseudo-segment per word so _build_time_windows can operate
+            segments = [{"start": w["start"], "end": w["end"]} for w in words]
+            source = f"{len(words)} words (no segments, word-level fallback)"
+
         num_clips = len(clips)
-        windows = _segment_audio_by_words(words, num_clips)
+        windows = _build_time_windows(segments, num_clips)
 
         logger.info(
-            f"[FLOW {job_id}] [{locale}] {len(words)} words → "
-            f"{num_clips} windows via word-count segmentation"
+            f"[FLOW {job_id}] [{locale}] {source} → "
+            f"{num_clips} windows (strategy: {strategy.value})"
         )
 
         # Process each clip to fit its window
