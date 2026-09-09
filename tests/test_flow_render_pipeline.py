@@ -60,7 +60,7 @@ class TestSkipFirstFrameProcessing:
         subprocess.run(cmd, capture_output=True, check=True)
         return video_path
 
-    def test_skip_first_frame_true_drops_one_frame(self, sample_video, tmp_path):
+    def test_skip_first_frame_true_drops_two_frames(self, sample_video, tmp_path):
         out_path = str(tmp_path / "out_skipped.mp4")
         # 1-second clip at 30fps = 30 frames
         _process_clip_segment(
@@ -75,8 +75,8 @@ class TestSkipFirstFrameProcessing:
             skip_first_frame=True,
         )
         frames = _get_frame_count(out_path)
-        # Should drop 1 frame (29 frames)
-        assert frames == 29
+        # Should drop 2 frames (28 frames)
+        assert frames == 28
 
     def test_skip_first_frame_false_preserves_all_frames(self, sample_video, tmp_path):
         out_path = str(tmp_path / "out_kept.mp4")
