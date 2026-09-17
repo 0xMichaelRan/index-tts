@@ -87,6 +87,7 @@ class RabbitMQManager:
 
             logger.success("Connected to RabbitMQ")
             logger.info("  DLX: tts_jobs.dlx → tts_jobs_failed (dead letter queue)")
+            logger.info("  DLX: tts_results.dlx → tts_results_failed (dead letter queue)")
 
             # Reset reconnection tracking on success
             self._reconnect_attempts = 0
@@ -101,6 +102,7 @@ class RabbitMQManager:
         if not self.channel:
             raise RuntimeError("Channel not initialized")
 
+        # ── tts_jobs ──────────────────────────────────────────────────────────
         # Declare DLX exchange (fanout)
         self.channel.exchange_declare(
             exchange="tts_jobs.dlx",
@@ -135,6 +137,42 @@ class RabbitMQManager:
                 "x-message-ttl": 86400000,  # 24 hours TTL
                 "x-max-length": 10000,
                 "x-overflow": "reject-publish",
+                "x-max-priority": MQ_PRIORITY_MAX,  # Enable priority ordering (0-10)
+            },
+        )
+
+        # ── tts_results ───────────────────────────────────────────────────────
+        # This queue is OWNED by the indexTTS worker. The backend attaches
+        # passively (passive=True) and must never declare it independently.
+        self.channel.exchange_declare(
+            exchange="tts_results.dlx",
+            exchange_type="fanout",
+            durable=True,
+        )
+
+        self.channel.queue_declare(
+            queue="tts_results_failed",
+            durable=True,
+            arguments={
+                "x-message-ttl": 604800000,  # 7 days TTL
+                "x-max-length": 5000,
+            },
+        )
+
+        self.channel.queue_bind(
+            queue="tts_results_failed",
+            exchange="tts_results.dlx",
+            routing_key="",
+        )
+
+        self.channel.queue_declare(
+            queue="tts_results",
+            durable=True,
+            arguments={
+                "x-dead-letter-exchange": "tts_results.dlx",
+                "x-dead-letter-routing-key": "tts_results_failed",
+                "x-message-ttl": 604800000,  # 7 days TTL
+                "x-max-length": 10000,
                 "x-max-priority": MQ_PRIORITY_MAX,  # Enable priority ordering (0-10)
             },
         )
