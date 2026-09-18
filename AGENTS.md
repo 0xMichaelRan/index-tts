@@ -49,7 +49,8 @@ Never use:
 
 - **`services/tts_worker.py`** - Main worker process (RabbitMQ consumer, orchestration)
 - **`services/circuit_breaker.py`** - Circuit breaker pattern for resilience (S3, TTS)
-- **`services/s3_config.py`** - **Dual-bucket S3 client** (independent misc/voice configs)
+- **`services/s3_config.py`** - Registry-backed S3 client (`config/buckets.toml`)
+- **`services/s3_registry.py`** - Unified S3 bucket registry (definitions & credential resolution)
 - **`services/idempotent_upload.py`** - Idempotent upload with integrity verification
 - **`services/logging_config.py`** - Structured logging with visual hierarchy
 - **`indextts/`** - TTS engine (BigVGAN vocoder, FastSpeech2 acoustic model)
@@ -551,14 +552,14 @@ logger.error("Job processing failed")
 ## Gotchas
 
 1. **Signal handlers**: Only call `_setup_signal_handlers()` once in `__init__` (it was duplicated, now fixed)
-2. **S3 buckets**: Two separate concepts - clarify in code/logs which bucket you're using
+2. **S3 buckets**: Unified registry architecture configured via `config/buckets.toml` (`misc`, `video`, `audio`)
 3. **RabbitMQ prefetch**: Set `prefetch_count=1` to process one job at a time (prevents overload)
 4. **Graceful shutdown**: Always stop consuming before closing connection
 5. **File cleanup**: Temporary files are cleaned up in the `finally` block after job processing
 
 ## Documentation
 
-- `docs/DUAL_BUCKET_GUIDE.md` - Dual-bucket S3 configuration guide
+- `config/buckets.toml` - S3 bucket registry configuration
 - `docs/WORKER_SETUP.md` - Complete worker setup and installation guide
 - `docs/FORCED_ALIGNMENT.md` - Forced alignment reference documentation
 - `docs/CACHE_IMPLEMENTATION_SUMMARY.md` - Synthesis cache implementation guide

@@ -186,3 +186,30 @@ class TestFlowRenderPipelineJobParsing:
             skip_first_frame=False,
         )
         assert captured_skip is False
+
+
+class TestVoxRenderPipelineClipsDownload:
+    """Test video clip downloading uses the video bucket."""
+
+    def test_download_clips_uses_video_bucket(self, tmp_path):
+        mock_s3 = MagicMock()
+        pipeline = VoxRenderPipeline(s3_client=mock_s3)
+
+        clips_dir = str(tmp_path / "clips")
+        clip_keys = [
+            "projects/23142/clips/beat_01.mp4",
+            "projects/23142/clips/beat_02.mp4",
+        ]
+
+        local_clips = pipeline._download_clips(
+            job_id="test_proj_1",
+            clip_s3_keys=clip_keys,
+            clips_dir=clips_dir,
+        )
+
+        assert len(local_clips) == 2
+        assert mock_s3.download_file.call_count == 2
+
+        for call in mock_s3.download_file.call_args_list:
+            assert call.kwargs["bucket_type"] == "video"
+

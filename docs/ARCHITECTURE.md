@@ -73,7 +73,8 @@ services/                          Worker services
 ├── tts_worker.py                  Main RabbitMQ worker
 ├── alignment.py                   Forced alignment (stable-whisper)
 ├── circuit_breaker.py             Circuit breaker pattern
-├── s3_config.py                   Dual-bucket S3 client
+├── s3_config.py                   Registry-backed S3 client
+├── s3_registry.py                 S3 bucket registry (config/buckets.toml)
 ├── idempotent_upload.py           Idempotent S3 upload
 └── logging_config.py              Structured logging
 
@@ -254,7 +255,7 @@ RabbitMQ Job Message
     ↓
 ┌─────────────────────────────────────────────┐
 │ 4. Upload Audio + Parsed Alignment to S3   │
-│    Output bucket (tts-audio/)               │
+│    Audio bucket (tts-audio/)                │
 └─────────────────────────────────────────────┘
     ↓
 Return Job Result (audio_path + alignment_path)
@@ -264,7 +265,7 @@ Return Job Result (audio_path + alignment_path)
 - **Synthesis Cache**: 65-80% faster for cache hits (10,000 entry capacity)
 - **Time-Stretching**: Librosa time_stretch for speed adjustment (ratio parameter)
 - **Forced Alignment**: Mandatory; ~0.5-5s per minute of audio (CPU)
-- **S3 Dual-Bucket**: Separate storage (voices) and output (TTS results) buckets
+- **Unified S3 Registry**: Buckets defined in `config/buckets.toml` (`misc`, `video`, `audio`)
 - **Circuit Breakers**: S3, TTS, and Alignment (prevents cascading failures)
 - **Idempotent Upload**: Prevents duplicate uploads on job retry
 

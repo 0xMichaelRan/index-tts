@@ -457,7 +457,7 @@ class VoxRenderPipeline:
     Responsibilities:
     - Validate mandatory resolution and aspectRatio fields.
     - Resolve audio + alignment files (local cache → S3).
-    - Download video clips from the misc S3 bucket.
+    - Download video clips from the video S3 bucket.
     - Apply ScriptGuidedAligner to derive N time windows from beatNarrations.
     - Adapt each clip to its time window (speed-up or Living-Poster Hold).
     - Concatenate adapted (video-only) clips and mux original audio untouched.
@@ -739,7 +739,7 @@ class VoxRenderPipeline:
         clip_s3_keys: list[str],
         clips_dir: str,
     ) -> list[str]:
-        """Download ordered video clips from the misc bucket."""
+        """Download ordered video clips from the video bucket."""
         local_clips: list[str] = []
         for i, s3_key in enumerate(clip_s3_keys):
             ext = Path(s3_key).suffix or ".mp4"
@@ -747,7 +747,7 @@ class VoxRenderPipeline:
             self.s3_client.download_file(
                 remote_path=s3_key,
                 local_path=local_path,
-                bucket_type="misc",
+                bucket_type="video",
                 max_retries=3,
             )
             local_clips.append(local_path)

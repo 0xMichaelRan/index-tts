@@ -91,12 +91,18 @@ Required in `.env`:
 # RabbitMQ
 RABBITMQ_URL=amqp://user:pass@host:port/vhost
 
-# S3 / Supabase Storage
-S3_ENDPOINT=https://...supabase.co/storage/v1/s3
-S3_ACCESS_KEY=...
-S3_SECRET_KEY=...
-S3_BUCKET_NAME=studio
-AWS_REGION=us-east-1
+# S3 Credentials (endpoints and keys defined per bucket type; names/regions in config/buckets.toml)
+S3_MISC_ENDPOINT_URL=https://storage-provider.com/s3
+S3_MISC_ACCESS_KEY_ID=storage-key
+S3_MISC_SECRET_ACCESS_KEY=storage-secret
+
+S3_VIDEO_ENDPOINT_URL=https://storage-provider.com/s3
+S3_VIDEO_ACCESS_KEY_ID=video-key
+S3_VIDEO_SECRET_ACCESS_KEY=video-secret
+
+S3_AUDIO_ENDPOINT_URL=https://output-provider.com/s3
+S3_AUDIO_ACCESS_KEY_ID=output-key
+S3_AUDIO_SECRET_ACCESS_KEY=output-secret
 
 # TTS Model
 TTS_MODEL_DIR=checkpoints

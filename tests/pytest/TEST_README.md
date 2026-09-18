@@ -212,12 +212,10 @@ The RabbitMQ connection tests require a running RabbitMQ instance. If tests time
 ### S3 Configuration Tests Fail
 The S3 tests use mocking by default. If they fail:
 1. Ensure boto3 is installed: `pip install boto3`
-2. For integration tests, set S3 environment variables in `.env`:
-   - `S3_ENDPOINT_URL`
-   - `S3_ACCESS_KEY_ID`
-   - `S3_SECRET_ACCESS_KEY`
-   - `S3_BUCKET_NAME`
-   - `S3_REGION`
+2. For integration tests, set S3 environment variables in `.env` per `config/buckets.toml`:
+   - `S3_<TYPE>_ENDPOINT_URL` (e.g. `S3_MISC_ENDPOINT_URL`, `S3_VIDEO_ENDPOINT_URL`, `S3_AUDIO_ENDPOINT_URL`)
+   - `S3_<TYPE>_ACCESS_KEY_ID`
+   - `S3_<TYPE>_SECRET_ACCESS_KEY`
 
 ### Tests Are Skipped
 This is expected behavior when platform-specific dependencies are not available. Tests will gracefully skip with informative messages. Check the output for `SKIPPED` markers.

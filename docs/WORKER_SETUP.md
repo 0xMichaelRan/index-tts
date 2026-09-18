@@ -218,8 +218,9 @@ python -m services.tts_worker
                               CONNECTIONS
 ───────────────────────────────────────────────────────────────────────────
 
-18:30:47 [INFO    ] S3 Storage Bucket:   your-storage-bucket
-18:30:47 [INFO    ] S3 Output Bucket:    your-output-bucket
+18:30:47 [INFO    ] S3 [misc  ] klatu-misc @ https://storage-provider.com
+18:30:47 [INFO    ] S3 [video ] klatu-video @ https://storage-provider.com
+18:30:47 [INFO    ] S3 [audio ] klatu-audio @ https://output-provider.com
 
 ═══════════════════════════════════════════════════════════════════════════
                           STARTUP COMPLETE

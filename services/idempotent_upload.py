@@ -275,7 +275,7 @@ class IdempotentUploader:
                     retry_count=retry_count,
                 )
 
-                # Upload file to output bucket (TTS results)
+                # Upload file to S3 bucket (e.g. audio for TTS results)
                 self.s3_client.upload_audio(
                     local_path=local_path,
                     remote_path=remote_path,

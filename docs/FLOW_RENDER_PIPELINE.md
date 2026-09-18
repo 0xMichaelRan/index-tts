@@ -253,5 +253,5 @@ FlowRenderConsumer thread started
 
 ### Common Issues
 1. **FFmpeg missing or outdated**: Ensure `ffmpeg` and `ffprobe` (version 4.4+) are installed and accessible on system `PATH`, or configure `FLOW_RENDER_FFMPEG_PATH`.
-2. **Missing clip keys on S3**: Verify that clips were uploaded to the Misc bucket prior to triggering the flow job.
+2. **Missing clip keys on S3**: Verify that clips were uploaded to the Video bucket prior to triggering the flow job.
 3. **macOS execution**: `FlowRenderConsumer` is automatically disabled on macOS (`Darwin`). Do not attempt to run flow render jobs on a Mac worker.

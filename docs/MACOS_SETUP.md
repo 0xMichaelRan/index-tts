@@ -313,13 +313,13 @@ uv run python -c "import PyObjC; print('PyObjC available')"
 │  ↓ (consume TTS jobs)                                 │
 │                                                         │
 │  Job Processor                                         │
-│  ├─ Download voice prompt from S3 (Storage Bucket)   │
+│  ├─ Download voice prompt from S3 (Misc Bucket)      │
 │  ├─ Synthesize with native macOS TTS                 │
 │  ├─ Apply time-stretching (if ratio ≠ 1.0)         │
 │  ├─ Normalize loudness (LUFS)                        │
 │  └─ Check synthesis cache (optional)                 │
 │                                                         │
-│  S3 Upload (Output Bucket)                            │
+│  S3 Upload (Audio Bucket)                             │
 │  ↓ (upload generated audio)                           │
 │                                                         │
 │  Result Publishing                                     │
