@@ -131,9 +131,9 @@ class IndexTTSWorker:
         # Initialize RabbitMQ manager
         self.rabbitmq_manager = RabbitMQManager(config.rabbitmq_url)
 
-        # Initialize vox render consumer (Linux/Windows only)
+        # Initialize vox render consumer (all platforms, if enabled)
         self.vox_render_consumer: VoxRenderConsumer | None = None
-        if self.platform != "Darwin" and config.vox_render_enabled:
+        if config.vox_render_enabled:
             self.vox_render_consumer = VoxRenderConsumer(
                 rabbitmq_url=config.rabbitmq_url,
                 ffmpeg_path=config.vox_render_ffmpeg_path,
@@ -143,8 +143,6 @@ class IndexTTSWorker:
                 f"Vox render consumer: ENABLED "
                 f"(ffmpeg: {config.vox_render_ffmpeg_path})"
             )
-        elif self.platform == "Darwin":
-            logger.info("Vox render consumer: DISABLED (macOS — no GPU render)")
         else:
             logger.info("Vox render consumer: DISABLED (VOX_RENDER_ENABLED=false)")
 
@@ -277,7 +275,7 @@ class IndexTTSWorker:
             stats_dict=cb_stats,
         )
 
-        # Start vox render consumer thread (non-Darwin, if enabled)
+        # Start vox render consumer thread (if enabled)
         if self.vox_render_consumer is not None:
             self.vox_render_consumer.start_in_thread()
             logger.success("VoxRenderConsumer thread started")

@@ -87,7 +87,13 @@ class RabbitMQManager:
 
             logger.success("Connected to RabbitMQ")
             logger.info("  DLX: tts_jobs.dlx → tts_jobs_failed (dead letter queue)")
-            logger.info("  DLX: tts_results.dlx → tts_results_failed (dead letter queue)")
+            logger.info(
+                "  DLX: tts_results.dlx → tts_results_failed (dead letter queue)"
+            )
+            logger.info("  DLX: vox_jobs.dlx → vox_jobs_failed (dead letter queue)")
+            logger.info(
+                "  DLX: vox_results.dlx → vox_results_failed (dead letter queue)"
+            )
 
             # Reset reconnection tracking on success
             self._reconnect_attempts = 0
@@ -174,6 +180,74 @@ class RabbitMQManager:
                 "x-message-ttl": 604800000,  # 7 days TTL
                 "x-max-length": 10000,
                 "x-max-priority": MQ_PRIORITY_MAX,  # Enable priority ordering (0-10)
+            },
+        )
+
+        # ── vox_jobs ──────────────────────────────────────────────────────────
+        self.channel.exchange_declare(
+            exchange="vox_jobs.dlx",
+            exchange_type="fanout",
+            durable=True,
+        )
+
+        self.channel.queue_declare(
+            queue="vox_jobs_failed",
+            durable=True,
+            arguments={
+                "x-message-ttl": 604800000,  # 7 days TTL
+                "x-max-length": 5000,
+            },
+        )
+
+        self.channel.queue_bind(
+            queue="vox_jobs_failed",
+            exchange="vox_jobs.dlx",
+            routing_key="",
+        )
+
+        self.channel.queue_declare(
+            queue="vox_jobs",
+            durable=True,
+            arguments={
+                "x-dead-letter-exchange": "vox_jobs.dlx",
+                "x-dead-letter-routing-key": "vox_jobs_failed",
+                "x-message-ttl": 604800000,  # 7 days TTL
+                "x-max-length": 10000,
+            },
+        )
+
+        # ── vox_results ───────────────────────────────────────────────────────
+        # This queue is OWNED by the worker. The backend attaches passively
+        # (passive=True) and must never declare it independently.
+        self.channel.exchange_declare(
+            exchange="vox_results.dlx",
+            exchange_type="fanout",
+            durable=True,
+        )
+
+        self.channel.queue_declare(
+            queue="vox_results_failed",
+            durable=True,
+            arguments={
+                "x-message-ttl": 604800000,  # 7 days TTL
+                "x-max-length": 5000,
+            },
+        )
+
+        self.channel.queue_bind(
+            queue="vox_results_failed",
+            exchange="vox_results.dlx",
+            routing_key="",
+        )
+
+        self.channel.queue_declare(
+            queue="vox_results",
+            durable=True,
+            arguments={
+                "x-dead-letter-exchange": "vox_results.dlx",
+                "x-dead-letter-routing-key": "vox_results_failed",
+                "x-message-ttl": 604800000,  # 7 days TTL
+                "x-max-length": 10000,
             },
         )
 
