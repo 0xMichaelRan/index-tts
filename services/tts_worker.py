@@ -24,6 +24,7 @@ from services.logging_config import (
 from services.job_utils import extract_job_id
 from services.rabbitmq_config import MQ_PRIORITY_DEFAULT, MQ_PRIORITY_MAX
 from services.rabbitmq_manager import RabbitMQManager
+from services.s3_registry import list_buckets
 from services.storage_manager import StorageManager
 from services.synthesis_pipeline import SynthesisPipeline
 from services.worker_config import WorkerConfig
@@ -258,10 +259,12 @@ class IndexTTSWorker:
                 logger.failure("Failed to establish initial connection, exiting")
                 return
 
-        # Log connection summary
+        # Log S3 registry
         logger.subsection("CONNECTIONS")
-        logger.info(f"S3 Misc Bucket:      {self.storage_manager.s3_misc_bucket}")
-        logger.info(f"R2 Voice Bucket:     {self.storage_manager.r2_voice_bucket}")
+        for cfg in list_buckets():
+            logger.info(
+                f"S3 [{cfg.type:6s}] {cfg.bucket_name} @ {cfg.endpoint_url}"
+            )
         logger.info("")
 
         # Log circuit breaker status
@@ -269,8 +272,7 @@ class IndexTTSWorker:
         log_startup_summary(
             logger,
             platform=self.platform,
-            s3_misc_bucket=self.storage_manager.s3_misc_bucket,
-            r2_voice_bucket=self.storage_manager.r2_voice_bucket,
+            s3_buckets=list_buckets(),
             rabbitmq_host=self.rabbitmq_manager.rabbitmq_host,
             stats_dict=cb_stats,
         )

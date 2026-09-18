@@ -457,15 +457,15 @@ class VoxRenderPipeline:
     Responsibilities:
     - Validate mandatory resolution and aspectRatio fields.
     - Resolve audio + alignment files (local cache → S3).
-    - Download video clips from the storage (misc) S3 bucket.
+    - Download video clips from the misc S3 bucket.
     - Apply ScriptGuidedAligner to derive N time windows from beatNarrations.
     - Adapt each clip to its time window (speed-up or Living-Poster Hold).
     - Concatenate adapted (video-only) clips and mux original audio untouched.
-    - Upload the final MP4 to output_s3_key in the voice (output) bucket.
+    - Upload the final MP4 to output_s3_key in the video bucket.
     - Return a result dict for publishing to vox_results.
 
     Args:
-        s3_client: Dual-bucket-aware S3Client.
+        s3_client: Registry-backed S3Client.
         ffmpeg_path: Path to ffmpeg binary (default: "ffmpeg").
         local_tts_output_dir: Directory where the TTS synthesis pipeline
             stores its outputs, checked before falling back to S3 download.
@@ -567,13 +567,13 @@ class VoxRenderPipeline:
 
         work_dir = tempfile.mkdtemp(prefix=f"vox_{job_id}_")
         try:
-            # 1. Resolve audio and alignment files
+            # 1. Resolve audio and alignment files (audio bucket)
             logger.info(f"[VOX {job_id}] Resolving audio and alignment files")
             local_audio = self._resolve_file(
-                job_id, audio_path_s3, work_dir, bucket_type="output"
+                job_id, audio_path_s3, work_dir, bucket_type="audio"
             )
             local_align = self._resolve_file(
-                job_id, alignment_path_s3, work_dir, bucket_type="output"
+                job_id, alignment_path_s3, work_dir, bucket_type="audio"
             )
 
             # 2. Download video clips
@@ -642,11 +642,11 @@ class VoxRenderPipeline:
             )
             logger.info(f"[VOX {job_id}] Audio muxed")
 
-            # 7. Upload to S3
+            # 7. Upload to S3 (video bucket)
             self.s3_client.upload_file(
                 local_path=final_path,
                 remote_path=output_s3_key,
-                bucket_type="output",
+                bucket_type="video",
             )
             logger.success(f"[VOX {job_id}] Uploaded → {output_s3_key}")
 
@@ -706,7 +706,7 @@ class VoxRenderPipeline:
         job_id: str,
         s3_key: str,
         work_dir: str,
-        bucket_type: str = "output",
+        bucket_type: str = "audio",
     ) -> str:
         """
         Return a local path for s3_key.
@@ -739,7 +739,7 @@ class VoxRenderPipeline:
         clip_s3_keys: list[str],
         clips_dir: str,
     ) -> list[str]:
-        """Download ordered video clips from the storage (misc) bucket."""
+        """Download ordered video clips from the misc bucket."""
         local_clips: list[str] = []
         for i, s3_key in enumerate(clip_s3_keys):
             ext = Path(s3_key).suffix or ".mp4"
@@ -747,7 +747,7 @@ class VoxRenderPipeline:
             self.s3_client.download_file(
                 remote_path=s3_key,
                 local_path=local_path,
-                bucket_type="storage",
+                bucket_type="misc",
                 max_retries=3,
             )
             local_clips.append(local_path)

@@ -251,31 +251,27 @@ def log_circuit_breaker_stats(
 def log_startup_summary(
     logger: logging.Logger,
     platform: str,
-    s3_misc_bucket: str,
-    r2_voice_bucket: str,
+    s3_buckets: list,
     rabbitmq_host: str,
     stats_dict: dict,
 ) -> None:
     """
     Log a comprehensive startup summary with all critical information.
 
-    Disambiguates S3 buckets used for different purposes:
-    - Misc bucket: audio prompts, voice recordings
-    - Voice bucket: TTS synthesis results
-
     Args:
         logger: Logger instance
         platform: Operating system (Darwin, Linux, etc.)
-        s3_misc_bucket: S3 bucket for misc storage (audio prompts, voices)
-        r2_voice_bucket: R2 bucket for TTS voice output
+        s3_buckets: List of S3BucketConfig objects from the registry
         rabbitmq_host: RabbitMQ server hostname
         stats_dict: Circuit breaker statistics
     """
     logger.section("STARTUP COMPLETE")
 
     logger.info(f"Platform:         {platform}")
-    logger.info(f"Misc Bucket:      {s3_misc_bucket}")
-    logger.info(f"Voice Bucket:     {r2_voice_bucket}")
+    for cfg in s3_buckets:
+        logger.info(
+            f"S3 Bucket [{cfg.type:6s}] {cfg.bucket_name} @ {cfg.endpoint_url}"
+        )
     logger.info(f"RabbitMQ Host:    {rabbitmq_host}")
     logger.info("")
 

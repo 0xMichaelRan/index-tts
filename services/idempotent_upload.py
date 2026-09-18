@@ -11,6 +11,11 @@ Key Features:
 - Partial failure recovery (S3 success + RabbitMQ ack failure)
 - Comprehensive logging and error handling
 
+Bucket types:
+  - "misc"  – miscellaneous assets, audio prompts
+  - "video" – video clips and rendered outputs
+  - "audio" – synthesised TTS audio and alignment JSON (default for uploads)
+
 Usage:
     from services.idempotent_upload import IdempotentUploader
 
@@ -19,7 +24,6 @@ Usage:
         job_id="job-123",
         local_path="/tmp/audio.wav",
         remote_path="tts-audio/studio/job-123.wav",
-        max_retries=3
     )
 """
 
@@ -126,7 +130,7 @@ class IdempotentUploader:
         self,
         job_id: str,
         remote_path: str,
-        bucket_type: str = "output",
+        bucket_type: str = "audio",
     ) -> UploadMetadata | None:
         """
         Check if file already uploaded with matching job_id.
@@ -139,7 +143,7 @@ class IdempotentUploader:
         Args:
             job_id: Job identifier to match
             remote_path: S3 path to check
-            bucket_type: "storage" or "output" bucket
+            bucket_type: S3 bucket type (e.g. "misc", "video", "audio") or unique bucket name
 
         Returns:
             UploadMetadata if file exists and matches, None otherwise
@@ -151,7 +155,7 @@ class IdempotentUploader:
                 return None
 
             # Get appropriate client and bucket
-            client, bucket_name = self.s3_client._get_client_and_bucket(bucket_type)
+            client, bucket_name = self.s3_client._resolve(bucket_type)
 
             # Try to fetch metadata from S3
             try:
@@ -201,7 +205,7 @@ class IdempotentUploader:
         job_id: str,
         local_path: str,
         remote_path: str,
-        bucket_type: str = "output",
+        bucket_type: str = "audio",
         verify_integrity: bool = True,
     ) -> str:
         """
@@ -218,7 +222,7 @@ class IdempotentUploader:
             job_id: Unique job identifier
             local_path: Path to local file to upload
             remote_path: S3 destination path
-            bucket_type: "storage" or "output" (default: "output" for TTS results)
+            bucket_type: "misc", "video", or "audio" (default: "audio" for TTS results)
             verify_integrity: Check file hash for integrity
 
         Returns:
@@ -433,56 +437,4 @@ class IdempotentUploader:
         return recovery_data
 
 
-def create_uploader(
-    # Storage bucket parameters
-    storage_endpoint: str | None = None,
-    storage_access_key: str | None = None,
-    storage_secret_key: str | None = None,
-    storage_bucket: str | None = None,
-    storage_region: str | None = None,
-    # Output bucket parameters
-    output_endpoint: str | None = None,
-    output_access_key: str | None = None,
-    output_secret_key: str | None = None,
-    output_bucket: str | None = None,
-    output_region: str | None = None,
-) -> IdempotentUploader:
-    """
-    Factory function to create IdempotentUploader with S3 client.
 
-    Args:
-        storage_endpoint: Storage bucket S3 endpoint URL (from env if not provided)
-        storage_access_key: Storage bucket access key (from env if not provided)
-        storage_secret_key: Storage bucket secret key (from env if not provided)
-        storage_bucket: Storage bucket name (from env if not provided)
-        storage_region: Storage bucket region (from env if not provided)
-
-        output_endpoint: Output bucket S3 endpoint URL (from env if not provided)
-        output_access_key: Output bucket access key (from env if not provided)
-        output_secret_key: Output bucket secret key (from env if not provided)
-        output_bucket: Output bucket name (from env if not provided)
-        output_region: Output bucket region (from env if not provided)
-
-    Returns:
-        Configured IdempotentUploader instance
-
-    Raises:
-        S3ConfigError: If S3 configuration is invalid
-    """
-    try:
-        s3_client = S3Client(
-            storage_endpoint_url=storage_endpoint,
-            storage_access_key_id=storage_access_key,
-            storage_secret_access_key=storage_secret_key,
-            storage_bucket_name=storage_bucket,
-            storage_region=storage_region,
-            output_endpoint_url=output_endpoint,
-            output_access_key_id=output_access_key,
-            output_secret_access_key=output_secret_key,
-            output_bucket_name=output_bucket,
-            output_region=output_region,
-        )
-        return IdempotentUploader(s3_client)
-    except Exception as e:
-        logger.error(f"Failed to create uploader: {e}")
-        raise

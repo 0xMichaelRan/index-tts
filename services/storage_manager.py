@@ -32,10 +32,6 @@ class StorageManager:
 
         self.uploader = IdempotentUploader(self.s3_client)
 
-        # Cache bucket names
-        self.s3_misc_bucket = self.s3_client.storage_bucket_name
-        self.r2_voice_bucket = self.s3_client.output_bucket_name
-
     def download_audio_prompt(
         self,
         job_id: str,
@@ -60,11 +56,11 @@ class StorageManager:
 
         local_path = os.path.join(temp_dir, os.path.basename(audio_prompt_path))
 
-        # Download from storage bucket
+        # Download from misc bucket (voice recordings / audio prompts)
         self.s3_client.download_file(
             remote_path=audio_prompt_path,
             local_path=local_path,
-            bucket_type="storage",
+            bucket_type="misc",
             max_retries=3,
         )
 
@@ -98,6 +94,7 @@ class StorageManager:
                 job_id=job_id,
                 local_path=local_path,
                 remote_path=remote_path,
+                bucket_type="audio",
                 verify_integrity=True,
             )
 
@@ -141,6 +138,7 @@ class StorageManager:
             job_id=job_id,
             local_path=local_parsed_json,
             remote_path=alignment_s3_path,
+            bucket_type="audio",
             verify_integrity=True,
         )
 
