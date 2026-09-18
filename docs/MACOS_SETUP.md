@@ -93,28 +93,7 @@ Copy the example environment file:
 cp .env.example .env
 ```
 
-Edit `.env` with your configuration:
-
-```bash
-# RabbitMQ (message queue for job distribution)
-RABBITMQ_URL=amqp://user:password@rabbitmq-host:5672/
-
-# S3 Credentials (endpoints and keys defined per bucket type; names/regions in config/buckets.toml)
-S3_MISC_ENDPOINT_URL=https://s3.example.com
-S3_MISC_ACCESS_KEY_ID=your-storage-key
-S3_MISC_SECRET_ACCESS_KEY=your-storage-secret
-
-S3_VIDEO_ENDPOINT_URL=https://s3.example.com
-S3_VIDEO_ACCESS_KEY_ID=your-video-key
-S3_VIDEO_SECRET_ACCESS_KEY=your-video-secret
-
-S3_AUDIO_ENDPOINT_URL=https://s3.example.com
-S3_AUDIO_ACCESS_KEY_ID=your-output-key
-S3_AUDIO_SECRET_ACCESS_KEY=your-output-secret
-
-# Optional: TTS Synthesis Cache (PostgreSQL)
-# DATABASE_URL=postgresql+asyncpg://user:password@localhost/tts_cache
-```
+Edit `.env` with your configuration.
 
 ### 6. Run the Worker
 

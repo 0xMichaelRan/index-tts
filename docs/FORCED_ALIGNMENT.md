@@ -36,9 +36,9 @@ The IndexTTS Worker implements **mandatory forced alignment** for all TTS synthe
    └─→ Outputs:
        ├─ {job_id}_raw_alignment.json  (kept on disk, NOT uploaded)
        ├─ {job_id}_alignment.srt       (kept on disk, NOT uploaded)
-       └─ {job_id}_alignment.json      (uploaded to S3, then deleted)
+       └─ {job_id}_alignment.json      (uploaded to S3 tts bucket, then deleted)
 
-4. Upload Audio + Parsed Alignment JSON to S3
+4. Upload Audio + Parsed Alignment JSON to S3 (`tts` bucket / `klatu-tts`)
 
 5. Return job result with alignment_path
 ```

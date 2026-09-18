@@ -134,32 +134,7 @@ Create a `.env` file in the project root:
 cp .env.example .env
 ```
 
-Edit `.env` with your settings:
-
-```bash
-# RabbitMQ Configuration
-RABBITMQ_URL=amqp://user:password@host:5672/
-RABBITMQ_HOST=localhost  # For startup logs
-
-# S3 Credentials (endpoints and keys defined per bucket type; names/regions in config/buckets.toml)
-S3_MISC_ENDPOINT_URL=https://storage-provider.com
-S3_MISC_ACCESS_KEY_ID=your-storage-key
-S3_MISC_SECRET_ACCESS_KEY=your-storage-secret
-
-S3_VIDEO_ENDPOINT_URL=https://storage-provider.com
-S3_VIDEO_ACCESS_KEY_ID=your-video-key
-S3_VIDEO_SECRET_ACCESS_KEY=your-video-secret
-
-S3_AUDIO_ENDPOINT_URL=https://output-provider.com
-S3_AUDIO_ACCESS_KEY_ID=your-output-key
-S3_AUDIO_SECRET_ACCESS_KEY=your-output-secret
-```
-
-**Bucket registry (`config/buckets.toml`)**:
-- **Misc bucket** (`misc`): Stores voice recordings and audio prompts
-- **Video bucket** (`video`): Stores video clips and rendered MP4 outputs
-- **Audio bucket** (`audio`): Stores TTS synthesis results and forced alignment JSON
-- Benefits: Centralized bucket definitions, isolated credentials, independent providers/regions per bucket.
+Edit `.env` with your setting.
 
 ### 2. RabbitMQ Setup
 
@@ -220,7 +195,9 @@ python -m services.tts_worker
 
 18:30:47 [INFO    ] S3 [misc  ] klatu-misc @ https://storage-provider.com
 18:30:47 [INFO    ] S3 [video ] klatu-video @ https://storage-provider.com
-18:30:47 [INFO    ] S3 [audio ] klatu-audio @ https://output-provider.com
+18:30:47 [INFO    ] S3 [audio ] klatu-audio @ https://storage-provider.com
+18:30:47 [INFO    ] S3 [tts   ] klatu-tts @ https://output-provider.com
+18:30:47 [INFO    ] S3 [11lab ] klatu-11lab @ https://storage-provider.com
 
 ═══════════════════════════════════════════════════════════════════════════
                           STARTUP COMPLETE
@@ -525,6 +502,7 @@ Configured in `process_job()`:
 
 ## Next Steps
 
+- **S3 Bucket Architecture** → [S3_BUCKET_ARCHITECTURE.md](./S3_BUCKET_ARCHITECTURE.md)
 - **Architecture Details** → [ARCHITECTURE.md](./ARCHITECTURE.md)
 - **Network Resilience** → [NETWORK_RESILIENCE.md](./NETWORK_RESILIENCE.md)
 - **API Reference** → [API.md](./API.md)
