@@ -38,7 +38,7 @@ class StorageManager:
         audio_prompt_path: str,
     ) -> str:
         """
-        Download audio prompt from S3 misc bucket.
+        Download audio prompt from S3 audio bucket (klatu-audio).
 
         Args:
             job_id: Job identifier

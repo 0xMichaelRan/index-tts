@@ -740,7 +740,7 @@ class VoxRenderPipeline:
         job_id: str,
         s3_key: str,
         work_dir: str,
-        bucket_type: str = "audio",
+        bucket_type: str = "tts",
     ) -> str:
         """
         Return a local path for s3_key.

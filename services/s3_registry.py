@@ -11,7 +11,7 @@ environment variables following the ``S3_<TYPE>_*`` naming convention:
   - S3_<TYPE>_REGION       (optional override; falls back to TOML region)
 
 All bucket names are unique.  When reading or writing to S3 the bucket name
-(or its logical type, e.g. "misc", "video", "audio") must always be supplied.
+(or its logical type, e.g. "misc", "video", "audio", "tts", "11lab") must always be supplied.
 """
 
 from __future__ import annotations
@@ -53,8 +53,8 @@ if not CONFIG_FILE.exists():
 class S3BucketConfig:
     """Configuration for a single S3 bucket."""
 
-    name: str  # Logical identifier, e.g. "misc", "video", "audio"
-    type: str  # Type classification ("misc" | "video" | "audio")
+    name: str  # Logical identifier, e.g. "misc", "video", "audio", "tts", "11lab"
+    type: str  # Type classification ("misc" | "video" | "audio" | "tts" | "11lab")
     bucket_name: str  # Unique S3 bucket name (e.g. "klatu-misc")
     endpoint_url: str  # S3 endpoint URL
     access_key_id: str  # AWS / S3-compatible access key

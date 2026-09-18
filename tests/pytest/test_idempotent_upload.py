@@ -86,18 +86,26 @@ class TestIdempotentUploader:
         client.misc_bucket_name = "klatu-misc"
         client.audio_bucket_name = "klatu-audio"
         client.video_bucket_name = "klatu-video"
+        client.tts_bucket_name = "klatu-tts"
+        client.lab_bucket_name = "klatu-11lab"
         client.file_exists = Mock(return_value=False)
         client.upload_audio = Mock()
         client.misc_client = Mock()
         client.audio_client = Mock()
         client.video_client = Mock()
+        client.tts_client = Mock()
+        client.lab_client = Mock()
         client._resolve = Mock(
-            side_effect=lambda bucket_type="audio": (
+            side_effect=lambda bucket_type="tts": (
                 (client.misc_client, client.misc_bucket_name)
                 if bucket_type == "misc"
                 else (client.video_client, client.video_bucket_name)
                 if bucket_type == "video"
                 else (client.audio_client, client.audio_bucket_name)
+                if bucket_type == "audio"
+                else (client.lab_client, client.lab_bucket_name)
+                if bucket_type == "11lab"
+                else (client.tts_client, client.tts_bucket_name)
             )
         )
         return client

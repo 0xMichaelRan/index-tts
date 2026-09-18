@@ -255,7 +255,7 @@ RabbitMQ Job Message
     ↓
 ┌─────────────────────────────────────────────┐
 │ 4. Upload Audio + Parsed Alignment to S3   │
-│    Audio bucket (tts-audio/)                │
+│    TTS bucket (klatu-tts, tts-audio/)       │
 └─────────────────────────────────────────────┘
     ↓
 Return Job Result (audio_path + alignment_path)
@@ -265,7 +265,7 @@ Return Job Result (audio_path + alignment_path)
 - **Synthesis Cache**: 65-80% faster for cache hits (10,000 entry capacity)
 - **Time-Stretching**: Librosa time_stretch for speed adjustment (ratio parameter)
 - **Forced Alignment**: Mandatory; ~0.5-5s per minute of audio (CPU)
-- **Unified S3 Registry**: Buckets defined in `config/buckets.toml` (`misc`, `video`, `audio`)
+- **Unified S3 Registry**: Buckets defined in `config/buckets.toml` (`misc`, `video`, `audio`, `tts`, `11lab`)
 - **Circuit Breakers**: S3, TTS, and Alignment (prevents cascading failures)
 - **Idempotent Upload**: Prevents duplicate uploads on job retry
 

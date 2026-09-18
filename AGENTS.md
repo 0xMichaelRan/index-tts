@@ -58,13 +58,15 @@ Never use:
 ### S3 Configuration
 
 The worker uses the **unified S3 registry architecture** (`config/buckets.toml` + `S3_<TYPE>_*` env vars):
-- **Misc Bucket** (`misc`): Voice recordings, audio prompts
+- **Misc Bucket** (`misc`): General miscellaneous assets and temporary uploads
 - **Video Bucket** (`video`): Video clips and rendered MP4 outputs
-- **Audio Bucket** (`audio`): TTS synthesis results and forced alignment JSON
+- **Audio Bucket** (`audio`): User voice recordings and audio prompts for TTS voice cloning (read-only for worker)
+- **TTS Bucket** (`tts`): IndexTTS synthesised audio output and forced alignment JSON (worker is SOLE writer)
+- **11Lab Bucket** (`11lab`): User-uploaded ElevenLabs audio exports (frontend uploads via oracle-backend)
 
 **Key Points**:
 - Bucket names and regions are declared in `config/buckets.toml`
-- Credentials and endpoints are configured via environment variables (`S3_MISC_*`, `S3_VIDEO_*`, `S3_AUDIO_*`)
+- Credentials and endpoints are configured via environment variables (`S3_MISC_*`, `S3_VIDEO_*`, `S3_AUDIO_*`, `S3_TTS_*`, `S3_11LAB_*`)
 - Output paths follow: `{job_type}/{YYYYMMDD}/{job_id}/{filename}.{ext}`
 
 ### Voice Caching
@@ -356,9 +358,17 @@ S3_VIDEO_ENDPOINT_URL=https://storage-provider.com/s3
 S3_VIDEO_ACCESS_KEY_ID=video-key
 S3_VIDEO_SECRET_ACCESS_KEY=video-secret
 
-S3_AUDIO_ENDPOINT_URL=https://output-provider.com/s3
-S3_AUDIO_ACCESS_KEY_ID=output-key
-S3_AUDIO_SECRET_ACCESS_KEY=output-secret
+S3_AUDIO_ENDPOINT_URL=https://storage-provider.com/s3
+S3_AUDIO_ACCESS_KEY_ID=audio-key
+S3_AUDIO_SECRET_ACCESS_KEY=audio-secret
+
+S3_TTS_ENDPOINT_URL=https://output-provider.com/s3
+S3_TTS_ACCESS_KEY_ID=tts-key
+S3_TTS_SECRET_ACCESS_KEY=tts-secret
+
+S3_11LAB_ENDPOINT_URL=https://storage-provider.com/s3
+S3_11LAB_ACCESS_KEY_ID=11lab-key
+S3_11LAB_SECRET_ACCESS_KEY=11lab-secret
 ```
 
 **Benefits**: Different providers, regions, credentials, and costs per bucket.
@@ -475,34 +485,36 @@ from services.s3_config import S3Client
 
 client = S3Client()
 
-# Download from misc bucket (audio prompts, voice recordings)
+# Download from audio bucket (voice recordings / audio prompts)
 client.download_file(
     remote_path="audio-prompts/voice_001.wav",
     local_path="/tmp/prompt.wav",
-    bucket_type="misc",  # Specify bucket type or unique bucket name
+    bucket_type="audio",  # Specify bucket type or unique bucket name
     max_retries=3
 )
 
-# Upload to audio bucket (TTS results)
+# Upload to tts bucket (synthesized TTS results + alignment JSON)
 client.upload_file(
     local_path="/tmp/audio.wav",
     remote_path="tts-audio/studio/job_123.mp3",
-    bucket_type="audio",
+    bucket_type="tts",
     metadata={"job_id": "job_123"}
 )
 
 # Presigned URL (temporary access)
 url = client.generate_presigned_url(
     remote_path="audio-prompts/voice_001.wav",
-    bucket_type="misc",
+    bucket_type="audio",
     expiration=3600
 )
 ```
 
 **bucket_type values:**
-- `"misc"` - Misc bucket (audio prompts, voice recordings)
+- `"misc"` - Misc bucket (general assets, temporary uploads)
 - `"video"` - Video bucket (clips, rendered videos)
-- `"audio"` - Audio bucket (TTS synthesis results, alignment JSON)
+- `"audio"` - Audio bucket (user voice recordings and audio prompts for voice cloning)
+- `"tts"` - TTS bucket (synthesized audio output, forced alignment JSON)
+- `"11lab"` - 11Lab bucket (user-uploaded ElevenLabs audio exports)
 
 ### Idempotent Upload
 
@@ -552,7 +564,7 @@ logger.error("Job processing failed")
 ## Gotchas
 
 1. **Signal handlers**: Only call `_setup_signal_handlers()` once in `__init__` (it was duplicated, now fixed)
-2. **S3 buckets**: Unified registry architecture configured via `config/buckets.toml` (`misc`, `video`, `audio`)
+2. **S3 buckets**: Unified registry architecture configured via `config/buckets.toml` (`misc`, `video`, `audio`, `tts`, `11lab`)
 3. **RabbitMQ prefetch**: Set `prefetch_count=1` to process one job at a time (prevents overload)
 4. **Graceful shutdown**: Always stop consuming before closing connection
 5. **File cleanup**: Temporary files are cleaned up in the `finally` block after job processing
@@ -560,6 +572,7 @@ logger.error("Job processing failed")
 ## Documentation
 
 - `config/buckets.toml` - S3 bucket registry configuration
+- `docs/S3_BUCKET_ARCHITECTURE.md` - Master specification for 5-bucket architecture
 - `docs/WORKER_SETUP.md` - Complete worker setup and installation guide
 - `docs/FORCED_ALIGNMENT.md` - Forced alignment reference documentation
 - `docs/CACHE_IMPLEMENTATION_SUMMARY.md` - Synthesis cache implementation guide
