@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 from indextts.infer import create_tts_engine
 from services.cache_manager import CacheManager
 from services.circuit_breaker import get_all_circuit_breaker_stats
-from services.flow_render_consumer import FlowRenderConsumer
+from services.vox_render_consumer import VoxRenderConsumer
 from services.logging_config import (
     configure_logging,
     get_logger,
@@ -131,22 +131,22 @@ class IndexTTSWorker:
         # Initialize RabbitMQ manager
         self.rabbitmq_manager = RabbitMQManager(config.rabbitmq_url)
 
-        # Initialize flow render consumer (Linux/Windows only)
-        self.flow_render_consumer: FlowRenderConsumer | None = None
-        if self.platform != "Darwin" and config.flow_render_enabled:
-            self.flow_render_consumer = FlowRenderConsumer(
+        # Initialize vox render consumer (Linux/Windows only)
+        self.vox_render_consumer: VoxRenderConsumer | None = None
+        if self.platform != "Darwin" and config.vox_render_enabled:
+            self.vox_render_consumer = VoxRenderConsumer(
                 rabbitmq_url=config.rabbitmq_url,
-                ffmpeg_path=config.flow_render_ffmpeg_path,
+                ffmpeg_path=config.vox_render_ffmpeg_path,
                 local_tts_output_dir="outputs/tts_output",
             )
             logger.info(
-                f"Flow render consumer: ENABLED "
-                f"(ffmpeg: {config.flow_render_ffmpeg_path})"
+                f"Vox render consumer: ENABLED "
+                f"(ffmpeg: {config.vox_render_ffmpeg_path})"
             )
         elif self.platform == "Darwin":
-            logger.info("Flow render consumer: DISABLED (macOS — no GPU render)")
+            logger.info("Vox render consumer: DISABLED (macOS — no GPU render)")
         else:
-            logger.info("Flow render consumer: DISABLED (FLOW_RENDER_ENABLED=false)")
+            logger.info("Vox render consumer: DISABLED (VOX_RENDER_ENABLED=false)")
 
         # Setup signal handlers
         self._setup_signal_handlers()
@@ -176,9 +176,9 @@ class IndexTTSWorker:
             self._shutdown_requested = True
             self.rabbitmq_manager.request_shutdown()
 
-            # Stop the flow render consumer if running
-            if self.flow_render_consumer is not None:
-                self.flow_render_consumer.stop()
+            # Stop the vox render consumer if running
+            if self.vox_render_consumer is not None:
+                self.vox_render_consumer.stop()
 
             # Immediately stop consuming to unblock start_consuming()
             if (
@@ -277,10 +277,10 @@ class IndexTTSWorker:
             stats_dict=cb_stats,
         )
 
-        # Start flow render consumer thread (non-Darwin, if enabled)
-        if self.flow_render_consumer is not None:
-            self.flow_render_consumer.start_in_thread()
-            logger.success("FlowRenderConsumer thread started")
+        # Start vox render consumer thread (non-Darwin, if enabled)
+        if self.vox_render_consumer is not None:
+            self.vox_render_consumer.start_in_thread()
+            logger.success("VoxRenderConsumer thread started")
 
         # Main consumption loop
         while not self._shutdown_requested:

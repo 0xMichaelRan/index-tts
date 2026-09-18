@@ -1,27 +1,27 @@
 """
 RabbitMQ Queue Configuration with Dead-Letter Queues
 
-This module provides idempotent RabbitMQ queue configuration for the TTS service,
-including main queues and dead-letter queues (DLQ) for failed message handling.
+This module provides idempotent RabbitMQ queue configuration for the IndexTTS
+worker, including main queues and dead-letter queues (DLQ) for failed messages.
 
 Queue Architecture (Standardized DLX Pattern):
     Main Queues (Durable, Priority-enabled x-max-priority=10):
     ├── tts_jobs (TTL: 24h, priority 0-10) → DLX: tts_jobs.dlx → DLQ: tts_jobs_failed
     ├── tts_results (TTL: 7d, priority 0-10) → DLX: tts_results.dlx → DLQ: tts_results_failed
-    ├── flow_render_jobs (TTL: 7d) → DLX: flow_render_jobs.dlx → DLQ: flow_render_jobs_failed
-    └── flow_render_results (TTL: 7d) → DLX: flow_render_results.dlx → DLQ: flow_render_results_failed
+    ├── vox_jobs (TTL: 7d) → DLX: vox_jobs.dlx → DLQ: vox_jobs_failed
+    └── vox_results (TTL: 7d) → DLX: vox_results.dlx → DLQ: vox_results_failed
 
     Dead-Letter Exchanges (Fanout):
     ├── tts_jobs.dlx → routes to tts_jobs_failed
     ├── tts_results.dlx → routes to tts_results_failed
-    ├── flow_render_jobs.dlx → routes to flow_render_jobs_failed
-    └── flow_render_results.dlx → routes to flow_render_results_failed
+    ├── vox_jobs.dlx → routes to vox_jobs_failed
+    └── vox_results.dlx → routes to vox_results_failed
 
     Dead-Letter Queues (Durable):
     ├── tts_jobs_failed (TTL: 7 days) - Messages rejected after 3 retries
     ├── tts_results_failed (TTL: 7 days) - Failed result processing
-    ├── flow_render_jobs_failed (TTL: 7 days) - Failed flow render requests
-    └── flow_render_results_failed (TTL: 7 days) - Failed render result processing
+    ├── vox_jobs_failed (TTL: 7 days) - Failed vox render requests
+    └── vox_results_failed (TTL: 7 days) - Failed render result processing
 
 Usage:
     from services.rabbitmq_config import configure_queues
@@ -85,25 +85,25 @@ QUEUE_CONFIGS = {
             "x-max-priority": MQ_PRIORITY_MAX,  # Enable priority ordering (0-10)
         },
     },
-    "flow_render_jobs": {
+    "vox_jobs": {
         "durable": True,
         "arguments": {
-            "x-dead-letter-exchange": "flow_render_jobs.dlx",
-            "x-dead-letter-routing-key": "flow_render_jobs_failed",
+            "x-dead-letter-exchange": "vox_jobs.dlx",
+            "x-dead-letter-routing-key": "vox_jobs_failed",
             "x-message-ttl": 604800000,  # 7 days in milliseconds
             "x-max-length": 10000,
         },
     },
-    "flow_render_results": {
+    "vox_results": {
         "durable": True,
         "arguments": {
-            "x-dead-letter-exchange": "flow_render_results.dlx",
-            "x-dead-letter-routing-key": "flow_render_results_failed",
+            "x-dead-letter-exchange": "vox_results.dlx",
+            "x-dead-letter-routing-key": "vox_results_failed",
             "x-message-ttl": 604800000,  # 7 days in milliseconds
             "x-max-length": 10000,
         },
     },
-    "tts_jobs_failed": {  # Renamed from tts_jobs_dlq
+    "tts_jobs_failed": {
         "durable": True,
         "arguments": {
             "x-message-ttl": 604800000,  # 7 days in milliseconds
@@ -111,7 +111,7 @@ QUEUE_CONFIGS = {
             # No x-max-priority on DLQs — dead letters don't need priority routing
         },
     },
-    "tts_results_failed": {  # Renamed from tts_results_dlq
+    "tts_results_failed": {
         "durable": True,
         "arguments": {
             "x-message-ttl": 604800000,  # 7 days in milliseconds
@@ -119,14 +119,14 @@ QUEUE_CONFIGS = {
             # No x-max-priority on DLQs — dead letters don't need priority routing
         },
     },
-    "flow_render_jobs_failed": {
+    "vox_jobs_failed": {
         "durable": True,
         "arguments": {
             "x-message-ttl": 604800000,  # 7 days in milliseconds
             "x-max-length": 5000,
         },
     },
-    "flow_render_results_failed": {
+    "vox_results_failed": {
         "durable": True,
         "arguments": {
             "x-message-ttl": 604800000,  # 7 days in milliseconds
@@ -253,7 +253,8 @@ def declare_dlx_exchanges(channel: pika.channel.Channel) -> None:
     Creates the following exchanges:
     - tts_jobs.dlx (fanout, durable)
     - tts_results.dlx (fanout, durable)
-    - flow_render_results.dlx (fanout, durable)
+    - vox_jobs.dlx (fanout, durable)
+    - vox_results.dlx (fanout, durable)
 
     Args:
         channel: RabbitMQ channel
@@ -261,8 +262,8 @@ def declare_dlx_exchanges(channel: pika.channel.Channel) -> None:
     dlx_exchanges = [
         "tts_jobs.dlx",
         "tts_results.dlx",
-        "flow_render_jobs.dlx",
-        "flow_render_results.dlx",
+        "vox_jobs.dlx",
+        "vox_results.dlx",
     ]
 
     for exchange_name in dlx_exchanges:
@@ -287,8 +288,8 @@ def bind_dlq_to_dlx(channel: pika.channel.Channel) -> None:
     Bindings:
     - tts_jobs_failed → tts_jobs.dlx
     - tts_results_failed → tts_results.dlx
-    - flow_render_jobs_failed → flow_render_jobs.dlx
-    - flow_render_results_failed → flow_render_results.dlx
+    - vox_jobs_failed → vox_jobs.dlx
+    - vox_results_failed → vox_results.dlx
 
     Args:
         channel: RabbitMQ channel
@@ -296,8 +297,8 @@ def bind_dlq_to_dlx(channel: pika.channel.Channel) -> None:
     bindings = [
         ("tts_jobs_failed", "tts_jobs.dlx"),
         ("tts_results_failed", "tts_results.dlx"),
-        ("flow_render_jobs_failed", "flow_render_jobs.dlx"),
-        ("flow_render_results_failed", "flow_render_results.dlx"),
+        ("vox_jobs_failed", "vox_jobs.dlx"),
+        ("vox_results_failed", "vox_results.dlx"),
     ]
 
     for queue_name, exchange_name in bindings:
@@ -398,8 +399,8 @@ def configure_queues(
         for queue_name in [
             "tts_jobs_failed",
             "tts_results_failed",
-            "flow_render_jobs_failed",
-            "flow_render_results_failed",
+            "vox_jobs_failed",
+            "vox_results_failed",
         ]:
             configure_queue(channel, queue_name, QUEUE_CONFIGS[queue_name])
 
@@ -412,8 +413,8 @@ def configure_queues(
         for queue_name in [
             "tts_jobs",
             "tts_results",
-            "flow_render_jobs",
-            "flow_render_results",
+            "vox_jobs",
+            "vox_results",
         ]:
             configure_queue(channel, queue_name, QUEUE_CONFIGS[queue_name])
 

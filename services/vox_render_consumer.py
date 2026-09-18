@@ -1,17 +1,17 @@
 """
-Flow render consumer.
+Vox render consumer.
 
 Runs as a daemon thread inside IndexTTSWorker on Linux/Windows
-(skipped on macOS where there is no GPU to run ffmpeg renders).
+(skipped on macOS where there is no GPU for renders).
 
-Consumes from `flow_render_jobs` (owned and declared by this worker with DLX)
-and publishes rendering results to `flow_render_results`.
+Consumes from ``vox_jobs`` (declared with DLX by this worker) and
+publishes rendering results to ``vox_results``.
 
 Usage (from tts_worker.py)::
 
-    consumer = FlowRenderConsumer(
+    consumer = VoxRenderConsumer(
         rabbitmq_url=config.rabbitmq_url,
-        ffmpeg_path=config.flow_render_ffmpeg_path,
+        ffmpeg_path=config.vox_render_ffmpeg_path,
     )
     consumer.start_in_thread()   # non-blocking, daemon thread
     ...
@@ -28,34 +28,34 @@ from urllib.parse import urlparse
 
 import pika
 
-from services.flow_render_pipeline import FlowRenderPipeline
 from services.logging_config import get_logger
 from services.s3_config import S3Client
+from services.vox_render_pipeline import VoxRenderPipeline
 
 logger = get_logger(__name__)
 
 # Queue names
-_INPUT_QUEUE = "flow_render_jobs"
-_OUTPUT_QUEUE = "flow_render_results"
+_INPUT_QUEUE = "vox_jobs"
+_OUTPUT_QUEUE = "vox_results"
 
 # Reconnect settings (mirror tts_worker pattern)
-_INITIAL_RECONNECT_DELAY = 5  # seconds
-_MAX_RECONNECT_DELAY = 300  # 5 minutes
+_INITIAL_RECONNECT_DELAY = 5   # seconds
+_MAX_RECONNECT_DELAY = 300     # 5 minutes
 
 
-class FlowRenderConsumer:
+class VoxRenderConsumer:
     """
-    RabbitMQ consumer for flow_render_jobs.
+    RabbitMQ consumer for vox_jobs.
 
-    Designed to run in a background daemon thread alongside the main
-    TTS consumer.  Uses its own blocking pika connection (separate from
-    the TTS worker's connection) so the two consumers don't interfere.
+    Runs in a background daemon thread alongside the main TTS consumer.
+    Uses its own blocking pika connection (separate from the TTS worker's
+    connection) so the two consumers don't interfere.
 
     Args:
         rabbitmq_url: AMQP connection URL.
         ffmpeg_path: Path to ffmpeg binary.
-        local_tts_output_dir: Directory where synthesis pipeline writes output
-            (checked before S3 download for audio/alignment files).
+        local_tts_output_dir: Directory where the synthesis pipeline writes
+            output (checked before S3 download for audio/alignment files).
     """
 
     def __init__(
@@ -76,38 +76,34 @@ class FlowRenderConsumer:
         self._channel: pika.adapters.blocking_connection.BlockingChannel | None = None
         self._reconnect_delay = _INITIAL_RECONNECT_DELAY
 
-        # S3 client (shared for download + upload)
+        # Pipeline (initialised lazily in _run)
         self._s3_client: S3Client | None = None
-        self._pipeline: FlowRenderPipeline | None = None
+        self._pipeline: VoxRenderPipeline | None = None
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
     def start_in_thread(self) -> threading.Thread:
-        """
-        Start the consumer in a daemon background thread.
-
-        Returns the thread so the caller can track it if needed.
-        """
+        """Start the consumer in a daemon background thread."""
         self._thread = threading.Thread(
             target=self._run,
-            name="FlowRenderConsumer",
+            name="VoxRenderConsumer",
             daemon=True,
         )
         self._thread.start()
-        logger.info("FlowRenderConsumer: started in background thread")
+        logger.info("VoxRenderConsumer: started in background thread")
         return self._thread
 
     def stop(self) -> None:
         """Signal shutdown and unblock the consuming loop."""
-        logger.info("FlowRenderConsumer: shutdown requested")
+        logger.info("VoxRenderConsumer: shutdown requested")
         self._shutdown_requested = True
         try:
             if self._channel and self._channel.is_open:
                 self._channel.stop_consuming()
         except Exception as e:
-            logger.warning(f"FlowRenderConsumer: error stopping consumption: {e}")
+            logger.warning(f"VoxRenderConsumer: error stopping consumption: {e}")
 
     def is_alive(self) -> bool:
         """Return True if the consumer thread is running."""
@@ -119,18 +115,18 @@ class FlowRenderConsumer:
 
     def _run(self) -> None:
         """Main loop: connect, consume, reconnect on failure."""
-        logger.info("FlowRenderConsumer: initialising S3 client and pipeline")
+        logger.info("VoxRenderConsumer: initialising S3 client and pipeline")
         try:
             self._s3_client = S3Client()
-            self._pipeline = FlowRenderPipeline(
+            self._pipeline = VoxRenderPipeline(
                 s3_client=self._s3_client,
                 ffmpeg_path=self.ffmpeg_path,
                 local_tts_output_dir=self.local_tts_output_dir,
             )
-            logger.success("FlowRenderConsumer: pipeline ready")
+            logger.success("VoxRenderConsumer: pipeline ready")
         except Exception as exc:
             logger.error(
-                f"FlowRenderConsumer: failed to initialise pipeline, "
+                f"VoxRenderConsumer: failed to initialise pipeline, "
                 f"consumer will not start: {exc}"
             )
             return
@@ -138,12 +134,12 @@ class FlowRenderConsumer:
         while not self._shutdown_requested:
             try:
                 self._connect()
-                self._consume()  # blocks until channel stops
+                self._consume()   # blocks until channel stops
             except Exception as exc:
                 if self._shutdown_requested:
                     break
                 logger.error(
-                    f"FlowRenderConsumer: connection lost — {exc}. "
+                    f"VoxRenderConsumer: connection lost — {exc}. "
                     f"Retrying in {self._reconnect_delay}s..."
                 )
                 time.sleep(self._reconnect_delay)
@@ -153,10 +149,10 @@ class FlowRenderConsumer:
             finally:
                 self._disconnect()
 
-        logger.info("FlowRenderConsumer: shutdown complete")
+        logger.info("VoxRenderConsumer: shutdown complete")
 
     def _connect(self) -> None:
-        """Establish pika blocking connection and declare queues."""
+        """Establish a pika blocking connection and declare queues with DLX."""
         parsed = urlparse(self.rabbitmq_url)
         credentials = pika.PlainCredentials(
             username=parsed.username or "guest",
@@ -175,7 +171,7 @@ class FlowRenderConsumer:
         self._connection = pika.BlockingConnection([params])
         self._channel = self._connection.channel()
 
-        # Active declare for flow_render_jobs (owned by this worker)
+        # --- vox_jobs (input queue, owned by this worker) ---
         self._channel.exchange_declare(
             exchange=f"{_INPUT_QUEUE}.dlx",
             exchange_type="fanout",
@@ -185,7 +181,7 @@ class FlowRenderConsumer:
             queue=f"{_INPUT_QUEUE}_failed",
             durable=True,
             arguments={
-                "x-message-ttl": 604800000,  # 7 days
+                "x-message-ttl": 604800000,   # 7 days
                 "x-max-length": 5000,
             },
         )
@@ -200,12 +196,12 @@ class FlowRenderConsumer:
             arguments={
                 "x-dead-letter-exchange": f"{_INPUT_QUEUE}.dlx",
                 "x-dead-letter-routing-key": f"{_INPUT_QUEUE}_failed",
-                "x-message-ttl": 604800000,  # 7 days
+                "x-message-ttl": 604800000,   # 7 days
                 "x-max-length": 10000,
             },
         )
 
-        # Active declare for flow_render_results (owned by this worker)
+        # --- vox_results (output queue, owned by this worker) ---
         self._channel.exchange_declare(
             exchange=f"{_OUTPUT_QUEUE}.dlx",
             exchange_type="fanout",
@@ -215,7 +211,7 @@ class FlowRenderConsumer:
             queue=f"{_OUTPUT_QUEUE}_failed",
             durable=True,
             arguments={
-                "x-message-ttl": 604800000,  # 7 days
+                "x-message-ttl": 604800000,
                 "x-max-length": 5000,
             },
         )
@@ -230,7 +226,7 @@ class FlowRenderConsumer:
             arguments={
                 "x-dead-letter-exchange": f"{_OUTPUT_QUEUE}.dlx",
                 "x-dead-letter-routing-key": f"{_OUTPUT_QUEUE}_failed",
-                "x-message-ttl": 604800000,  # 7 days
+                "x-message-ttl": 604800000,
                 "x-max-length": 10000,
             },
         )
@@ -238,7 +234,7 @@ class FlowRenderConsumer:
         # Reset reconnect delay after successful connect
         self._reconnect_delay = _INITIAL_RECONNECT_DELAY
         logger.success(
-            f"FlowRenderConsumer: connected to RabbitMQ, listening on '{_INPUT_QUEUE}'"
+            f"VoxRenderConsumer: connected to RabbitMQ, listening on '{_INPUT_QUEUE}'"
         )
 
     def _consume(self) -> None:
@@ -255,7 +251,7 @@ class FlowRenderConsumer:
         self._channel.start_consuming()
 
     def _disconnect(self) -> None:
-        """Safely close connection."""
+        """Safely close the pika connection."""
         try:
             if self._connection and not self._connection.is_closed:
                 self._connection.close()
@@ -275,7 +271,7 @@ class FlowRenderConsumer:
         properties: pika.spec.BasicProperties,
         body: bytes,
     ) -> None:
-        """Process a single flow_render_jobs message."""
+        """Process a single vox_jobs message."""
         if self._shutdown_requested:
             ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
             return
@@ -284,29 +280,31 @@ class FlowRenderConsumer:
         try:
             job_data: dict[str, Any] = json.loads(body)
             job_id = str(job_data.get("jobId", "unknown"))
-            logger.info(f"[FLOW {job_id}] Received render job from queue")
+            logger.info(f"[VOX {job_id}] Received vox job from queue")
 
             if self._pipeline is None:
                 raise RuntimeError("Pipeline not initialised")
 
             result = self._pipeline.process_job(job_data)
 
-            # Publish result to flow_render_results
+            # Publish result to vox_results
             self._publish_result(result)
 
             ch.basic_ack(delivery_tag=method.delivery_tag)
-            logger.info(f"[FLOW {job_id}] Acknowledged")
+            logger.info(f"[VOX {job_id}] Acknowledged")
 
         except json.JSONDecodeError as exc:
-            logger.error(f"FlowRenderConsumer: invalid JSON — {exc}")
+            logger.error(f"VoxRenderConsumer: invalid JSON — {exc}")
             ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
 
         except Exception as exc:
-            logger.error(f"[FLOW {job_id}] Unexpected error — sending to DLQ: {exc!s}")
+            logger.error(
+                f"[VOX {job_id}] Unexpected error — sending to DLQ: {exc!s}"
+            )
             ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
 
     def _publish_result(self, result: dict[str, Any]) -> None:
-        """Publish result dict to flow_render_results queue (with retry)."""
+        """Publish result dict to vox_results queue (with retry)."""
         job_id = result.get("jobId", "unknown")
         max_retries = 3
 
@@ -325,7 +323,7 @@ class FlowRenderConsumer:
                     ),
                 )
                 logger.info(
-                    f"[FLOW {job_id}] Result published to '{_OUTPUT_QUEUE}' "
+                    f"[VOX {job_id}] Result published to '{_OUTPUT_QUEUE}' "
                     f"(status={result.get('status')})"
                 )
                 return
@@ -333,13 +331,13 @@ class FlowRenderConsumer:
             except Exception as exc:
                 if attempt == max_retries:
                     logger.error(
-                        f"[FLOW {job_id}] Failed to publish result after "
+                        f"[VOX {job_id}] Failed to publish result after "
                         f"{max_retries} attempts: {exc}"
                     )
                     raise
-                delay = 2**attempt
+                delay = 2 ** attempt
                 logger.warning(
-                    f"[FLOW {job_id}] Publish attempt {attempt} failed: {exc}. "
+                    f"[VOX {job_id}] Publish attempt {attempt} failed: {exc}. "
                     f"Retrying in {delay}s..."
                 )
                 time.sleep(delay)
