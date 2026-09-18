@@ -99,21 +99,18 @@ Edit `.env` with your configuration:
 # RabbitMQ (message queue for job distribution)
 RABBITMQ_URL=amqp://user:password@rabbitmq-host:5672/
 
-# Misc Bucket (for voice prompts - read-only during synthesis)
+# S3 Credentials (endpoints and keys defined per bucket type; names/regions in config/buckets.toml)
 S3_MISC_ENDPOINT_URL=https://s3.example.com
 S3_MISC_ACCESS_KEY_ID=your-storage-key
 S3_MISC_SECRET_ACCESS_KEY=your-storage-secret
-S3_MISC_BUCKET_NAME=voice-storage
-S3_MISC_REGION=us-east-1
-S3_MISC_USE_SSL=true
 
-# Voice Bucket (for TTS results - write-only during synthesis)
-R2_VOICE_ENDPOINT_URL=https://s3.example.com
-R2_VOICE_ACCESS_KEY_ID=your-output-key
-R2_VOICE_SECRET_ACCESS_KEY=your-output-secret
-R2_VOICE_BUCKET_NAME=tts-output
-R2_VOICE_REGION=us-east-1
-R2_VOICE_USE_SSL=true
+S3_VIDEO_ENDPOINT_URL=https://s3.example.com
+S3_VIDEO_ACCESS_KEY_ID=your-video-key
+S3_VIDEO_SECRET_ACCESS_KEY=your-video-secret
+
+S3_AUDIO_ENDPOINT_URL=https://s3.example.com
+S3_AUDIO_ACCESS_KEY_ID=your-output-key
+S3_AUDIO_SECRET_ACCESS_KEY=your-output-secret
 
 # Optional: TTS Synthesis Cache (PostgreSQL)
 # DATABASE_URL=postgresql+asyncpg://user:password@localhost/tts_cache

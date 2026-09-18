@@ -405,8 +405,8 @@ def test_full_pipeline():
 - Verify stable-whisper is installed: `pip list | grep stable`
 
 ### "S3 client initialization failed"
-- Verify S3 credentials in `.env` (S3_MISC_*, R2_VOICE_*)
-- Check S3 bucket names and access permissions
+- Verify S3 credentials in `.env` (S3_MISC_*, S3_VIDEO_*, S3_AUDIO_*)
+- Check config/buckets.toml bucket definitions and access permissions
 
 ### "Cache lookup failed"
 - Verify database connection (check DATABASE_URL)

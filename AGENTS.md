@@ -56,16 +56,14 @@ Never use:
 
 ### S3 Configuration
 
-The worker uses **dual-bucket S3 architecture**:
-- **Misc Bucket** (`S3_MISC_*`): Voice recordings, audio prompts (read-only)
-- **Voice Bucket** (`R2_VOICE_*`): TTS synthesis output (write-only)
-
-**Path structure** and **environment configuration** are documented in the **studio-backend master reference**:
-- [CROSS_REPO_INTEGRATION.md](https://github.com/your-org/studio-backend/blob/main/docs/CROSS_REPO_INTEGRATION.md) — S3 setup, path conventions, queue schemas
+The worker uses the **unified S3 registry architecture** (`config/buckets.toml` + `S3_<TYPE>_*` env vars):
+- **Misc Bucket** (`misc`): Voice recordings, audio prompts
+- **Video Bucket** (`video`): Video clips and rendered MP4 outputs
+- **Audio Bucket** (`audio`): TTS synthesis results and forced alignment JSON
 
 **Key Points**:
-- Both buckets must be configured (all `S3_MISC_*` and `R2_VOICE_*` env vars)
-- Bucket names must match across all services (backend, TTS worker, video worker)
+- Bucket names and regions are declared in `config/buckets.toml`
+- Credentials and endpoints are configured via environment variables (`S3_MISC_*`, `S3_VIDEO_*`, `S3_AUDIO_*`)
 - Output paths follow: `{job_type}/{YYYYMMDD}/{job_id}/{filename}.{ext}`
 
 ### Voice Caching
@@ -354,21 +352,18 @@ DATABASE_URL=postgresql+asyncpg://user:pass@host:5432/indextts_worker
 # RabbitMQ
 RABBITMQ_URL=amqp://user:pass@host:5672/
 
-# Misc Bucket (voices, audio prompts - read-only during synthesis)
+# S3 Credentials (endpoints and keys defined per bucket type; names/regions in config/buckets.toml)
 S3_MISC_ENDPOINT_URL=https://storage-provider.com/s3
 S3_MISC_ACCESS_KEY_ID=storage-key
 S3_MISC_SECRET_ACCESS_KEY=storage-secret
-S3_MISC_BUCKET_NAME=bucket-name
-S3_MISC_REGION=ap-southeast-1
-S3_MISC_USE_SSL=true
 
-# Voice Bucket (TTS synthesis results - write-only during synthesis)
-R2_VOICE_ENDPOINT_URL=https://output-provider.com/s3
-R2_VOICE_ACCESS_KEY_ID=output-key
-R2_VOICE_SECRET_ACCESS_KEY=output-secret
-R2_VOICE_BUCKET_NAME=bucket-name
-R2_VOICE_REGION=us-east-1
-R2_VOICE_USE_SSL=true
+S3_VIDEO_ENDPOINT_URL=https://storage-provider.com/s3
+S3_VIDEO_ACCESS_KEY_ID=video-key
+S3_VIDEO_SECRET_ACCESS_KEY=video-secret
+
+S3_AUDIO_ENDPOINT_URL=https://output-provider.com/s3
+S3_AUDIO_ACCESS_KEY_ID=output-key
+S3_AUDIO_SECRET_ACCESS_KEY=output-secret
 ```
 
 **Benefits**: Different providers, regions, credentials, and costs per bucket.
@@ -485,33 +480,34 @@ from services.s3_config import S3Client
 
 client = S3Client()
 
-# Download from storage bucket (voices)
+# Download from misc bucket (audio prompts, voice recordings)
 client.download_file(
     remote_path="audio-prompts/voice_001.wav",
     local_path="/tmp/prompt.wav",
-    bucket_type="storage",  # Specify which bucket
+    bucket_type="misc",  # Specify bucket type or unique bucket name
     max_retries=3
 )
 
-# Upload to output bucket (TTS results)
+# Upload to audio bucket (TTS results)
 client.upload_file(
     local_path="/tmp/audio.wav",
     remote_path="tts-audio/studio/job_123.mp3",
-    bucket_type="output",  # Specify which bucket
+    bucket_type="audio",
     metadata={"job_id": "job_123"}
 )
 
 # Presigned URL (temporary access)
 url = client.generate_presigned_url(
     remote_path="audio-prompts/voice_001.wav",
-    bucket_type="storage",
+    bucket_type="misc",
     expiration=3600
 )
 ```
 
 **bucket_type values:**
-- `"storage"` - Storage bucket (voices, audio prompts)
-- `"output"` - Output bucket (TTS synthesis results)
+- `"misc"` - Misc bucket (audio prompts, voice recordings)
+- `"video"` - Video bucket (clips, rendered videos)
+- `"audio"` - Audio bucket (TTS synthesis results, alignment JSON)
 
 ### Idempotent Upload
 

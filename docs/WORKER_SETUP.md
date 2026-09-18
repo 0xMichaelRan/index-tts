@@ -141,27 +141,25 @@ Edit `.env` with your settings:
 RABBITMQ_URL=amqp://user:password@host:5672/
 RABBITMQ_HOST=localhost  # For startup logs
 
-# S3 Misc Bucket (voices, audio prompts - read-only)
+# S3 Credentials (endpoints and keys defined per bucket type; names/regions in config/buckets.toml)
 S3_MISC_ENDPOINT_URL=https://storage-provider.com
 S3_MISC_ACCESS_KEY_ID=your-storage-key
 S3_MISC_SECRET_ACCESS_KEY=your-storage-secret
-S3_MISC_BUCKET_NAME=your-storage-bucket
-S3_MISC_REGION=ap-southeast-1
-S3_MISC_USE_SSL=true
 
-# R2 Voice Bucket (TTS results - write-only)
-R2_VOICE_ENDPOINT_URL=https://output-provider.com
-R2_VOICE_ACCESS_KEY_ID=your-output-key
-R2_VOICE_SECRET_ACCESS_KEY=your-output-secret
-R2_VOICE_BUCKET_NAME=your-output-bucket
-R2_VOICE_REGION=us-east-1
-R2_VOICE_USE_SSL=true
+S3_VIDEO_ENDPOINT_URL=https://storage-provider.com
+S3_VIDEO_ACCESS_KEY_ID=your-video-key
+S3_VIDEO_SECRET_ACCESS_KEY=your-video-secret
+
+S3_AUDIO_ENDPOINT_URL=https://output-provider.com
+S3_AUDIO_ACCESS_KEY_ID=your-output-key
+S3_AUDIO_SECRET_ACCESS_KEY=your-output-secret
 ```
 
-**Why two buckets?**
-- **Storage bucket**: Stores voice recordings and audio prompts (read-only during synthesis)
-- **Output bucket**: Stores TTS synthesis results (write-only during synthesis)
-- Benefits: Different providers, regions, credentials, and costs per bucket
+**Bucket registry (`config/buckets.toml`)**:
+- **Misc bucket** (`misc`): Stores voice recordings and audio prompts
+- **Video bucket** (`video`): Stores video clips and rendered MP4 outputs
+- **Audio bucket** (`audio`): Stores TTS synthesis results and forced alignment JSON
+- Benefits: Centralized bucket definitions, isolated credentials, independent providers/regions per bucket.
 
 ### 2. RabbitMQ Setup
 
