@@ -218,9 +218,7 @@ class TestIdempotentUploader:
     def test_check_existing_upload_metadata_error(self, uploader, mock_s3_client):
         """Test handling of metadata fetch errors."""
         mock_s3_client.file_exists.return_value = True
-        mock_s3_client.audio_client.head_object.side_effect = Exception(
-            "Access denied"
-        )
+        mock_s3_client.audio_client.head_object.side_effect = Exception("Access denied")
 
         result = uploader._check_existing_upload(
             "job-123", "tts-audio/studio/file.mp3", bucket_type="audio"

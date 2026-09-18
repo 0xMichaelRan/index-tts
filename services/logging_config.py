@@ -269,9 +269,7 @@ def log_startup_summary(
 
     logger.info(f"Platform:         {platform}")
     for cfg in s3_buckets:
-        logger.info(
-            f"S3 Bucket [{cfg.type:6s}] {cfg.bucket_name} @ {cfg.endpoint_url}"
-        )
+        logger.info(f"S3 Bucket [{cfg.type:6s}] {cfg.bucket_name} @ {cfg.endpoint_url}")
     logger.info(f"RabbitMQ Host:    {rabbitmq_host}")
     logger.info("")
 

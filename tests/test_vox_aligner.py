@@ -29,7 +29,9 @@ def _assert_contiguous(windows: list[tuple[float, float]], total_dur: float) -> 
     """Assert windows are contiguous, monotone, and sum to total_dur."""
     assert len(windows) > 0
     # First window starts at 0
-    assert abs(windows[0][0]) < 1e-9, f"First window start should be 0, got {windows[0][0]}"
+    assert abs(windows[0][0]) < 1e-9, (
+        f"First window start should be 0, got {windows[0][0]}"
+    )
     # Last window ends at total_dur
     assert abs(windows[-1][1] - total_dur) < 1e-6, (
         f"Last window end should be {total_dur}, got {windows[-1][1]}"
@@ -37,8 +39,8 @@ def _assert_contiguous(windows: list[tuple[float, float]], total_dur: float) -> 
     # Contiguous (each end == next start)
     for i in range(len(windows) - 1):
         assert abs(windows[i][1] - windows[i + 1][0]) < 1e-9, (
-            f"Gap between window {i} and {i+1}: "
-            f"{windows[i][1]} != {windows[i+1][0]}"
+            f"Gap between window {i} and {i + 1}: "
+            f"{windows[i][1]} != {windows[i + 1][0]}"
         )
     # Monotone (each window has positive duration)
     for i, (s, e) in enumerate(windows):
@@ -95,17 +97,19 @@ class TestBuildWindowsExact:
 
     def setup_method(self):
         self.narrations = [
-            "Hello world",    # 2 tokens
-            "Foo bar baz",    # 3 tokens
+            "Hello world",  # 2 tokens
+            "Foo bar baz",  # 3 tokens
         ]
         # 5 words total: [0-1, 1-2, 2-3, 3-4, 4-5]
-        self.words = _make_words([
-            ("Hello", 0.0, 0.5),
-            ("world", 0.5, 1.0),
-            ("Foo",   1.2, 1.7),
-            ("bar",   1.7, 2.2),
-            ("baz",   2.2, 2.8),
-        ])
+        self.words = _make_words(
+            [
+                ("Hello", 0.0, 0.5),
+                ("world", 0.5, 1.0),
+                ("Foo", 1.2, 1.7),
+                ("bar", 1.7, 2.2),
+                ("baz", 2.2, 2.8),
+            ]
+        )
         self.total_dur = 3.0
 
     def test_returns_n_windows(self):
@@ -141,19 +145,34 @@ class TestBuildWindowsMultipleBeats:
 
     def setup_method(self):
         self.narrations = [
-            "Beat one here",         # 3
-            "Beat two is next",      # 4
+            "Beat one here",  # 3
+            "Beat two is next",  # 4
             "Third beat narration",  # 3
-            "Fourth beat text",      # 3
+            "Fourth beat text",  # 3
             "Fifth and final beat",  # 4
         ]  # total = 17 words
         # Build 17 dummy words spaced evenly at 0.5s each
         words_raw = []
         t = 0.0
-        tokens = ["one", "two", "three", "four", "five",
-                  "six", "seven", "eight", "nine", "ten",
-                  "eleven", "twelve", "thirteen", "fourteen",
-                  "fifteen", "sixteen", "seventeen"]
+        tokens = [
+            "one",
+            "two",
+            "three",
+            "four",
+            "five",
+            "six",
+            "seven",
+            "eight",
+            "nine",
+            "ten",
+            "eleven",
+            "twelve",
+            "thirteen",
+            "fourteen",
+            "fifteen",
+            "sixteen",
+            "seventeen",
+        ]
         for tok in tokens:
             words_raw.append((tok, t, t + 0.4))
             t += 0.5
@@ -179,15 +198,17 @@ class TestTokenOverflow:
     def test_overflow_does_not_raise(self):
         narrations = [
             "A very long narration with many many words here",  # 9 tokens
-            "Another long one with lots of words too",           # 8 tokens
+            "Another long one with lots of words too",  # 8 tokens
         ]  # 17 tokens total but only 5 words in alignment
-        words = _make_words([
-            ("a", 0.0, 0.5),
-            ("b", 0.6, 1.0),
-            ("c", 1.1, 1.5),
-            ("d", 1.6, 2.0),
-            ("e", 2.1, 2.5),
-        ])
+        words = _make_words(
+            [
+                ("a", 0.0, 0.5),
+                ("b", 0.6, 1.0),
+                ("c", 1.1, 1.5),
+                ("d", 1.6, 2.0),
+                ("e", 2.1, 2.5),
+            ]
+        )
         aligner = ScriptGuidedAligner(narrations, words)
         windows = aligner.build_windows(total_audio_duration=3.0)
         assert len(windows) == 2
@@ -209,7 +230,7 @@ class TestCJKAlignment:
 
     def test_cjk_windows_correct_count(self):
         narrations = [
-            "一九七一年",   # 5 chars
+            "一九七一年",  # 5 chars
             "黑暗中购买机票",  # 7 chars
         ]
         # 12 words in alignment
@@ -234,12 +255,14 @@ class TestEdgeCases:
 
     def test_no_total_duration_last_window_uses_last_word_end(self):
         narrations = ["One two", "Three four"]
-        words = _make_words([
-            ("One",   0.0, 0.4),
-            ("two",   0.5, 0.9),
-            ("Three", 1.1, 1.5),
-            ("four",  1.6, 2.0),
-        ])
+        words = _make_words(
+            [
+                ("One", 0.0, 0.4),
+                ("two", 0.5, 0.9),
+                ("Three", 1.1, 1.5),
+                ("four", 1.6, 2.0),
+            ]
+        )
         aligner = ScriptGuidedAligner(narrations, words)
         windows = aligner.build_windows(total_audio_duration=None)
         assert len(windows) == 2
@@ -257,12 +280,14 @@ class TestEdgeCases:
     def test_monotone_even_with_no_pauses(self):
         """Adjacent words with no pause between beats — midpoints are forced monotone."""
         narrations = ["A B", "C D"]
-        words = _make_words([
-            ("A", 0.0, 0.5),
-            ("B", 0.5, 1.0),
-            ("C", 1.0, 1.5),  # zero gap between beats
-            ("D", 1.5, 2.0),
-        ])
+        words = _make_words(
+            [
+                ("A", 0.0, 0.5),
+                ("B", 0.5, 1.0),
+                ("C", 1.0, 1.5),  # zero gap between beats
+                ("D", 1.5, 2.0),
+            ]
+        )
         aligner = ScriptGuidedAligner(narrations, words)
         windows = aligner.build_windows(total_audio_duration=2.0)
         for s, e in windows:

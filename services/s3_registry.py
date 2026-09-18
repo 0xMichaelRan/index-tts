@@ -53,10 +53,10 @@ if not CONFIG_FILE.exists():
 class S3BucketConfig:
     """Configuration for a single S3 bucket."""
 
-    name: str           # Logical identifier, e.g. "misc", "video", "audio"
-    type: str           # Type classification ("misc" | "video" | "audio")
-    bucket_name: str    # Unique S3 bucket name (e.g. "klatu-misc")
-    endpoint_url: str   # S3 endpoint URL
+    name: str  # Logical identifier, e.g. "misc", "video", "audio"
+    type: str  # Type classification ("misc" | "video" | "audio")
+    bucket_name: str  # Unique S3 bucket name (e.g. "klatu-misc")
+    endpoint_url: str  # S3 endpoint URL
     access_key_id: str  # AWS / S3-compatible access key
     secret_access_key: str  # AWS / S3-compatible secret key
     region: str = "auto"

@@ -94,9 +94,12 @@ def _get_video_duration(path: str, ffmpeg_path: str = "ffmpeg") -> float:
     ffprobe = ffmpeg_path.replace("ffmpeg", "ffprobe")
     cmd = [
         ffprobe,
-        "-v", "error",
-        "-show_entries", "format=duration",
-        "-of", "json",
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "json",
         path,
     ]
     result = subprocess.run(cmd, capture_output=True, text=True, check=True)
@@ -126,11 +129,16 @@ def _concat_clips(
                 fh.write(f"file '{os.path.abspath(p)}'\n")
 
         cmd = [
-            ffmpeg_path, "-y",
-            "-f", "concat",
-            "-safe", "0",
-            "-i", list_path,
-            "-c", "copy",
+            ffmpeg_path,
+            "-y",
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+            list_path,
+            "-c",
+            "copy",
             output_path,
         ]
         subprocess.run(cmd, check=True, capture_output=True)
@@ -152,14 +160,22 @@ def _overlay_audio(
     (strict audio invariant).
     """
     cmd = [
-        ffmpeg_path, "-y",
-        "-i", video_path,
-        "-i", audio_path,
-        "-map", "0:v:0",
-        "-map", "1:a:0",
-        "-c:v", "copy",
-        "-c:a", "aac",
-        "-b:a", "192k",
+        ffmpeg_path,
+        "-y",
+        "-i",
+        video_path,
+        "-i",
+        audio_path,
+        "-map",
+        "0:v:0",
+        "-map",
+        "1:a:0",
+        "-c:v",
+        "copy",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "192k",
         "-shortest",
         output_path,
     ]
@@ -284,7 +300,8 @@ class ScriptGuidedAligner:
         if not non_ws:
             return False
         cjk_count = sum(
-            1 for c in non_ws
+            1
+            for c in non_ws
             if "\u4e00" <= c <= "\u9fff"
             or "\u3400" <= c <= "\u4dbf"
             or "\uac00" <= c <= "\ud7a3"
@@ -380,11 +397,19 @@ def _adapt_clip_speed_up(
     pts_factor = max(1.0 / _MAX_SPEED, min(1.0 / _MIN_SPEED, pts_factor))
 
     cmd = [
-        ffmpeg_path, "-y",
-        "-i", clip_path,
-        "-vf", f"{skip_filter}{scale_pad},setpts={pts_factor:.6f}*PTS",
+        ffmpeg_path,
+        "-y",
+        "-i",
+        clip_path,
+        "-vf",
+        f"{skip_filter}{scale_pad},setpts={pts_factor:.6f}*PTS",
         "-an",
-        "-c:v", "libx264", "-preset", "fast", "-crf", "22",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "fast",
+        "-crf",
+        "22",
         output_path,
     ]
     subprocess.run(cmd, check=True, capture_output=True)
@@ -419,27 +444,41 @@ def _adapt_clip_living_poster(
 
     if skip_first_frame:
         cmd = [
-            ffmpeg_path, "-y",
-            "-ss", f"{start_offset:.3f}",
-            "-i", clip_path,
-            "-vf", (
+            ffmpeg_path,
+            "-y",
+            "-ss",
+            f"{start_offset:.3f}",
+            "-i",
+            clip_path,
+            "-vf",
+            (
                 f"setpts=PTS-STARTPTS,{scale_pad},"
                 f"tpad=stop_mode=clone:stop_duration={extra_secs:.3f}"
             ),
             "-an",
-            "-c:v", "libx264", "-preset", "fast", "-crf", "22",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "fast",
+            "-crf",
+            "22",
             output_path,
         ]
     else:
         cmd = [
-            ffmpeg_path, "-y",
-            "-i", clip_path,
-            "-vf", (
-                f"{scale_pad},"
-                f"tpad=stop_mode=clone:stop_duration={extra_secs:.3f}"
-            ),
+            ffmpeg_path,
+            "-y",
+            "-i",
+            clip_path,
+            "-vf",
+            (f"{scale_pad},tpad=stop_mode=clone:stop_duration={extra_secs:.3f}"),
             "-an",
-            "-c:v", "libx264", "-preset", "fast", "-crf", "22",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "fast",
+            "-crf",
+            "22",
             output_path,
         ]
     subprocess.run(cmd, check=True, capture_output=True)
@@ -521,8 +560,7 @@ class VoxRenderPipeline:
 
         width, height = _resolve_dimensions(resolution, aspect_ratio)
         logger.info(
-            f"[VOX {job_id}] Output: {width}x{height} "
-            f"({resolution}, {aspect_ratio})"
+            f"[VOX {job_id}] Output: {width}x{height} ({resolution}, {aspect_ratio})"
         )
 
         clip_s3_keys: list[str] = (
@@ -531,14 +569,12 @@ class VoxRenderPipeline:
         beat_narrations: list[str] = (
             job_data.get("beatNarrations") or job_data.get("beat_narrations") or []
         )
-        audio_path_s3: str = (
-            job_data.get("audioPath") or job_data.get("audio_path", "")
+        audio_path_s3: str = job_data.get("audioPath") or job_data.get("audio_path", "")
+        alignment_path_s3: str = job_data.get("alignmentPath") or job_data.get(
+            "alignment_path", ""
         )
-        alignment_path_s3: str = (
-            job_data.get("alignmentPath") or job_data.get("alignment_path", "")
-        )
-        output_s3_key: str = (
-            job_data.get("outputS3Key") or job_data.get("output_s3_key", "")
+        output_s3_key: str = job_data.get("outputS3Key") or job_data.get(
+            "output_s3_key", ""
         )
         language: str = job_data.get("language", "en")
         project_id = job_data.get("projectId") or job_data.get("project_id")
@@ -567,13 +603,13 @@ class VoxRenderPipeline:
 
         work_dir = tempfile.mkdtemp(prefix=f"vox_{job_id}_")
         try:
-            # 1. Resolve audio and alignment files (audio bucket)
+            # 1. Resolve audio and alignment files (tts bucket)
             logger.info(f"[VOX {job_id}] Resolving audio and alignment files")
             local_audio = self._resolve_file(
-                job_id, audio_path_s3, work_dir, bucket_type="audio"
+                job_id, audio_path_s3, work_dir, bucket_type="tts"
             )
             local_align = self._resolve_file(
-                job_id, alignment_path_s3, work_dir, bucket_type="audio"
+                job_id, alignment_path_s3, work_dir, bucket_type="tts"
             )
 
             # 2. Download video clips
@@ -607,9 +643,7 @@ class VoxRenderPipeline:
                 beat_narrations=beat_narrations,
                 words=words,
             )
-            windows = aligner.build_windows(
-                total_audio_duration=total_audio_duration
-            )
+            windows = aligner.build_windows(total_audio_duration=total_audio_duration)
 
             logger.info(
                 f"[VOX {job_id}] Alignment: {len(words)} words → "

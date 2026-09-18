@@ -435,6 +435,3 @@ class IdempotentUploader:
         logger.critical(f"Recovery data: {json.dumps(recovery_data, indent=2)}")
 
         return recovery_data
-
-
-

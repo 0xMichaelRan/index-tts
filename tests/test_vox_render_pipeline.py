@@ -212,4 +212,3 @@ class TestVoxRenderPipelineClipsDownload:
 
         for call in mock_s3.download_file.call_args_list:
             assert call.kwargs["bucket_type"] == "video"
-

@@ -5,9 +5,11 @@ Provides ``S3Client``: a thin wrapper around the bucket registry that
 creates and caches boto3 S3 clients per bucket type.
 
 Bucket types:
-  - "misc"  – miscellaneous assets, audio prompts, voice recordings
+  - "misc"  – miscellaneous assets, temporary uploads
   - "video" – video clips and rendered MP4 outputs
-  - "audio" – synthesised TTS audio and alignment JSON
+  - "audio" – user voice recordings and audio prompts for TTS voice cloning
+  - "tts"   – synthesised TTS audio and forced alignment JSON (worker writes here)
+  - "11lab" – user-uploaded ElevenLabs audio exports (frontend uploads)
 
 Credentials are resolved via ``config/buckets.toml`` + ``S3_<TYPE>_*``
 environment variables.  See ``services/s3_registry.py`` for details.
@@ -18,18 +20,18 @@ Usage::
 
     client = S3Client()
 
-    # Download a voice recording (misc bucket)
+    # Download a voice recording (audio bucket)
     client.download_file(
         remote_path="audio-prompts/voice_001.wav",
         local_path="/tmp/prompt.wav",
-        bucket_type="misc",
+        bucket_type="audio",
     )
 
-    # Upload a TTS result (audio bucket)
+    # Upload a TTS result (tts bucket)
     client.upload_file(
         local_path="/tmp/output.wav",
         remote_path="tts-audio/studio/job_123.wav",
-        bucket_type="audio",
+        bucket_type="tts",
     )
 """
 
@@ -110,8 +112,8 @@ class S3Client:
     Registry-backed S3 client.
 
     Creates and caches one boto3 S3 client per configured bucket type
-    (misc, video, audio).  All methods accept a ``bucket_type`` parameter
-    that resolves to the appropriate client and bucket via the registry.
+    (misc, video, audio, tts, 11lab).  All methods accept a ``bucket_type``
+    parameter that resolves to the appropriate client and bucket via the registry.
 
     Raises:
         ImportError: If boto3 is not installed.
@@ -399,7 +401,9 @@ class S3Client:
                 ExpiresIn=expiration,
             )
             logger.debug(
-                "Generated presigned URL for %s (expires in %ds)", remote_path, expiration
+                "Generated presigned URL for %s (expires in %ds)",
+                remote_path,
+                expiration,
             )
             return url
         except (ClientError, BotoCoreError) as e:

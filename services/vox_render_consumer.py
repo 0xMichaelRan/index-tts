@@ -39,8 +39,8 @@ _INPUT_QUEUE = "vox_jobs"
 _OUTPUT_QUEUE = "vox_results"
 
 # Reconnect settings (mirror tts_worker pattern)
-_INITIAL_RECONNECT_DELAY = 5   # seconds
-_MAX_RECONNECT_DELAY = 300     # 5 minutes
+_INITIAL_RECONNECT_DELAY = 5  # seconds
+_MAX_RECONNECT_DELAY = 300  # 5 minutes
 
 
 class VoxRenderConsumer:
@@ -134,7 +134,7 @@ class VoxRenderConsumer:
         while not self._shutdown_requested:
             try:
                 self._connect()
-                self._consume()   # blocks until channel stops
+                self._consume()  # blocks until channel stops
             except Exception as exc:
                 if self._shutdown_requested:
                     break
@@ -181,7 +181,7 @@ class VoxRenderConsumer:
             queue=f"{_INPUT_QUEUE}_failed",
             durable=True,
             arguments={
-                "x-message-ttl": 604800000,   # 7 days
+                "x-message-ttl": 604800000,  # 7 days
                 "x-max-length": 5000,
             },
         )
@@ -196,7 +196,7 @@ class VoxRenderConsumer:
             arguments={
                 "x-dead-letter-exchange": f"{_INPUT_QUEUE}.dlx",
                 "x-dead-letter-routing-key": f"{_INPUT_QUEUE}_failed",
-                "x-message-ttl": 604800000,   # 7 days
+                "x-message-ttl": 604800000,  # 7 days
                 "x-max-length": 10000,
             },
         )
@@ -298,9 +298,7 @@ class VoxRenderConsumer:
             ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
 
         except Exception as exc:
-            logger.error(
-                f"[VOX {job_id}] Unexpected error — sending to DLQ: {exc!s}"
-            )
+            logger.error(f"[VOX {job_id}] Unexpected error — sending to DLQ: {exc!s}")
             ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
 
     def _publish_result(self, result: dict[str, Any]) -> None:
@@ -335,7 +333,7 @@ class VoxRenderConsumer:
                         f"{max_retries} attempts: {exc}"
                     )
                     raise
-                delay = 2 ** attempt
+                delay = 2**attempt
                 logger.warning(
                     f"[VOX {job_id}] Publish attempt {attempt} failed: {exc}. "
                     f"Retrying in {delay}s..."

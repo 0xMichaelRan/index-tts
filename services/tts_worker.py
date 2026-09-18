@@ -262,9 +262,7 @@ class IndexTTSWorker:
         # Log S3 registry
         logger.subsection("CONNECTIONS")
         for cfg in list_buckets():
-            logger.info(
-                f"S3 [{cfg.type:6s}] {cfg.bucket_name} @ {cfg.endpoint_url}"
-            )
+            logger.info(f"S3 [{cfg.type:6s}] {cfg.bucket_name} @ {cfg.endpoint_url}")
         logger.info("")
 
         # Log circuit breaker status

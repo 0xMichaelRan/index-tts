@@ -56,11 +56,11 @@ class StorageManager:
 
         local_path = os.path.join(temp_dir, os.path.basename(audio_prompt_path))
 
-        # Download from misc bucket (voice recordings / audio prompts)
+        # Download from audio bucket (user voice recordings / audio prompts)
         self.s3_client.download_file(
             remote_path=audio_prompt_path,
             local_path=local_path,
-            bucket_type="misc",
+            bucket_type="audio",
             max_retries=3,
         )
 
@@ -94,7 +94,7 @@ class StorageManager:
                 job_id=job_id,
                 local_path=local_path,
                 remote_path=remote_path,
-                bucket_type="audio",
+                bucket_type="tts",
                 verify_integrity=True,
             )
 
@@ -138,7 +138,7 @@ class StorageManager:
             job_id=job_id,
             local_path=local_parsed_json,
             remote_path=alignment_s3_path,
-            bucket_type="audio",
+            bucket_type="tts",
             verify_integrity=True,
         )
 
