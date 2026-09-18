@@ -1,7 +1,7 @@
 # =============================================================================
 # IndexTTS Worker – S3 Bucket Registry Configuration
 # =============================================================================
-# Structural S3 bucket definitions (MISC, VIDEO, AUDIO).
+# Structural S3 bucket definitions (MISC, VIDEO, AUDIO, TTS, 11LAB).
 # Bucket names and regions are defined structurally here.
 # Sensitive endpoint URLs and access credentials are configured via .env:
 #   - S3_<TYPE>_ENDPOINT_URL
@@ -13,6 +13,8 @@
 #     e.g., type = "misc"  -> S3_MISC_*
 #     e.g., type = "video" -> S3_VIDEO_*
 #     e.g., type = "audio" -> S3_AUDIO_*
+#     e.g., type = "tts"   -> S3_TTS_*
+#     e.g., type = "11lab" -> S3_11LAB_*
 #   - All bucket names must be unique across all providers and types.
 #   - When reading or writing to S3, the bucket name is always required.
 #   - enabled defaults to true.
@@ -39,5 +41,21 @@ name = "audio"
 type = "audio"
 bucket_name = "klatu-audio"
 region = "auto"
-description = "Audio recordings, synthesized voiceovers, and alignment files"
+description = "User voice recordings and audio prompts for TTS voice cloning (read-only for worker)"
+enabled = true
+
+[[bucket]]
+name = "tts"
+type = "tts"
+bucket_name = "klatu-tts"
+region = "auto"
+description = "IndexTTS synthesized audio output and forced alignment JSON (written exclusively by this worker)"
+enabled = true
+
+[[bucket]]
+name = "11lab"
+type = "11lab"
+bucket_name = "klatu-11lab"
+region = "auto"
+description = "User-uploaded ElevenLabs audio exports (uploaded from frontend, read-only for worker)"
 enabled = true
