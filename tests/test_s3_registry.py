@@ -102,6 +102,35 @@ class TestLoadBuckets:
         assert "my-misc-bucket" in registry
         assert "my-audio-bucket" in registry
 
+    def test_loads_all_five_project_buckets(self):
+        """Verify that default config/buckets.toml contains all 5 architecture buckets."""
+        five_env = {
+            "S3_MISC_ENDPOINT_URL": "https://s3.example.com",
+            "S3_MISC_ACCESS_KEY_ID": "misc-key",
+            "S3_MISC_SECRET_ACCESS_KEY": "misc-secret",
+            "S3_VIDEO_ENDPOINT_URL": "https://s3.example.com",
+            "S3_VIDEO_ACCESS_KEY_ID": "video-key",
+            "S3_VIDEO_SECRET_ACCESS_KEY": "video-secret",
+            "S3_AUDIO_ENDPOINT_URL": "https://s3.example.com",
+            "S3_AUDIO_ACCESS_KEY_ID": "audio-key",
+            "S3_AUDIO_SECRET_ACCESS_KEY": "audio-secret",
+            "S3_TTS_ENDPOINT_URL": "https://s3.example.com",
+            "S3_TTS_ACCESS_KEY_ID": "tts-key",
+            "S3_TTS_SECRET_ACCESS_KEY": "tts-secret",
+            "S3_11LAB_ENDPOINT_URL": "https://s3.example.com",
+            "S3_11LAB_ACCESS_KEY_ID": "lab-key",
+            "S3_11LAB_SECRET_ACCESS_KEY": "lab-secret",
+        }
+        with patch.dict(os.environ, five_env, clear=False):
+            reg = load_buckets()
+        assert "klatu-misc" in reg
+        assert "klatu-video" in reg
+        assert "klatu-audio" in reg
+        assert "klatu-tts" in reg
+        assert "klatu-11lab" in reg
+        assert reg["klatu-tts"].type == "tts"
+        assert reg["klatu-11lab"].type == "11lab"
+
     def test_misc_bucket_config(self, tmp_path):
         toml_file = make_toml_file(tmp_path, MINIMAL_TOML)
         with patch.dict(os.environ, {**MISC_ENV, **AUDIO_ENV}, clear=False):
