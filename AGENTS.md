@@ -337,12 +337,6 @@ The worker implements the **flow multi-locale video render pipeline** using FFmp
 
 ## Configuration
 
-### Environment Variables
-
-#### Required Dual-Bucket Configuration
-
-**Location**: `.env` file in project root (copy from `.env.example`)
-
 Set **all** of these variables:
 
 ```bash

@@ -355,6 +355,5 @@ For issues or questions:
 ## Additional Documentation
 
 - **Architecture**: See `docs/ARCHITECTURE.md` for system design
-- **S3 Configuration**: See `docs/DUAL_BUCKET_GUIDE.md` for dual-bucket setup details
 - **API Reference**: See `docs/API.md` for job payload schema
 - **Agent Instructions**: See `AGENTS.md` for development guidelines
