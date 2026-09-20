@@ -40,6 +40,14 @@ from services.s3_config import S3Client
 
 logger = get_logger(__name__)
 
+# ---------------------------------------------------------------------------
+# Bundled font directory
+# ---------------------------------------------------------------------------
+
+# Resolved relative to this file's location so it works regardless of the
+# current working directory when the worker is launched.
+_FONTS_DIR: str = str(Path(__file__).parent.parent / "assets" / "fonts")
+
 # Speed factor bounds
 _MIN_SPEED = 0.25
 _MAX_SPEED = 4.0
@@ -315,8 +323,10 @@ def _build_ass_subtitles(
     aspect_ratio: str,
     width: int,
     height: int,
-    font_name: str = "Arial",
-    cjk_font_name: str = "Noto Sans CJK SC",
+    font_name: str = "Inter",
+    cjk_sc_font_name: str = "Noto Sans CJK SC",
+    cjk_tc_font_name: str = "Noto Sans CJK TC",
+    use_tc: bool = False,
 ) -> str:
     """
     Generate an ASS subtitle file with per-word karaoke timing.
@@ -327,9 +337,13 @@ def _build_ass_subtitles(
     (grey), producing a karaoke-style highlight effect.
 
     Font selection is automatic:
-    - CJK content → ``cjk_font_name`` (requires the font to be installed
-      on the worker host, e.g. ``apt install fonts-noto-cjk``)
-    - Latin / other → ``font_name``
+    - CJK Traditional (``use_tc=True``) → ``cjk_tc_font_name`` (Noto Sans CJK TC)
+    - CJK Simplified                    → ``cjk_sc_font_name`` (Noto Sans CJK SC)
+    - Latin / other                     → ``font_name``           (Inter)
+
+    The font names must match the ``Family`` field embedded in the TTF files
+    supplied via the ``fontsdir`` option of the FFmpeg ``subtitles=`` filter.
+    Bundled fonts live in ``assets/fonts/`` and are loaded via ``_FONTS_DIR``.
 
     Args:
         words: Word-level alignment list from stable-whisper alignment JSON.
@@ -339,15 +353,20 @@ def _build_ass_subtitles(
         aspect_ratio: ``"9x16"`` or ``"16x9"`` — controls font size and margin.
         width: Output video width in pixels.
         height: Output video height in pixels.
-        font_name: Latin font name (must be installed on host).
-        cjk_font_name: CJK font name (must be installed on host).
+        font_name: Latin font family name (embedded in Inter TTF).
+        cjk_sc_font_name: Simplified Chinese font family name.
+        cjk_tc_font_name: Traditional Chinese font family name.
+        use_tc: If True, select the TC font for CJK content.
 
     Returns:
         ``output_path`` (the written ASS file).
     """
     all_text = " ".join(beat_narrations)
     use_cjk = _has_cjk_chars(all_text)
-    selected_font = cjk_font_name if use_cjk else font_name
+    if use_cjk:
+        selected_font = cjk_tc_font_name if use_tc else cjk_sc_font_name
+    else:
+        selected_font = font_name
 
     # Portrait (9:16) uses larger text and a wider vertical margin
     is_portrait = aspect_ratio.lower().replace(":", "x") in ("9x16",)
@@ -429,6 +448,7 @@ def _mux_audio_with_subtitles(
     ass_path: str,
     output_path: str,
     ffmpeg_path: str = "ffmpeg",
+    fontsdir: str | None = None,
 ) -> None:
     """
     Single-pass: burn ASS subtitles into the video stream and mux narration audio.
@@ -439,11 +459,34 @@ def _mux_audio_with_subtitles(
 
     Audio is copied verbatim (strict audio invariant — no speed or
     pitch adjustments).
+
+    Args:
+        video_path: Path to the (video-only) concatenated clip.
+        audio_path: Path to the narration audio file.
+        ass_path: Path to the ASS subtitle file.
+        output_path: Destination path for the final MP4.
+        ffmpeg_path: Path to the FFmpeg binary.
+        fontsdir: Directory containing bundled TTF/OTF fonts for libass.
+            When set, libass will load fonts from this directory so the
+            render does not depend on system-installed fonts.  Should point
+            to the ``assets/fonts/`` directory (``_FONTS_DIR``).
     """
     # Use absolute path to avoid libass path resolution issues
     abs_ass = os.path.abspath(ass_path)
     # Escape backslashes and colons for the filtergraph (Windows-safe)
     escaped_ass = abs_ass.replace("\\", "/").replace(":", "\\:")
+
+    # Build the subtitles filter string, optionally including fontsdir so
+    # libass can resolve bundled fonts without system installation.
+    if fontsdir:
+        abs_fontsdir = os.path.abspath(fontsdir)
+        escaped_fontsdir = abs_fontsdir.replace("\\", "/").replace(":", "\\:")
+        subtitle_filter = (
+            f"[0:v]subtitles='{escaped_ass}':fontsdir='{escaped_fontsdir}'[vout]"
+        )
+    else:
+        subtitle_filter = f"[0:v]subtitles='{escaped_ass}'[vout]"
+
     cmd = [
         ffmpeg_path,
         "-y",
@@ -452,7 +495,7 @@ def _mux_audio_with_subtitles(
         "-i",
         audio_path,
         "-filter_complex",
-        f"[0:v]subtitles='{escaped_ass}'[vout]",
+        subtitle_filter,
         "-map",
         "[vout]",
         "-map",
@@ -959,6 +1002,8 @@ class VoxRenderPipeline:
             ass_path: str | None = None
             if burn_subtitles:
                 ass_path = os.path.join(work_dir, "subtitles.ass")
+                # zh-TW uses Traditional Chinese font (Noto Sans CJK TC)
+                use_tc = language.lower() in ("zh-tw", "zh_tw", "zhtw", "tc")
                 _build_ass_subtitles(
                     words=words,
                     windows=windows,
@@ -967,10 +1012,12 @@ class VoxRenderPipeline:
                     aspect_ratio=aspect_ratio,
                     width=width,
                     height=height,
+                    use_tc=use_tc,
                 )
                 logger.info(
                     f"[VOX {job_id}] ASS subtitles built: "
-                    f"{len(windows)} lines, lang={language}"
+                    f"{len(windows)} lines, lang={language}, "
+                    f"font={'TC' if use_tc else 'SC' if _has_cjk_chars(' '.join(beat_narrations)) else 'Inter'}"
                 )
 
             # 4. Adapt each clip to its window
@@ -988,12 +1035,25 @@ class VoxRenderPipeline:
             # 6. Burn subtitles + mux audio (single pass when subtitles enabled)
             final_path = os.path.join(work_dir, "final.mp4")
             if burn_subtitles and ass_path:
+                # Use bundled fonts if the directory exists; fall back to
+                # system fonts gracefully so the render never hard-fails.
+                fonts_dir: str | None = _FONTS_DIR if os.path.isdir(_FONTS_DIR) else None
+                if fonts_dir:
+                    logger.info(
+                        f"[VOX {job_id}] Using bundled fonts from: {fonts_dir}"
+                    )
+                else:
+                    logger.warning(
+                        f"[VOX {job_id}] Bundled fonts directory not found "
+                        f"({_FONTS_DIR}); falling back to system fonts"
+                    )
                 _mux_audio_with_subtitles(
                     video_path=concat_path,
                     audio_path=local_audio,
                     ass_path=ass_path,
                     output_path=final_path,
                     ffmpeg_path=self.ffmpeg_path,
+                    fontsdir=fonts_dir,
                 )
                 logger.info(
                     f"[VOX {job_id}] Subtitles burned + audio muxed (single pass)"

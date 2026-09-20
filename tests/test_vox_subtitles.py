@@ -137,7 +137,7 @@ class TestBuildAssSubtitles:
             assert "PlayResX: 1920" in content
             assert "PlayResY: 1080" in content
             assert "[V4+ Styles]" in content
-            assert "Style: Default,Arial" in content
+            assert "Style: Default,Inter" in content
             assert "[Events]" in content
             assert "Dialogue: 0,0:00:00.00,0:00:02.50,Default" in content
             assert r"{\k100}Hello" in content
