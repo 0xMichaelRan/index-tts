@@ -1037,11 +1037,11 @@ class VoxRenderPipeline:
             if burn_subtitles and ass_path:
                 # Use bundled fonts if the directory exists; fall back to
                 # system fonts gracefully so the render never hard-fails.
-                fonts_dir: str | None = _FONTS_DIR if os.path.isdir(_FONTS_DIR) else None
+                fonts_dir: str | None = (
+                    _FONTS_DIR if os.path.isdir(_FONTS_DIR) else None
+                )
                 if fonts_dir:
-                    logger.info(
-                        f"[VOX {job_id}] Using bundled fonts from: {fonts_dir}"
-                    )
+                    logger.info(f"[VOX {job_id}] Using bundled fonts from: {fonts_dir}")
                 else:
                     logger.warning(
                         f"[VOX {job_id}] Bundled fonts directory not found "
