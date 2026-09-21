@@ -228,3 +228,57 @@ class CacheManager:
             return None
 
         return result_container.get("result")
+
+    async def _evict_async(self) -> None:
+        """
+        Async LRU eviction helper.
+
+        Checks the current entry count and evicts the oldest entries when
+        ``max_entries`` is exceeded. Evicts ``max_entries - eviction_threshold``
+        entries (e.g. 10 000 − 9 000 = 1 000) to restore the cache to the
+        safe threshold in a single pass.
+        """
+        try:
+            async with DatabaseSession() as db_session:
+                cache_service = TTSCacheService(db_session, self.cache_dir)
+                evict_count = self.max_entries - self.eviction_threshold
+                evicted = await cache_service.evict_old_entries(
+                    max_entries=self.max_entries,
+                    evict_count=max(evict_count, 1),
+                )
+                if evicted > 0:
+                    logger.info(
+                        f"Auto-eviction complete: removed {evicted} cache entries "
+                        f"(max={self.max_entries}, threshold={self.eviction_threshold})"
+                    )
+        except Exception as e:
+            logger.warning(f"Cache auto-eviction failed: {e}")
+
+    def maybe_evict(self, job_id: str = "") -> None:
+        """
+        Fire-and-forget background eviction check.
+
+        Spawns a daemon thread that runs LRU eviction if the cache has exceeded
+        ``max_entries``.  The thread is daemonised so it never blocks worker
+        shutdown, and we deliberately do **not** join it — eviction must not
+        add latency to the synthesis pipeline.
+
+        Args:
+            job_id: Job identifier used for log context only.
+        """
+        if not self.enabled:
+            return
+
+        def run_async():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                loop.run_until_complete(self._evict_async())
+            except Exception as e:
+                logger.warning(f"[JOB {job_id}] Background eviction error: {e}")
+            finally:
+                loop.close()
+
+        thread = threading.Thread(target=run_async, daemon=True, name="cache-evict")
+        thread.start()
+        # Intentionally no join — eviction runs in the background.
