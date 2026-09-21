@@ -17,9 +17,13 @@ Run:
 import os
 import pytest
 import tempfile
+from datetime import datetime, timedelta
+
+from sqlalchemy import select, update
 
 from app.cache_service import TTSCacheServiceSync
 from app.database import SyncSessionLocal
+from app.models import TTSSynthesisCache
 
 
 @pytest.fixture
@@ -322,6 +326,53 @@ class TestCacheStore:
         # Cleanup
         cache_service.delete_entry(entry1.cache_key)
 
+    def test_store_relative_path_when_inside_cache_dir(self, cache_service, db_session):
+        """Test that storing a file inside cache_dir stores only a relative path in DB (Phase 3b)."""
+        rel_filename = "test_rel_audio.wav"
+        full_path = cache_service.cache_dir / rel_filename
+        full_path.write_bytes(b"dummy audio content inside cache_dir")
+
+        text = "Relative path test"
+        voice = "audio-prompts/rel_voice.wav"
+
+        try:
+            entry = cache_service.store(
+                text=text,
+                audio_prompt_path=voice,
+                base_audio_local_path=str(full_path),
+                audio_duration_seconds=1.5,
+                synthesis_duration_ms=500,
+            )
+
+            # 1. Stored row in DB must contain ONLY the relative path (not absolute)
+            stmt = select(TTSSynthesisCache.base_audio_local_path).where(
+                TTSSynthesisCache.cache_key == entry.cache_key
+            )
+            raw_stored_path = db_session.execute(stmt).scalar_one()
+            assert not os.path.isabs(raw_stored_path)
+            assert raw_stored_path == rel_filename
+
+            # 2. Returned entry.base_audio_local_path must be resolved to absolute path
+            assert os.path.isabs(entry.base_audio_local_path)
+            assert os.path.exists(entry.base_audio_local_path)
+
+            # 3. Lookup must return resolved absolute path
+            looked_up = cache_service.lookup(text, voice)
+            assert looked_up is not None
+            assert os.path.isabs(looked_up.base_audio_local_path)
+            assert os.path.exists(looked_up.base_audio_local_path)
+
+            # 4. DB record must STILL be relative after lookup (lookup didn't overwrite with abs)
+            db_session.expire_all()
+            raw_stored_after = db_session.execute(stmt).scalar_one()
+            assert not os.path.isabs(raw_stored_after)
+            assert raw_stored_after == rel_filename
+
+        finally:
+            cache_service.delete_entry(cache_service.generate_cache_key(text, voice))
+            if full_path.exists():
+                full_path.unlink()
+
 
 class TestHitCountTracking:
     """Test hit count tracking."""
@@ -416,6 +467,53 @@ class TestCacheEviction:
                 cache_service.delete_entry(entry.cache_key)
             except Exception:
                 pass  # Entry may already be deleted
+
+    def test_evict_removes_files_stored_with_relative_paths(
+        self, cache_service, db_session
+    ):
+        """Test that bulk eviction deletes physical files stored with relative paths (Phase 3b + 3c)."""
+        rel_filename = "test_evict_rel.wav"
+        full_path = cache_service.cache_dir / rel_filename
+        full_path.write_bytes(b"dummy audio for eviction")
+
+        text = "Eviction relative path test"
+        voice = "audio-prompts/evict_rel_voice.wav"
+
+        try:
+            entry = cache_service.store(
+                text=text,
+                audio_prompt_path=voice,
+                base_audio_local_path=str(full_path),
+                audio_duration_seconds=1.0,
+                synthesis_duration_ms=400,
+            )
+            cache_key = entry.cache_key
+            assert full_path.exists()
+
+            # Set last_accessed_at far in the past so it is guaranteed to be the LRU candidate
+            db_session.execute(
+                update(TTSSynthesisCache)
+                .where(TTSSynthesisCache.cache_key == cache_key)
+                .values(last_accessed_at=datetime.utcnow() - timedelta(days=3650))
+            )
+            db_session.commit()
+
+            # Evict with max_entries=0 so this entry gets evicted
+            evicted = cache_service.evict_old_entries(max_entries=0, evict_count=1)
+            assert evicted >= 1
+
+            # File must be deleted on disk
+            assert not full_path.exists()
+
+            # DB entry must be deleted
+            stmt = select(TTSSynthesisCache).where(
+                TTSSynthesisCache.cache_key == cache_key
+            )
+            assert db_session.execute(stmt).scalar_one_or_none() is None
+
+        finally:
+            if full_path.exists():
+                full_path.unlink()
 
 
 class TestCacheDeletion:

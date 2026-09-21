@@ -46,8 +46,14 @@ class TTSCacheService:
             cache_dir: Directory for storing cached audio files
         """
         self.db = db_session
-        self.cache_dir = Path(cache_dir)
+        self.cache_dir = Path(cache_dir).resolve()
         self.cache_dir.mkdir(parents=True, exist_ok=True)
+
+    def _resolve_path(self, stored_path: str) -> str:
+        """Resolve a stored DB path (relative or absolute) to a full local filesystem path."""
+        if not os.path.isabs(stored_path):
+            return str(self.cache_dir / stored_path)
+        return stored_path
 
     @staticmethod
     def extract_voice_id(audio_prompt_path: str) -> str:
@@ -192,10 +198,14 @@ class TTSCacheService:
         entry = result.scalar_one_or_none()
 
         if entry:
+            # Phase 3b: base_audio_local_path may be stored as a relative
+            # filename (post-migration) or as a legacy absolute path.
+            abs_path = self._resolve_path(entry.base_audio_local_path)
+
             # Verify file still exists
-            if not os.path.exists(entry.base_audio_local_path):
+            if not os.path.exists(abs_path):
                 logger.warning(
-                    f"Cache file missing: {entry.base_audio_local_path} (cache_key={cache_key[:16]}...)"
+                    f"Cache file missing: {abs_path} (cache_key={cache_key[:16]}...)"
                 )
                 await self.delete_entry(cache_key)
                 return None
@@ -207,7 +217,11 @@ class TTSCacheService:
 
             # Update hit count and last accessed time
             await self.increment_hit_count(cache_key)
+            await self.db.refresh(entry)
+            self.db.expunge(entry)
 
+            # Expose the resolved absolute path
+            entry.base_audio_local_path = abs_path
             return entry
         else:
             logger.info(f"Cache MISS: {cache_key[:16]}...")
@@ -261,24 +275,44 @@ class TTSCacheService:
         # Generate semantic filename for easier debugging
         semantic_filename = self.generate_semantic_filename(text, audio_prompt_path)
 
-        # Create cache entry
-        entry = TTSSynthesisCache(
-            cache_key=cache_key,
-            text=text,
-            audio_prompt_path=audio_prompt_path,
-            text_hash=text_hash,
-            base_audio_local_path=base_audio_local_path,
-            base_audio_s3_path=None,  # S3 backup not used; cache is local-based for speed
-            audio_duration_seconds=audio_duration_seconds,
-            synthesis_duration_ms=synthesis_duration_ms,
-            file_size_bytes=file_size_bytes,
-            language=language,
-            word_count=count_words(text),
-        )
+        # Phase 3b: store relative path if inside cache_dir.
+        src = Path(base_audio_local_path).resolve()
+        try:
+            relative_path = str(src.relative_to(self.cache_dir.resolve()))
+        except ValueError:
+            relative_path = base_audio_local_path
 
-        self.db.add(entry)
+        # Phase 3a: upsert — first writer wins, concurrent stores are safe.
+        stmt = (
+            pg_insert(TTSSynthesisCache)
+            .values(
+                cache_key=cache_key,
+                text=text,
+                audio_prompt_path=audio_prompt_path,
+                text_hash=text_hash,
+                base_audio_local_path=relative_path,
+                base_audio_s3_path=None,
+                audio_duration_seconds=audio_duration_seconds,
+                synthesis_duration_ms=synthesis_duration_ms,
+                file_size_bytes=file_size_bytes,
+                language=language,
+                word_count=count_words(text),
+            )
+            .on_conflict_do_nothing(index_elements=["cache_key"])
+        )
+        await self.db.execute(stmt)
         await self.db.commit()
-        await self.db.refresh(entry)
+
+        # Return the entry (existing or freshly inserted).
+        entry = (
+            await self.db.execute(
+                select(TTSSynthesisCache).where(
+                    TTSSynthesisCache.cache_key == cache_key
+                )
+            )
+        ).scalar_one()
+        self.db.expunge(entry)
+        entry.base_audio_local_path = self._resolve_path(entry.base_audio_local_path)
 
         logger.success(
             f"Cache STORED: {semantic_filename} (duration={audio_duration_seconds:.2f}s, "
@@ -322,10 +356,11 @@ class TTSCacheService:
 
         if entry:
             # Delete file
+            abs_path = self._resolve_path(entry.base_audio_local_path)
             try:
-                if os.path.exists(entry.base_audio_local_path):
-                    os.remove(entry.base_audio_local_path)
-                    logger.info(f"Deleted cache file: {entry.base_audio_local_path}")
+                if os.path.exists(abs_path):
+                    os.remove(abs_path)
+                    logger.info(f"Deleted cache file: {abs_path}")
             except Exception as e:
                 logger.warning(f"Failed to delete cache file: {e}")
 
@@ -366,11 +401,13 @@ class TTSCacheService:
         total_size_bytes = size_result.scalar() or 0
 
         return {
-            "total_entries": total_entries,
-            "total_hits": total_hits,
-            "total_size_mb": round(total_size_bytes / (1024 * 1024), 2),
+            "total_entries": int(total_entries),
+            "total_hits": int(total_hits),
+            "total_size_mb": round(float(total_size_bytes) / (1024 * 1024), 2),
             "avg_hits_per_entry": (
-                round(total_hits / max(total_entries, 1), 2) if total_entries > 0 else 0
+                round(float(total_hits) / max(total_entries, 1), 2)
+                if total_entries > 0
+                else 0.0
             ),
         }
 
@@ -380,17 +417,14 @@ class TTSCacheService:
         """
         Evict oldest cache entries when limit exceeded (LRU eviction).
 
+        Uses a single bulk DELETE instead of N individual deletes (Phase 3c).
+
         Args:
             max_entries: Maximum number of cache entries to keep
             evict_count: Number of entries to evict when threshold reached
 
         Returns:
             Number of entries evicted
-
-        Strategy:
-            - Sort by last_accessed_at (ascending)
-            - Delete oldest N entries
-            - Also delete associated files
         """
         # Count current entries
         count_stmt = select(func.count(TTSSynthesisCache.cache_key))
@@ -407,21 +441,39 @@ class TTSCacheService:
             f"Cache limit exceeded ({current_count}/{max_entries}), evicting {evict_count} entries"
         )
 
-        # Get oldest entries (by last_accessed_at)
-        stmt = (
-            select(TTSSynthesisCache)
+        # Fetch keys + paths of the LRU entries to evict.
+        lru_stmt = (
+            select(
+                TTSSynthesisCache.cache_key,
+                TTSSynthesisCache.base_audio_local_path,
+            )
             .order_by(TTSSynthesisCache.last_accessed_at.asc())
             .limit(evict_count)
         )
-        result = await self.db.execute(stmt)
-        entries_to_evict = result.scalars().all()
+        result = await self.db.execute(lru_stmt)
+        rows = result.all()
+        keys_to_evict = [r.cache_key for r in rows]
 
-        # Delete entries
-        evicted = 0
-        for entry in entries_to_evict:
-            if await self.delete_entry(entry.cache_key):
-                evicted += 1
+        if not keys_to_evict:
+            return 0
 
+        # Phase 3c: delete files first, then bulk-DELETE DB rows.
+        for r in rows:
+            abs_path = self._resolve_path(r.base_audio_local_path)
+            try:
+                if os.path.exists(abs_path):
+                    os.remove(abs_path)
+            except OSError as exc:
+                logger.warning(f"Failed to delete cache file: {exc}")
+
+        await self.db.execute(
+            delete(TTSSynthesisCache).where(
+                TTSSynthesisCache.cache_key.in_(keys_to_evict)
+            )
+        )
+        await self.db.commit()
+
+        evicted = len(keys_to_evict)
         logger.success(f"Evicted {evicted} cache entries")
         return evicted
 
@@ -447,28 +499,41 @@ class TTSCacheService:
         """
         Clear entire cache (delete all entries and files).
 
+        Uses a single bulk DELETE (Phase 3c).
+
         Returns:
             Number of entries deleted
 
         WARNING: This is destructive and cannot be undone!
         """
-        # Get all entries
-        stmt = select(TTSSynthesisCache)
-        result = await self.db.execute(stmt)
-        entries = result.scalars().all()
+        result = await self.db.execute(
+            select(
+                TTSSynthesisCache.cache_key,
+                TTSSynthesisCache.base_audio_local_path,
+            )
+        )
+        rows = result.all()
 
-        # Delete all entries and files
-        deleted = 0
-        for entry in entries:
-            if await self.delete_entry(entry.cache_key):
-                deleted += 1
+        for r in rows:
+            abs_path = self._resolve_path(r.base_audio_local_path)
+            try:
+                if os.path.exists(abs_path):
+                    os.remove(abs_path)
+            except OSError as exc:
+                logger.warning(f"Failed to delete cache file: {exc}")
 
+        await self.db.execute(delete(TTSSynthesisCache))
+        await self.db.commit()
+
+        deleted = len(rows)
         logger.warning(f"Cleared entire cache: {deleted} entries deleted")
         return deleted
 
     async def invalidate_voice_cache(self, audio_prompt_path: str) -> int:
         """
         Delete all cache entries using a specific voice.
+
+        Uses a single bulk DELETE (Phase 3c).
 
         Useful when a voice is updated or deleted.
 
@@ -478,19 +543,30 @@ class TTSCacheService:
         Returns:
             Number of entries deleted
         """
-        # Get all entries with this voice
-        stmt = select(TTSSynthesisCache).where(
-            TTSSynthesisCache.audio_prompt_path == audio_prompt_path
+        result = await self.db.execute(
+            select(
+                TTSSynthesisCache.cache_key,
+                TTSSynthesisCache.base_audio_local_path,
+            ).where(TTSSynthesisCache.audio_prompt_path == audio_prompt_path)
         )
-        result = await self.db.execute(stmt)
-        entries = result.scalars().all()
+        rows = result.all()
 
-        # Delete all matching entries
-        deleted = 0
-        for entry in entries:
-            if await self.delete_entry(entry.cache_key):
-                deleted += 1
+        for r in rows:
+            abs_path = self._resolve_path(r.base_audio_local_path)
+            try:
+                if os.path.exists(abs_path):
+                    os.remove(abs_path)
+            except OSError as exc:
+                logger.warning(f"Failed to delete cache file: {exc}")
 
+        await self.db.execute(
+            delete(TTSSynthesisCache).where(
+                TTSSynthesisCache.audio_prompt_path == audio_prompt_path
+            )
+        )
+        await self.db.commit()
+
+        deleted = len(rows)
         logger.info(
             f"Invalidated cache for voice '{audio_prompt_path}': {deleted} entries deleted"
         )
@@ -534,8 +610,14 @@ class TTSCacheServiceSync:
             cache_dir: Directory for cached audio files.
         """
         self.db = db_session
-        self.cache_dir = Path(cache_dir)
+        self.cache_dir = Path(cache_dir).resolve()
         self.cache_dir.mkdir(parents=True, exist_ok=True)
+
+    def _resolve_path(self, stored_path: str) -> str:
+        """Resolve a stored DB path (relative or absolute) to a full local filesystem path."""
+        if not os.path.isabs(stored_path):
+            return str(self.cache_dir / stored_path)
+        return stored_path
 
     def lookup(self, text: str, audio_prompt_path: str) -> Optional[TTSSynthesisCache]:
         """Look up cached synthesis by text and voice (synchronous).
@@ -558,12 +640,7 @@ class TTSCacheServiceSync:
         if entry:
             # Phase 3b: base_audio_local_path may be stored as a relative
             # filename (post-migration) or as a legacy absolute path.
-            stored_path = entry.base_audio_local_path
-            abs_path = (
-                str(self.cache_dir / stored_path)
-                if not os.path.isabs(stored_path)
-                else stored_path
-            )
+            abs_path = self._resolve_path(entry.base_audio_local_path)
 
             # Verify file still exists.
             if not os.path.exists(abs_path):
@@ -572,10 +649,6 @@ class TTSCacheServiceSync:
                 )
                 self.delete_entry(cache_key)
                 return None
-
-            # Expose the resolved absolute path so callers don't need to
-            # know whether the DB stores a relative or absolute path.
-            entry.base_audio_local_path = abs_path
 
             logger.info(
                 f"Cache HIT: {cache_key[:16]}... (hit_count={entry.hit_count}, "
@@ -586,6 +659,12 @@ class TTSCacheServiceSync:
             entry.hit_count += 1
             entry.last_accessed_at = datetime.utcnow()
             self.db.commit()
+            self.db.refresh(entry)
+            self.db.expunge(entry)
+
+            # Expose the resolved absolute path after commit so callers receive
+            # a valid filesystem path without persisting the absolute path to DB.
+            entry.base_audio_local_path = abs_path
 
             return entry
 
@@ -669,6 +748,8 @@ class TTSCacheServiceSync:
         entry = self.db.execute(
             select(TTSSynthesisCache).where(TTSSynthesisCache.cache_key == cache_key)
         ).scalar_one()
+        self.db.expunge(entry)
+        entry.base_audio_local_path = self._resolve_path(entry.base_audio_local_path)
 
         logger.success(
             f"Cache STORED: {semantic_filename} (duration={audio_duration_seconds:.2f}s, "
@@ -690,10 +771,11 @@ class TTSCacheServiceSync:
         entry = self.db.execute(stmt).scalar_one_or_none()
 
         if entry:
+            abs_path = self._resolve_path(entry.base_audio_local_path)
             try:
-                if os.path.exists(entry.base_audio_local_path):
-                    os.remove(entry.base_audio_local_path)
-                    logger.info(f"Deleted cache file: {entry.base_audio_local_path}")
+                if os.path.exists(abs_path):
+                    os.remove(abs_path)
+                    logger.info(f"Deleted cache file: {abs_path}")
             except Exception as e:
                 logger.warning(f"Failed to delete cache file: {e}")
 
@@ -751,9 +833,10 @@ class TTSCacheServiceSync:
 
         # Phase 3c: delete files first, then bulk-DELETE DB rows.
         for r in rows:
+            abs_path = self._resolve_path(r.base_audio_local_path)
             try:
-                if os.path.exists(r.base_audio_local_path):
-                    os.remove(r.base_audio_local_path)
+                if os.path.exists(abs_path):
+                    os.remove(abs_path)
             except OSError as exc:
                 logger.warning(f"Failed to delete cache file: {exc}")
 
@@ -792,11 +875,13 @@ class TTSCacheServiceSync:
         )
 
         return {
-            "total_entries": total_entries,
-            "total_hits": total_hits,
-            "total_size_mb": round(total_size_bytes / (1024 * 1024), 2),
+            "total_entries": int(total_entries),
+            "total_hits": int(total_hits),
+            "total_size_mb": round(float(total_size_bytes) / (1024 * 1024), 2),
             "avg_hits_per_entry": (
-                round(total_hits / max(total_entries, 1), 2) if total_entries > 0 else 0
+                round(float(total_hits) / max(total_entries, 1), 2)
+                if total_entries > 0
+                else 0.0
             ),
         }
 
@@ -834,9 +919,10 @@ class TTSCacheServiceSync:
         ).all()
 
         for r in rows:
+            abs_path = self._resolve_path(r.base_audio_local_path)
             try:
-                if os.path.exists(r.base_audio_local_path):
-                    os.remove(r.base_audio_local_path)
+                if os.path.exists(abs_path):
+                    os.remove(abs_path)
             except OSError as exc:
                 logger.warning(f"Failed to delete cache file: {exc}")
 
@@ -866,9 +952,10 @@ class TTSCacheServiceSync:
         ).all()
 
         for r in rows:
+            abs_path = self._resolve_path(r.base_audio_local_path)
             try:
-                if os.path.exists(r.base_audio_local_path):
-                    os.remove(r.base_audio_local_path)
+                if os.path.exists(abs_path):
+                    os.remove(abs_path)
             except OSError as exc:
                 logger.warning(f"Failed to delete cache file: {exc}")
 
