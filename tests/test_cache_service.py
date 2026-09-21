@@ -336,6 +336,11 @@ class TestCacheStore:
         voice = "audio-prompts/rel_voice.wav"
 
         try:
+            # Pre-clean any stale row from a previous test run so that ON CONFLICT
+            # DO NOTHING doesn't silently return an old row with an absolute path.
+            stale_key = cache_service.generate_cache_key(text, voice)
+            cache_service.delete_entry(stale_key)
+
             entry = cache_service.store(
                 text=text,
                 audio_prompt_path=voice,
