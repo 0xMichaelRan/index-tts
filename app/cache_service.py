@@ -22,7 +22,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 
-from sqlalchemy import select, func
+from sqlalchemy import select, func, delete
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
@@ -553,14 +554,27 @@ class TTSCacheServiceSync:
         entry = self.db.execute(stmt).scalar_one_or_none()
 
         if entry:
+            # Phase 3b: base_audio_local_path may be stored as a relative
+            # filename (post-migration) or as a legacy absolute path.
+            stored_path = entry.base_audio_local_path
+            abs_path = (
+                str(self.cache_dir / stored_path)
+                if not os.path.isabs(stored_path)
+                else stored_path
+            )
+
             # Verify file still exists.
-            if not os.path.exists(entry.base_audio_local_path):
+            if not os.path.exists(abs_path):
                 logger.warning(
-                    f"Cache file missing: {entry.base_audio_local_path} "
+                    f"Cache file missing: {abs_path} "
                     f"(cache_key={cache_key[:16]}...)"
                 )
                 self.delete_entry(cache_key)
                 return None
+
+            # Expose the resolved absolute path so callers don't need to
+            # know whether the DB stores a relative or absolute path.
+            entry.base_audio_local_path = abs_path
 
             logger.info(
                 f"Cache HIT: {cache_key[:16]}... (hit_count={entry.hit_count}, "
@@ -588,6 +602,11 @@ class TTSCacheServiceSync:
     ) -> TTSSynthesisCache:
         """Store new synthesis in cache (synchronous).
 
+        Uses ``INSERT ... ON CONFLICT DO NOTHING`` so concurrent workers
+        synthesising the same (text, voice) pair don't raise a PK
+        violation — the first writer wins and subsequent stores are
+        silently ignored (Phase 3a).
+
         Args:
             text: Synthesized text.
             audio_prompt_path: S3 path to voice prompt.
@@ -597,7 +616,7 @@ class TTSCacheServiceSync:
             language: Language code (e.g. ``'en'``, ``'zh'``).
 
         Returns:
-            Created cache entry.
+            Cache entry (existing or newly created).
 
         Raises:
             FileNotFoundError: If ``base_audio_local_path`` does not exist.
@@ -613,23 +632,44 @@ class TTSCacheServiceSync:
         file_size_bytes = os.path.getsize(base_audio_local_path)
         semantic_filename = self.generate_semantic_filename(text, audio_prompt_path)
 
-        entry = TTSSynthesisCache(
-            cache_key=cache_key,
-            text=text,
-            audio_prompt_path=audio_prompt_path,
-            text_hash=text_hash,
-            base_audio_local_path=base_audio_local_path,
-            base_audio_s3_path=None,
-            audio_duration_seconds=audio_duration_seconds,
-            synthesis_duration_ms=synthesis_duration_ms,
-            file_size_bytes=file_size_bytes,
-            language=language,
-            word_count=count_words(text),
-        )
+        # Phase 3b: store only the filename (relative to cache_dir) when the
+        # source file already lives inside cache_dir.  Files supplied from
+        # outside cache_dir (e.g. /tmp during synthesis) are stored with their
+        # absolute path so lookup can still find them.
+        src = Path(base_audio_local_path).resolve()
+        try:
+            relative_path = str(src.relative_to(self.cache_dir.resolve()))
+        except ValueError:
+            # File is outside cache_dir — keep the absolute path.
+            relative_path = base_audio_local_path
 
-        self.db.add(entry)
+        # Phase 3a: upsert — first writer wins, concurrent stores are safe.
+        stmt = (
+            pg_insert(TTSSynthesisCache)
+            .values(
+                cache_key=cache_key,
+                text=text,
+                audio_prompt_path=audio_prompt_path,
+                text_hash=text_hash,
+                base_audio_local_path=relative_path,
+                base_audio_s3_path=None,
+                audio_duration_seconds=audio_duration_seconds,
+                synthesis_duration_ms=synthesis_duration_ms,
+                file_size_bytes=file_size_bytes,
+                language=language,
+                word_count=count_words(text),
+            )
+            .on_conflict_do_nothing(index_elements=["cache_key"])
+        )
+        self.db.execute(stmt)
         self.db.commit()
-        self.db.refresh(entry)
+
+        # Return the entry (existing or freshly inserted).
+        entry = self.db.execute(
+            select(TTSSynthesisCache).where(
+                TTSSynthesisCache.cache_key == cache_key
+            )
+        ).scalar_one()
 
         logger.success(
             f"Cache STORED: {semantic_filename} (duration={audio_duration_seconds:.2f}s, "
@@ -671,6 +711,9 @@ class TTSCacheServiceSync:
     ) -> int:
         """Evict oldest cache entries when limit exceeded (LRU, synchronous).
 
+        Uses a single bulk ``DELETE`` instead of N individual deletes
+        (Phase 3c) to reduce DB round-trips from O(N×3) to O(1).
+
         Args:
             max_entries: Maximum number of cache entries to keep.
             evict_count: Number of entries to evict when threshold reached.
@@ -692,18 +735,37 @@ class TTSCacheServiceSync:
             f"evicting {evict_count} entries"
         )
 
-        stmt = (
-            select(TTSSynthesisCache)
+        # Fetch keys + paths of the LRU entries to evict.
+        lru_stmt = (
+            select(
+                TTSSynthesisCache.cache_key,
+                TTSSynthesisCache.base_audio_local_path,
+            )
             .order_by(TTSSynthesisCache.last_accessed_at.asc())
             .limit(evict_count)
         )
-        entries_to_evict = self.db.execute(stmt).scalars().all()
+        rows = self.db.execute(lru_stmt).all()
+        keys_to_evict = [r.cache_key for r in rows]
 
-        evicted = 0
-        for entry in entries_to_evict:
-            if self.delete_entry(entry.cache_key):
-                evicted += 1
+        if not keys_to_evict:
+            return 0
 
+        # Phase 3c: delete files first, then bulk-DELETE DB rows.
+        for r in rows:
+            try:
+                if os.path.exists(r.base_audio_local_path):
+                    os.remove(r.base_audio_local_path)
+            except OSError as exc:
+                logger.warning(f"Failed to delete cache file: {exc}")
+
+        self.db.execute(
+            delete(TTSSynthesisCache).where(
+                TTSSynthesisCache.cache_key.in_(keys_to_evict)
+            )
+        )
+        self.db.commit()
+
+        evicted = len(keys_to_evict)
         logger.success(f"Evicted {evicted} cache entries")
         return evicted
 
@@ -754,21 +816,38 @@ class TTSCacheServiceSync:
     def clear_all(self) -> int:
         """Clear entire cache, deleting all entries and files (synchronous).
 
+        Uses a single bulk ``DELETE`` (Phase 3c).
+
         Returns:
             Number of entries deleted.
 
         .. warning:: This is destructive and cannot be undone.
         """
-        entries = self.db.execute(select(TTSSynthesisCache)).scalars().all()
-        deleted = 0
-        for entry in entries:
-            if self.delete_entry(entry.cache_key):
-                deleted += 1
+        rows = self.db.execute(
+            select(
+                TTSSynthesisCache.cache_key,
+                TTSSynthesisCache.base_audio_local_path,
+            )
+        ).all()
+
+        for r in rows:
+            try:
+                if os.path.exists(r.base_audio_local_path):
+                    os.remove(r.base_audio_local_path)
+            except OSError as exc:
+                logger.warning(f"Failed to delete cache file: {exc}")
+
+        self.db.execute(delete(TTSSynthesisCache))
+        self.db.commit()
+
+        deleted = len(rows)
         logger.warning(f"Cleared entire cache: {deleted} entries deleted")
         return deleted
 
     def invalidate_voice_cache(self, audio_prompt_path: str) -> int:
         """Delete all cache entries using a specific voice (synchronous).
+
+        Uses a single bulk ``DELETE`` (Phase 3c).
 
         Args:
             audio_prompt_path: S3 path to voice prompt.
@@ -776,17 +855,28 @@ class TTSCacheServiceSync:
         Returns:
             Number of entries deleted.
         """
-        entries = self.db.execute(
-            select(TTSSynthesisCache).where(
+        rows = self.db.execute(
+            select(
+                TTSSynthesisCache.cache_key,
+                TTSSynthesisCache.base_audio_local_path,
+            ).where(TTSSynthesisCache.audio_prompt_path == audio_prompt_path)
+        ).all()
+
+        for r in rows:
+            try:
+                if os.path.exists(r.base_audio_local_path):
+                    os.remove(r.base_audio_local_path)
+            except OSError as exc:
+                logger.warning(f"Failed to delete cache file: {exc}")
+
+        self.db.execute(
+            delete(TTSSynthesisCache).where(
                 TTSSynthesisCache.audio_prompt_path == audio_prompt_path
             )
-        ).scalars().all()
+        )
+        self.db.commit()
 
-        deleted = 0
-        for entry in entries:
-            if self.delete_entry(entry.cache_key):
-                deleted += 1
-
+        deleted = len(rows)
         logger.info(
             f"Invalidated cache for voice '{audio_prompt_path}': {deleted} entries deleted"
         )

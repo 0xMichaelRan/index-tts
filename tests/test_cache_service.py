@@ -11,32 +11,35 @@ Tests cover:
 - Voice invalidation
 
 Run:
-    conda activate index-tts
-    pytest tests/test_cache_service.py -v
+    uv run pytest tests/test_cache_service.py -v
 """
 
 import os
 import pytest
 import tempfile
 
-from app.cache_service import TTSCacheService
-from app.database import AsyncSessionLocal
+from app.cache_service import TTSCacheServiceSync
+from app.database import SyncSessionLocal
 
 
 @pytest.fixture
-async def db_session():
-    """Create database session for testing."""
-    if not AsyncSessionLocal:
+def db_session():
+    """Create synchronous database session for testing."""
+    if not SyncSessionLocal:
         pytest.skip("Database not configured")
 
-    async with AsyncSessionLocal() as session:
+    session = SyncSessionLocal()
+    try:
         yield session
+    finally:
+        session.rollback()  # Roll back any uncommitted changes
+        session.close()
 
 
 @pytest.fixture
-async def cache_service(db_session):
-    """Create cache service for testing."""
-    return TTSCacheService(db_session, cache_dir="outputs/test_cache")
+def cache_service(db_session):
+    """Create synchronous cache service for testing."""
+    return TTSCacheServiceSync(db_session, cache_dir="outputs/test_cache")
 
 
 @pytest.fixture
@@ -61,8 +64,8 @@ class TestCacheKeyGeneration:
         text = "Hello world"
         voice = "audio-prompts/voice_123.wav"
 
-        key1 = TTSCacheService.generate_cache_key(text, voice)
-        key2 = TTSCacheService.generate_cache_key(text, voice)
+        key1 = TTSCacheServiceSync.generate_cache_key(text, voice)
+        key2 = TTSCacheServiceSync.generate_cache_key(text, voice)
 
         assert key1 == key2
         assert len(key1) == 64  # SHA256 hex
@@ -73,8 +76,8 @@ class TestCacheKeyGeneration:
         text2 = "Hello world!"
         voice = "audio-prompts/voice_123.wav"
 
-        key1 = TTSCacheService.generate_cache_key(text1, voice)
-        key2 = TTSCacheService.generate_cache_key(text2, voice)
+        key1 = TTSCacheServiceSync.generate_cache_key(text1, voice)
+        key2 = TTSCacheServiceSync.generate_cache_key(text2, voice)
 
         assert key1 != key2
 
@@ -82,8 +85,8 @@ class TestCacheKeyGeneration:
         """Test text hash generation."""
         text = "Test text"
 
-        hash1 = TTSCacheService.generate_text_hash(text)
-        hash2 = TTSCacheService.generate_text_hash(text)
+        hash1 = TTSCacheServiceSync.generate_text_hash(text)
+        hash2 = TTSCacheServiceSync.generate_text_hash(text)
 
         assert hash1 == hash2
         assert len(hash1) == 64
@@ -95,104 +98,102 @@ class TestSemanticFilename:
     def test_extract_voice_id_basic(self):
         """Test extracting voice ID from standard S3 path."""
         path = "audio-prompts/voice_001.wav"
-        voice_id = TTSCacheService.extract_voice_id(path)
+        voice_id = TTSCacheServiceSync.extract_voice_id(path)
         assert voice_id == "001"
 
     def test_extract_voice_id_with_prefix(self):
         """Test extracting voice ID with voice_ prefix removal."""
         path = "audio-prompts/voice-mary.wav"
-        voice_id = TTSCacheService.extract_voice_id(path)
+        voice_id = TTSCacheServiceSync.extract_voice_id(path)
         assert voice_id == "mary"
 
     def test_extract_voice_id_nested_path(self):
         """Test extracting voice ID from nested path."""
         path = "audio-prompts/user/123/english.wav"
-        voice_id = TTSCacheService.extract_voice_id(path)
+        voice_id = TTSCacheServiceSync.extract_voice_id(path)
         assert voice_id == "english"
 
     def test_extract_voice_id_simple(self):
         """Test extracting voice ID from simple filename."""
         path = "voice.wav"
-        voice_id = TTSCacheService.extract_voice_id(path)
+        voice_id = TTSCacheServiceSync.extract_voice_id(path)
         assert voice_id == "voice"
 
     def test_sanitize_text_basic(self):
         """Test sanitizing text with punctuation."""
         text = "Hello, World!"
-        sanitized = TTSCacheService.sanitize_text_for_filename(text)
+        sanitized = TTSCacheServiceSync.sanitize_text_for_filename(text)
         assert sanitized == "hello_world"
 
     def test_sanitize_text_special_chars(self):
         """Test sanitizing text with special characters."""
         text = "What's your name?"
-        sanitized = TTSCacheService.sanitize_text_for_filename(text)
+        sanitized = TTSCacheServiceSync.sanitize_text_for_filename(text)
         assert sanitized == "whats_your_name"
 
     def test_sanitize_text_parentheses(self):
         """Test sanitizing text with parentheses and brackets."""
         text = "Test (v2) [edit]"
-        sanitized = TTSCacheService.sanitize_text_for_filename(text)
+        sanitized = TTSCacheServiceSync.sanitize_text_for_filename(text)
         assert sanitized == "test_v2_edit"
 
     def test_sanitize_text_max_length(self):
         """Test sanitizing text with max length."""
         text = "This is a very long text that should be truncated"
-        sanitized = TTSCacheService.sanitize_text_for_filename(text, max_length=20)
+        sanitized = TTSCacheServiceSync.sanitize_text_for_filename(text, max_length=20)
         assert len(sanitized) <= 20
         assert sanitized == "this_is_a_very_long"
 
     def test_sanitize_text_multiple_spaces(self):
         """Test sanitizing text with multiple spaces."""
         text = "Hello    world  test"
-        sanitized = TTSCacheService.sanitize_text_for_filename(text)
+        sanitized = TTSCacheServiceSync.sanitize_text_for_filename(text)
         assert sanitized == "hello_world_test"
 
     def test_generate_semantic_filename_basic(self):
         """Test generating semantic filename."""
         text = "Hello world"
         voice = "audio-prompts/voice_001.wav"
-        filename = TTSCacheService.generate_semantic_filename(text, voice)
+        filename = TTSCacheServiceSync.generate_semantic_filename(text, voice)
         assert filename == "hello_world_001.wav"
 
     def test_generate_semantic_filename_with_different_voice(self):
         """Test generating semantic filename with different voice."""
         text = "This is a test"
         voice = "audio-prompts/mary.wav"
-        filename = TTSCacheService.generate_semantic_filename(text, voice)
+        filename = TTSCacheServiceSync.generate_semantic_filename(text, voice)
         assert filename == "this_is_a_test_mary.wav"
 
     def test_generate_semantic_filename_different_text(self):
         """Test generating semantic filename with different text."""
         text = "Slow speech"
         voice = "audio-prompts/voice_slow.wav"
-        filename = TTSCacheService.generate_semantic_filename(text, voice)
+        filename = TTSCacheServiceSync.generate_semantic_filename(text, voice)
         assert filename == "slow_speech_slow.wav"
 
     def test_generate_semantic_filename_nested_voice_path(self):
         """Test generating semantic filename with nested voice path."""
         text = "Testing nested paths"
         voice = "audio-prompts/user/123/english.wav"
-        filename = TTSCacheService.generate_semantic_filename(text, voice)
+        filename = TTSCacheServiceSync.generate_semantic_filename(text, voice)
         assert filename == "testing_nested_paths_english.wav"
 
 
 class TestCacheLookup:
     """Test cache lookup operations."""
 
-    @pytest.mark.asyncio
-    async def test_lookup_miss_returns_none(self, cache_service):
+    def test_lookup_miss_returns_none(self, cache_service):
         """Test that lookup returns None when entry doesn't exist."""
-        entry = await cache_service.lookup("nonexistent text", "nonexistent_voice.wav")
+        entry = cache_service.lookup("nonexistent text", "nonexistent_voice.wav")
         assert entry is None
 
-    @pytest.mark.asyncio
-    async def test_lookup_returns_stored_entry(self, cache_service, temp_audio_file):
+    def test_lookup_returns_stored_entry(self, cache_service, temp_audio_file):
         """Test that lookup returns stored entry."""
         text = "Test synthesis"
         voice = "audio-prompts/test_voice.wav"
 
         # Store entry
-        stored = await cache_service.store(
+        stored = cache_service.store(
             text=text,
             audio_prompt_path=voice,
             base_audio_local_path=temp_audio_file,
@@ -201,7 +202,7 @@ class TestCacheLookup:
         )
 
         # Lookup
-        retrieved = await cache_service.lookup(text, voice)
+        retrieved = cache_service.lookup(text, voice)
 
         assert retrieved is not None
         assert retrieved.cache_key == stored.cache_key
@@ -209,10 +210,9 @@ class TestCacheLookup:
         assert retrieved.audio_prompt_path == voice
 
         # Cleanup
-        await cache_service.delete_entry(stored.cache_key)
+        cache_service.delete_entry(stored.cache_key)
 
-    @pytest.mark.asyncio
-    async def test_lookup_deletes_entry_if_file_missing(
+    def test_lookup_deletes_entry_if_file_missing(
         self, cache_service, temp_audio_file
     ):
         """Test that lookup deletes entry if file is missing."""
@@ -220,7 +220,7 @@ class TestCacheLookup:
         voice = "audio-prompts/test_voice.wav"
 
         # Store entry
-        await cache_service.store(
+        cache_service.store(
             text=text,
             audio_prompt_path=voice,
             base_audio_local_path=temp_audio_file,
@@ -232,7 +232,7 @@ class TestCacheLookup:
         os.remove(temp_audio_file)
 
         # Lookup should return None and delete entry
-        retrieved = await cache_service.lookup(text, voice)
+        retrieved = cache_service.lookup(text, voice)
 
         assert retrieved is None
 
@@ -240,13 +240,12 @@ class TestCacheLookup:
 class TestCacheStore:
     """Test cache store operations."""
 
-    @pytest.mark.asyncio
-    async def test_store_creates_entry(self, cache_service, temp_audio_file):
+    def test_store_creates_entry(self, cache_service, temp_audio_file):
         """Test that store creates cache entry."""
         text = "Store test"
         voice = "audio-prompts/voice.wav"
 
-        entry = await cache_service.store(
+        entry = cache_service.store(
             text=text,
             audio_prompt_path=voice,
             base_audio_local_path=temp_audio_file,
@@ -264,17 +263,16 @@ class TestCacheStore:
         assert entry.hit_count == 0
 
         # Cleanup
-        await cache_service.delete_entry(entry.cache_key)
+        cache_service.delete_entry(entry.cache_key)
 
-    @pytest.mark.asyncio
-    async def test_store_calculates_file_size(self, cache_service, temp_audio_file):
+    def test_store_calculates_file_size(self, cache_service, temp_audio_file):
         """Test that store calculates file size."""
         text = "File size test"
         voice = "audio-prompts/voice.wav"
 
         expected_size = os.path.getsize(temp_audio_file)
 
-        entry = await cache_service.store(
+        entry = cache_service.store(
             text=text,
             audio_prompt_path=voice,
             base_audio_local_path=temp_audio_file,
@@ -285,13 +283,12 @@ class TestCacheStore:
         assert entry.file_size_bytes == expected_size
 
         # Cleanup
-        await cache_service.delete_entry(entry.cache_key)
+        cache_service.delete_entry(entry.cache_key)
 
-    @pytest.mark.asyncio
-    async def test_store_raises_if_file_missing(self, cache_service):
+    def test_store_raises_if_file_missing(self, cache_service):
         """Test that store raises error if file doesn't exist."""
         with pytest.raises(FileNotFoundError):
-            await cache_service.store(
+            cache_service.store(
                 text="Test",
                 audio_prompt_path="audio-prompts/voice.wav",
                 base_audio_local_path="/nonexistent/file.wav",
@@ -299,18 +296,45 @@ class TestCacheStore:
                 synthesis_duration_ms=2000,
             )
 
+    def test_store_duplicate_is_idempotent(self, cache_service, temp_audio_file):
+        """Test that storing the same (text, voice) twice does not raise (upsert / ON CONFLICT DO NOTHING)."""
+        text = "Duplicate store test"
+        voice = "audio-prompts/dup_voice.wav"
+
+        entry1 = cache_service.store(
+            text=text,
+            audio_prompt_path=voice,
+            base_audio_local_path=temp_audio_file,
+            audio_duration_seconds=3.0,
+            synthesis_duration_ms=2000,
+        )
+
+        # Second store of the same key — should not raise
+        entry2 = cache_service.store(
+            text=text,
+            audio_prompt_path=voice,
+            base_audio_local_path=temp_audio_file,
+            audio_duration_seconds=3.0,
+            synthesis_duration_ms=2000,
+        )
+
+        # Both should share the same cache_key; original entry wins
+        assert entry1.cache_key == entry2.cache_key
+
+        # Cleanup
+        cache_service.delete_entry(entry1.cache_key)
+
 
 class TestHitCountTracking:
     """Test hit count tracking."""
 
-    @pytest.mark.asyncio
-    async def test_hit_count_increments_on_lookup(self, cache_service, temp_audio_file):
+    def test_hit_count_increments_on_lookup(self, cache_service, temp_audio_file):
         """Test that hit count increments on cache lookup."""
         text = "Hit count test"
         voice = "audio-prompts/voice.wav"
 
         # Store entry
-        entry = await cache_service.store(
+        entry = cache_service.store(
             text=text,
             audio_prompt_path=voice,
             base_audio_local_path=temp_audio_file,
@@ -321,27 +345,26 @@ class TestHitCountTracking:
         initial_hits = entry.hit_count
 
         # Lookup multiple times
-        await cache_service.lookup(text, voice)
-        await cache_service.lookup(text, voice)
-        await cache_service.lookup(text, voice)
+        cache_service.lookup(text, voice)
+        cache_service.lookup(text, voice)
+        cache_service.lookup(text, voice)
 
         # Final lookup to check count
-        final_entry = await cache_service.lookup(text, voice)
+        final_entry = cache_service.lookup(text, voice)
 
         # Should increment by 4 (3 + 1 final lookup)
         assert final_entry.hit_count == initial_hits + 4
 
         # Cleanup
-        await cache_service.delete_entry(entry.cache_key)
+        cache_service.delete_entry(entry.cache_key)
 
 
 class TestCacheStatistics:
     """Test cache statistics."""
 
-    @pytest.mark.asyncio
-    async def test_get_cache_stats(self, cache_service):
+    def test_get_cache_stats(self, cache_service):
         """Test getting cache statistics."""
-        stats = await cache_service.get_cache_stats()
+        stats = cache_service.get_cache_stats()
 
         assert "total_entries" in stats
         assert "total_hits" in stats
@@ -357,13 +380,12 @@ class TestCacheStatistics:
 class TestCacheEviction:
     """Test cache eviction."""
 
-    @pytest.mark.asyncio
-    async def test_evict_old_entries(self, cache_service, temp_audio_file):
+    def test_evict_old_entries(self, cache_service, temp_audio_file):
         """Test evicting old entries."""
         # Store some entries
         entries = []
         for i in range(3):
-            entry = await cache_service.store(
+            entry = cache_service.store(
                 text=f"Eviction test {i}",
                 audio_prompt_path=f"audio-prompts/voice_{i}.wav",
                 base_audio_local_path=temp_audio_file,
@@ -373,17 +395,17 @@ class TestCacheEviction:
             entries.append(entry)
 
         # Get stats before
-        stats_before = await cache_service.get_cache_stats()
+        stats_before = cache_service.get_cache_stats()
         entries_before = stats_before["total_entries"]
 
         # Evict entries
-        evicted = await cache_service.evict_old_entries(
+        evicted = cache_service.evict_old_entries(
             max_entries=entries_before - 2,  # Keep all but 2
             evict_count=2,
         )
 
         # Get stats after
-        stats_after = await cache_service.get_cache_stats()
+        stats_after = cache_service.get_cache_stats()
         entries_after = stats_after["total_entries"]
 
         # Check eviction worked
@@ -393,7 +415,7 @@ class TestCacheEviction:
         # Cleanup remaining entries
         for entry in entries:
             try:
-                await cache_service.delete_entry(entry.cache_key)
+                cache_service.delete_entry(entry.cache_key)
             except Exception:
                 pass  # Entry may already be deleted
 
@@ -401,14 +423,13 @@ class TestCacheEviction:
 class TestCacheDeletion:
     """Test cache deletion operations."""
 
-    @pytest.mark.asyncio
-    async def test_delete_entry(self, cache_service, temp_audio_file):
+    def test_delete_entry(self, cache_service, temp_audio_file):
         """Test deleting cache entry."""
         text = "Delete test"
         voice = "audio-prompts/voice.wav"
 
         # Store entry
-        entry = await cache_service.store(
+        entry = cache_service.store(
             text=text,
             audio_prompt_path=voice,
             base_audio_local_path=temp_audio_file,
@@ -417,33 +438,31 @@ class TestCacheDeletion:
         )
 
         # Delete entry
-        deleted = await cache_service.delete_entry(entry.cache_key)
+        deleted = cache_service.delete_entry(entry.cache_key)
 
         assert deleted is True
 
         # Verify entry is gone
-        retrieved = await cache_service.lookup(text, voice)
+        retrieved = cache_service.lookup(text, voice)
         assert retrieved is None
 
-    @pytest.mark.asyncio
-    async def test_delete_nonexistent_entry(self, cache_service):
+    def test_delete_nonexistent_entry(self, cache_service):
         """Test deleting nonexistent entry returns False."""
-        deleted = await cache_service.delete_entry("nonexistent_key_12345")
+        deleted = cache_service.delete_entry("nonexistent_key_12345")
         assert deleted is False
 
 
 class TestVoiceInvalidation:
     """Test voice cache invalidation."""
 
-    @pytest.mark.asyncio
-    async def test_invalidate_voice_cache(self, cache_service, temp_audio_file):
+    def test_invalidate_voice_cache(self, cache_service, temp_audio_file):
         """Test invalidating all entries for a voice."""
         voice = "audio-prompts/test_invalidate_voice.wav"
 
         # Store multiple entries with same voice
         entries = []
         for i in range(3):
-            entry = await cache_service.store(
+            entry = cache_service.store(
                 text=f"Invalidation test {i}",
                 audio_prompt_path=voice,
                 base_audio_local_path=temp_audio_file,
@@ -453,24 +472,23 @@ class TestVoiceInvalidation:
             entries.append(entry)
 
         # Invalidate voice
-        deleted = await cache_service.invalidate_voice_cache(voice)
+        deleted = cache_service.invalidate_voice_cache(voice)
 
         assert deleted == 3
 
         # Verify all entries are gone
         for i in range(3):
-            retrieved = await cache_service.lookup(f"Invalidation test {i}", voice)
+            retrieved = cache_service.lookup(f"Invalidation test {i}", voice)
             assert retrieved is None
 
 
 class TestTopEntries:
     """Test top entries query."""
 
-    @pytest.mark.asyncio
-    async def test_get_top_entries(self, cache_service, temp_audio_file):
+    def test_get_top_entries(self, cache_service, temp_audio_file):
         """Test getting top entries by hit count."""
         # Store entries with different hit counts
-        entry1 = await cache_service.store(
+        entry1 = cache_service.store(
             text="Top entry 1",
             audio_prompt_path="audio-prompts/voice_1.wav",
             base_audio_local_path=temp_audio_file,
@@ -478,7 +496,7 @@ class TestTopEntries:
             synthesis_duration_ms=2000,
         )
 
-        entry2 = await cache_service.store(
+        entry2 = cache_service.store(
             text="Top entry 2",
             audio_prompt_path="audio-prompts/voice_2.wav",
             base_audio_local_path=temp_audio_file,
@@ -487,14 +505,14 @@ class TestTopEntries:
         )
 
         # Generate different hit counts
-        await cache_service.lookup("Top entry 1", "audio-prompts/voice_1.wav")
-        await cache_service.lookup("Top entry 1", "audio-prompts/voice_1.wav")
-        await cache_service.lookup("Top entry 1", "audio-prompts/voice_1.wav")
+        cache_service.lookup("Top entry 1", "audio-prompts/voice_1.wav")
+        cache_service.lookup("Top entry 1", "audio-prompts/voice_1.wav")
+        cache_service.lookup("Top entry 1", "audio-prompts/voice_1.wav")
 
-        await cache_service.lookup("Top entry 2", "audio-prompts/voice_2.wav")
+        cache_service.lookup("Top entry 2", "audio-prompts/voice_2.wav")
 
         # Get top entries
-        top = await cache_service.get_top_entries(limit=10)
+        top = cache_service.get_top_entries(limit=10)
 
         assert len(top) >= 2
 
@@ -502,5 +520,5 @@ class TestTopEntries:
         # (Note: there may be other entries from other tests)
 
         # Cleanup
-        await cache_service.delete_entry(entry1.cache_key)
-        await cache_service.delete_entry(entry2.cache_key)
+        cache_service.delete_entry(entry1.cache_key)
+        cache_service.delete_entry(entry2.cache_key)
