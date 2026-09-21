@@ -412,42 +412,77 @@ class TTSCacheService:
         }
 
     async def evict_old_entries(
-        self, max_entries: int = 10000, evict_count: int = 1000
+        self,
+        max_entries: int = 10000,
+        evict_count: int = 1000,
+        max_size_mb: int = 0,
     ) -> int:
         """
-        Evict oldest cache entries when limit exceeded (LRU eviction).
+        Evict oldest cache entries when limit exceeded (cost-aware LRU eviction).
 
         Uses a single bulk DELETE instead of N individual deletes (Phase 3c).
 
+        Eviction is triggered by **either** condition:
+        - Entry count exceeds ``max_entries``, **or**
+        - Total disk usage exceeds ``max_size_mb`` (Phase 4a). Set to 0 to disable.
+
+        Within the candidates, entries are sorted by ``last_accessed_at ASC,
+        synthesis_duration_ms ASC`` so the cheapest-to-regenerate stale entries
+        leave first, preserving expensive long-form synthesis in the cache
+        (Phase 4b cost-aware LRU).
+
         Args:
-            max_entries: Maximum number of cache entries to keep
-            evict_count: Number of entries to evict when threshold reached
+            max_entries: Maximum number of cache entries to keep.
+            evict_count: Number of entries to evict when threshold reached.
+            max_size_mb: Maximum total cache size in MB (0 = no size cap).
 
         Returns:
-            Number of entries evicted
+            Number of entries evicted.
         """
         # Count current entries
         count_stmt = select(func.count(TTSSynthesisCache.cache_key))
         count_result = await self.db.execute(count_stmt)
         current_count = count_result.scalar() or 0
 
-        if current_count <= max_entries:
+        # Total disk usage
+        size_stmt = select(func.sum(TTSSynthesisCache.file_size_bytes))
+        size_result = await self.db.execute(size_stmt)
+        total_size_bytes = size_result.scalar() or 0
+        total_size_mb = float(total_size_bytes) / (1024 * 1024)
+
+        count_exceeded = current_count > max_entries
+        size_exceeded = max_size_mb > 0 and total_size_mb > max_size_mb
+
+        if not count_exceeded and not size_exceeded:
+            reasons = []
+            reasons.append(f"entries: {current_count}/{max_entries}")
+            if max_size_mb > 0:
+                reasons.append(f"size: {total_size_mb:.1f}/{max_size_mb} MB")
             logger.info(
-                f"Cache within limit ({current_count}/{max_entries}), no eviction needed"
+                f"Cache within limits ({', '.join(reasons)}), no eviction needed"
             )
             return 0
 
+        reasons = []
+        if count_exceeded:
+            reasons.append(f"count {current_count} > max {max_entries}")
+        if size_exceeded:
+            reasons.append(f"size {total_size_mb:.1f} MB > max {max_size_mb} MB")
         logger.warning(
-            f"Cache limit exceeded ({current_count}/{max_entries}), evicting {evict_count} entries"
+            f"Cache limit exceeded ({'; '.join(reasons)}), evicting {evict_count} entries"
         )
 
-        # Fetch keys + paths of the LRU entries to evict.
+        # Phase 4b: cost-aware LRU — sort by last_accessed_at ASC then
+        # synthesis_duration_ms ASC so cheap, stale entries leave first.
         lru_stmt = (
             select(
                 TTSSynthesisCache.cache_key,
                 TTSSynthesisCache.base_audio_local_path,
             )
-            .order_by(TTSSynthesisCache.last_accessed_at.asc())
+            .order_by(
+                TTSSynthesisCache.last_accessed_at.asc(),
+                TTSSynthesisCache.synthesis_duration_ms.asc(),
+            )
             .limit(evict_count)
         )
         result = await self.db.execute(lru_stmt)
@@ -788,41 +823,77 @@ class TTSCacheServiceSync:
         return False
 
     def evict_old_entries(
-        self, max_entries: int = 10000, evict_count: int = 1000
+        self,
+        max_entries: int = 10000,
+        evict_count: int = 1000,
+        max_size_mb: int = 0,
     ) -> int:
-        """Evict oldest cache entries when limit exceeded (LRU, synchronous).
+        """Evict oldest cache entries when limit exceeded (cost-aware LRU, synchronous).
 
         Uses a single bulk ``DELETE`` instead of N individual deletes
         (Phase 3c) to reduce DB round-trips from O(N×3) to O(1).
 
+        Eviction is triggered by **either** condition:
+        - Entry count exceeds ``max_entries``, **or**
+        - Total disk usage exceeds ``max_size_mb`` (Phase 4a). Set to 0 to disable.
+
+        Within the candidates, entries are sorted by ``last_accessed_at ASC,
+        synthesis_duration_ms ASC`` so the cheapest-to-regenerate stale entries
+        leave first, preserving expensive long-form synthesis in the cache
+        (Phase 4b cost-aware LRU).
+
         Args:
             max_entries: Maximum number of cache entries to keep.
             evict_count: Number of entries to evict when threshold reached.
+            max_size_mb: Maximum total cache size in MB (0 = no size cap).
 
         Returns:
             Number of entries evicted.
         """
-        count_stmt = select(func.count(TTSSynthesisCache.cache_key))
-        current_count = self.db.execute(count_stmt).scalar() or 0
+        current_count = (
+            self.db.execute(select(func.count(TTSSynthesisCache.cache_key))).scalar() or 0
+        )
 
-        if current_count <= max_entries:
+        total_size_bytes = (
+            self.db.execute(
+                select(func.sum(TTSSynthesisCache.file_size_bytes))
+            ).scalar()
+            or 0
+        )
+        total_size_mb = float(total_size_bytes) / (1024 * 1024)
+
+        count_exceeded = current_count > max_entries
+        size_exceeded = max_size_mb > 0 and total_size_mb > max_size_mb
+
+        if not count_exceeded and not size_exceeded:
+            reasons = [f"entries: {current_count}/{max_entries}"]
+            if max_size_mb > 0:
+                reasons.append(f"size: {total_size_mb:.1f}/{max_size_mb} MB")
             logger.info(
-                f"Cache within limit ({current_count}/{max_entries}), no eviction needed"
+                f"Cache within limits ({', '.join(reasons)}), no eviction needed"
             )
             return 0
 
+        reasons = []
+        if count_exceeded:
+            reasons.append(f"count {current_count} > max {max_entries}")
+        if size_exceeded:
+            reasons.append(f"size {total_size_mb:.1f} MB > max {max_size_mb} MB")
         logger.warning(
-            f"Cache limit exceeded ({current_count}/{max_entries}), "
-            f"evicting {evict_count} entries"
+            f"Cache limit exceeded ({'; '.join(reasons)}), evicting {evict_count} entries"
         )
 
-        # Fetch keys + paths of the LRU entries to evict.
+        # Phase 4b: cost-aware LRU — sort by last_accessed_at ASC then
+        # synthesis_duration_ms ASC so cheap, stale entries leave first.
         lru_stmt = (
             select(
                 TTSSynthesisCache.cache_key,
                 TTSSynthesisCache.base_audio_local_path,
             )
-            .order_by(TTSSynthesisCache.last_accessed_at.asc())
+            .order_by(
+                TTSSynthesisCache.last_accessed_at.asc(),
+                TTSSynthesisCache.synthesis_duration_ms.asc(),
+            )
             .limit(evict_count)
         )
         rows = self.db.execute(lru_stmt).all()

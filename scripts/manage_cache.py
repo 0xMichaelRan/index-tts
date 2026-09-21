@@ -84,9 +84,12 @@ async def cmd_top(limit: int = 20):
             print()
 
 
-async def cmd_evict(count: int = 1000):
+async def cmd_evict(count: int = 1000, max_size_mb: int = 0):
     """Evict oldest cache entries."""
-    logger.section(f"EVICTING {count} ENTRIES")
+    if max_size_mb > 0:
+        logger.section(f"EVICTING ENTRIES (TARGET SIZE: {max_size_mb} MB, UP TO {count} ENTRIES)")
+    else:
+        logger.section(f"EVICTING {count} ENTRIES")
 
     async with DatabaseSession() as db:
         service = TTSCacheService(db)
@@ -94,8 +97,9 @@ async def cmd_evict(count: int = 1000):
         # Get stats before
         stats_before = await service.get_cache_stats()
         entries_before = stats_before["total_entries"]
+        size_before = stats_before["total_size_mb"]
 
-        print(f"Current cache size: {entries_before:,} entries")
+        print(f"Current cache size: {entries_before:,} entries ({size_before:.2f} MB)")
 
         if entries_before == 0:
             print("Cache is empty, nothing to evict.")
@@ -103,7 +107,10 @@ async def cmd_evict(count: int = 1000):
 
         # Confirm
         actual_count = min(count, entries_before)
-        print(f"\n⚠️  About to evict {actual_count} oldest entries...")
+        prompt_msg = f"\n⚠️  About to evict up to {actual_count} oldest entries"
+        if max_size_mb > 0:
+            prompt_msg += f" (target max size: {max_size_mb} MB)"
+        print(f"{prompt_msg}...")
         response = input("Continue? (y/N): ").strip().lower()
 
         if response != "y":
@@ -111,16 +118,25 @@ async def cmd_evict(count: int = 1000):
             return
 
         # Evict
+        target_max_entries = (
+            (entries_before - actual_count) if max_size_mb == 0 else entries_before
+        )
         evicted = await service.evict_old_entries(
-            max_entries=entries_before - actual_count, evict_count=actual_count
+            max_entries=target_max_entries,
+            evict_count=actual_count,
+            max_size_mb=max_size_mb,
         )
 
         # Get stats after
         stats_after = await service.get_cache_stats()
         entries_after = stats_after["total_entries"]
+        size_after = stats_after["total_size_mb"]
 
         print(f"\n✅ Evicted {evicted} entries")
-        print(f"Cache size: {entries_before:,} → {entries_after:,}")
+        print(
+            f"Cache size: {entries_before:,} entries ({size_before:.2f} MB) "
+            f"→ {entries_after:,} entries ({size_after:.2f} MB)"
+        )
 
 
 async def cmd_clear(confirm: bool = False):
@@ -286,6 +302,12 @@ Examples:
         default=1000,
         help="Number of entries to evict (default: 1000)",
     )
+    evict_parser.add_argument(
+        "--max-size-mb",
+        type=int,
+        default=0,
+        help="Maximum cache size in MB (0 = no limit, evicts by count only)",
+    )
 
     # Clear command
     clear_parser = subparsers.add_parser(
@@ -324,7 +346,7 @@ Examples:
         elif args.command == "top":
             asyncio.run(cmd_top(args.limit))
         elif args.command == "evict":
-            asyncio.run(cmd_evict(args.count))
+            asyncio.run(cmd_evict(args.count, args.max_size_mb))
         elif args.command == "clear":
             asyncio.run(cmd_clear(args.confirm))
         elif args.command == "invalidate":

@@ -30,7 +30,11 @@ class CacheManager:
     """
 
     def __init__(
-        self, cache_dir: str, max_entries: int = 10000, eviction_threshold: int = 9000
+        self,
+        cache_dir: str,
+        max_entries: int = 10000,
+        eviction_threshold: int = 9000,
+        max_size_mb: int = 0,
     ):
         """
         Initialize cache manager.
@@ -39,6 +43,7 @@ class CacheManager:
             cache_dir: Local cache directory path
             max_entries: Maximum cache entries
             eviction_threshold: Threshold for LRU eviction
+            max_size_mb: Maximum total cache size in MB (0 = unlimited)
         """
         if not CACHE_AVAILABLE:
             self.enabled = False
@@ -49,10 +54,15 @@ class CacheManager:
         self.cache_dir = cache_dir
         self.max_entries = max_entries
         self.eviction_threshold = eviction_threshold
+        self.max_size_mb = max_size_mb
 
         logger.info("TTS synthesis cache: ENABLED")
         logger.info(f"  Max entries: {max_entries}")
         logger.info(f"  Eviction threshold: {eviction_threshold}")
+        if max_size_mb > 0:
+            logger.info(f"  Max disk size: {max_size_mb} MB")
+        else:
+            logger.info("  Max disk size: unlimited")
         logger.info(f"  Cache directory: {cache_dir}")
 
     # ------------------------------------------------------------------
@@ -152,6 +162,11 @@ class CacheManager:
         This adds a small one-off cost to the job that triggered it; this is
         the same trade-off as before but without the thread-spawn overhead.
 
+        Eviction fires when **either** the entry count exceeds
+        ``max_entries`` **or** total disk usage exceeds ``max_size_mb``
+        (Phase 4a).  Within candidates, cheap+stale entries leave first
+        (Phase 4b cost-aware LRU).
+
         Args:
             job_id: Job identifier used for log context only.
         """
@@ -165,11 +180,13 @@ class CacheManager:
                 evicted = cache_service.evict_old_entries(
                     max_entries=self.max_entries,
                     evict_count=evict_count,
+                    max_size_mb=self.max_size_mb,
                 )
                 if evicted > 0:
                     logger.info(
                         f"Auto-eviction complete: removed {evicted} cache entries "
-                        f"(max={self.max_entries}, threshold={self.eviction_threshold})"
+                        f"(max={self.max_entries}, threshold={self.eviction_threshold}, "
+                        f"max_size_mb={self.max_size_mb or 'unlimited'})"
                     )
         except Exception as e:
             logger.warning(f"[JOB {job_id}] Cache auto-eviction failed: {e}")

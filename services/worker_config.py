@@ -78,6 +78,7 @@ class WorkerConfig:
         cache_enabled: Enable database-backed synthesis cache.
         cache_max_entries: Maximum number of cached synthesis entries.
         cache_eviction_threshold: LRU eviction starts when cache reaches this size.
+        cache_max_size_mb: Maximum total disk size for cached audio files (MB). 0 = unlimited.
         cache_dir: Local directory for cached audio files.
         normalization_enabled: Apply LUFS loudness normalization to output audio.
         normalization_target_lufs: Target loudness in LUFS (default: -16.0).
@@ -99,6 +100,7 @@ class WorkerConfig:
     cache_enabled: bool = True
     cache_max_entries: int = 10_000
     cache_eviction_threshold: int = 9_000
+    cache_max_size_mb: int = 5_000  # 5 GB default; 0 = unlimited
     cache_dir: str = "outputs/tts_cache"
 
     # Audio normalization
@@ -129,6 +131,7 @@ class WorkerConfig:
             TTS_CACHE_ENABLED             Enable synthesis cache (default: true).
             TTS_CACHE_MAX_ENTRIES         Max cache entries (default: 10000).
             TTS_CACHE_EVICTION_THRESHOLD  Eviction trigger count (default: 9000).
+            TTS_CACHE_MAX_SIZE_MB         Max cache disk size in MB (default: 5000; 0=unlimited).
             TTS_CACHE_LOCAL_DIR           Cache directory (default: outputs/tts_cache).
             TTS_NORMALIZATION_ENABLED     Enable LUFS normalization (default: true).
             TTS_NORMALIZATION_TARGET_LUFS Target LUFS (default: -16.0).
@@ -149,6 +152,7 @@ class WorkerConfig:
             cache_enabled=_env_bool("TTS_CACHE_ENABLED", True),
             cache_max_entries=_env_int("TTS_CACHE_MAX_ENTRIES", 10_000),
             cache_eviction_threshold=_env_int("TTS_CACHE_EVICTION_THRESHOLD", 9_000),
+            cache_max_size_mb=_env_int("TTS_CACHE_MAX_SIZE_MB", 5_000),
             cache_dir=os.getenv("TTS_CACHE_LOCAL_DIR", "outputs/tts_cache"),
             # Normalization
             normalization_enabled=_env_bool("TTS_NORMALIZATION_ENABLED", True),

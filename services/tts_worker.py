@@ -97,6 +97,7 @@ class IndexTTSWorker:
                 cache_dir=config.cache_dir,
                 max_entries=config.cache_max_entries,
                 eviction_threshold=config.cache_eviction_threshold,
+                max_size_mb=config.cache_max_size_mb,
             )
         else:
             self.cache_manager = CacheManager(cache_dir=config.cache_dir)
