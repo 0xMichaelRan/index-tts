@@ -87,7 +87,9 @@ async def cmd_top(limit: int = 20):
 async def cmd_evict(count: int = 1000, max_size_mb: int = 0):
     """Evict oldest cache entries."""
     if max_size_mb > 0:
-        logger.section(f"EVICTING ENTRIES (TARGET SIZE: {max_size_mb} MB, UP TO {count} ENTRIES)")
+        logger.section(
+            f"EVICTING ENTRIES (TARGET SIZE: {max_size_mb} MB, UP TO {count} ENTRIES)"
+        )
     else:
         logger.section(f"EVICTING {count} ENTRIES")
 

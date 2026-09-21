@@ -78,6 +78,7 @@ class TestDirectConstruction:
         assert config.cache_enabled is True
         assert config.cache_max_entries == 10_000
         assert config.cache_eviction_threshold == 9_000
+        assert config.cache_max_size_mb == 5_000
         assert config.cache_dir == "outputs/tts_cache"
         assert config.normalization_enabled is True
         assert config.normalization_target_lufs == pytest.approx(-16.0)
@@ -140,11 +141,13 @@ class TestFromEnv:
         monkeypatch.setenv("TTS_CACHE_ENABLED", "false")
         monkeypatch.setenv("TTS_CACHE_MAX_ENTRIES", "500")
         monkeypatch.setenv("TTS_CACHE_EVICTION_THRESHOLD", "400")
+        monkeypatch.setenv("TTS_CACHE_MAX_SIZE_MB", "2000")
         monkeypatch.setenv("TTS_CACHE_LOCAL_DIR", "/data/cache")
         config = WorkerConfig.from_env()
         assert config.cache_enabled is False
         assert config.cache_max_entries == 500
         assert config.cache_eviction_threshold == 400
+        assert config.cache_max_size_mb == 2000
         assert config.cache_dir == "/data/cache"
 
     def test_from_env_normalization(self, monkeypatch):
@@ -169,6 +172,7 @@ class TestFromEnv:
             "TTS_CACHE_ENABLED",
             "TTS_CACHE_MAX_ENTRIES",
             "TTS_CACHE_EVICTION_THRESHOLD",
+            "TTS_CACHE_MAX_SIZE_MB",
             "TTS_CACHE_LOCAL_DIR",
             "TTS_NORMALIZATION_ENABLED",
             "TTS_NORMALIZATION_TARGET_LUFS",
@@ -186,6 +190,7 @@ class TestFromEnv:
         assert config.cache_enabled == default.cache_enabled
         assert config.cache_max_entries == default.cache_max_entries
         assert config.cache_eviction_threshold == default.cache_eviction_threshold
+        assert config.cache_max_size_mb == default.cache_max_size_mb
         assert config.cache_dir == default.cache_dir
         assert config.normalization_enabled == default.normalization_enabled
         assert config.normalization_target_lufs == pytest.approx(

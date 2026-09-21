@@ -851,7 +851,8 @@ class TTSCacheServiceSync:
             Number of entries evicted.
         """
         current_count = (
-            self.db.execute(select(func.count(TTSSynthesisCache.cache_key))).scalar() or 0
+            self.db.execute(select(func.count(TTSSynthesisCache.cache_key))).scalar()
+            or 0
         )
 
         total_size_bytes = (

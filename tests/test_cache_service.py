@@ -520,6 +520,122 @@ class TestCacheEviction:
             if full_path.exists():
                 full_path.unlink()
 
+    def test_evict_triggered_by_max_size_mb(self, cache_service, db_session):
+        """Test that eviction triggers when total disk usage exceeds max_size_mb even if count is low (Phase 4a)."""
+        rel_filename = "test_evict_size.wav"
+        full_path = cache_service.cache_dir / rel_filename
+        # Write > 1 MB of dummy data
+        one_mb_plus = 1024 * 1024 + 50 * 1024
+        full_path.write_bytes(b"x" * one_mb_plus)
+
+        text = "Eviction size cap test"
+        voice = "audio-prompts/evict_size_voice.wav"
+
+        try:
+            entry = cache_service.store(
+                text=text,
+                audio_prompt_path=voice,
+                base_audio_local_path=str(full_path),
+                audio_duration_seconds=2.0,
+                synthesis_duration_ms=1500,
+            )
+            cache_key = entry.cache_key
+            assert full_path.exists()
+
+            # Set last_accessed_at far in the past
+            db_session.execute(
+                update(TTSSynthesisCache)
+                .where(TTSSynthesisCache.cache_key == cache_key)
+                .values(last_accessed_at=datetime.utcnow() - timedelta(days=3650))
+            )
+            db_session.commit()
+
+            # Evict with max_entries=999999 (count not exceeded) but max_size_mb=1 (size exceeded)
+            evicted = cache_service.evict_old_entries(
+                max_entries=999999,
+                evict_count=1,
+                max_size_mb=1,
+            )
+            assert evicted >= 1
+
+            # File must be deleted on disk
+            assert not full_path.exists()
+
+            # DB entry must be deleted
+            stmt = select(TTSSynthesisCache).where(
+                TTSSynthesisCache.cache_key == cache_key
+            )
+            assert db_session.execute(stmt).scalar_one_or_none() is None
+
+        finally:
+            if full_path.exists():
+                full_path.unlink()
+
+    def test_cost_aware_lru_evicts_cheaper_synthesis_first(
+        self, cache_service, db_session
+    ):
+        """Test that cost-aware LRU evicts cheap entries before expensive ones when access time ties (Phase 4b)."""
+        file_cheap = cache_service.cache_dir / "test_cheap.wav"
+        file_expensive = cache_service.cache_dir / "test_expensive.wav"
+        file_cheap.write_bytes(b"cheap dummy audio")
+        file_expensive.write_bytes(b"expensive dummy audio")
+
+        key_cheap = None
+        key_expensive = None
+        try:
+            entry_cheap = cache_service.store(
+                text="Cheap synthesis text",
+                audio_prompt_path="audio-prompts/cheap.wav",
+                base_audio_local_path=str(file_cheap),
+                audio_duration_seconds=1.0,
+                synthesis_duration_ms=100,  # Cheaper to regenerate
+            )
+            key_cheap = entry_cheap.cache_key
+
+            entry_expensive = cache_service.store(
+                text="Expensive synthesis text",
+                audio_prompt_path="audio-prompts/expensive.wav",
+                base_audio_local_path=str(file_expensive),
+                audio_duration_seconds=5.0,
+                synthesis_duration_ms=8000,  # More expensive to regenerate
+            )
+            key_expensive = entry_expensive.cache_key
+
+            # Give both entries identical old last_accessed_at timestamps
+            tied_time = datetime.utcnow() - timedelta(days=500)
+            db_session.execute(
+                update(TTSSynthesisCache)
+                .where(TTSSynthesisCache.cache_key.in_([key_cheap, key_expensive]))
+                .values(last_accessed_at=tied_time)
+            )
+            db_session.commit()
+
+            # Evict exactly 1 entry with max_entries=0
+            evicted = cache_service.evict_old_entries(max_entries=0, evict_count=1)
+            assert evicted == 1
+
+            # The cheaper entry (100ms) should be evicted
+            stmt_cheap = select(TTSSynthesisCache).where(
+                TTSSynthesisCache.cache_key == key_cheap
+            )
+            assert db_session.execute(stmt_cheap).scalar_one_or_none() is None
+
+            # The expensive entry (8000ms) should still be preserved in the cache
+            stmt_expensive = select(TTSSynthesisCache).where(
+                TTSSynthesisCache.cache_key == key_expensive
+            )
+            assert db_session.execute(stmt_expensive).scalar_one_or_none() is not None
+
+        finally:
+            if key_cheap:
+                cache_service.delete_entry(key_cheap)
+            if key_expensive:
+                cache_service.delete_entry(key_expensive)
+            if file_cheap.exists():
+                file_cheap.unlink()
+            if file_expensive.exists():
+                file_expensive.unlink()
+
 
 class TestCacheDeletion:
     """Test cache deletion operations."""
