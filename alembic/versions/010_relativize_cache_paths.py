@@ -14,9 +14,11 @@ Benefits:
 - Simpler values in the DB
 
 Upgrade:
-    Strips the ``outputs/tts_cache/`` prefix (or any trailing path component
-    up to and including a ``tts_cache`` directory) from every existing row.
-    Rows that are already relative (no leading ``/``) are left untouched.
+    Strips any directory prefix from every existing row, keeping only the
+    bare filename.  This handles both absolute paths (``/home/…/foo.wav``)
+    and already-relative paths that still contain a directory component
+    (``outputs/tts_cache/foo.wav``).  Rows that are already bare filenames
+    (no ``/`` anywhere) are left untouched.
 
 Downgrade:
     Re-prepends the default ``outputs/tts_cache/`` prefix to every row that
@@ -57,7 +59,7 @@ def upgrade() -> None:
                 '^.*/([^/]+)$',
                 '\\1'
             )
-            WHERE base_audio_local_path LIKE '/%'
+            WHERE base_audio_local_path LIKE '%/%'
             """
         )
     )

@@ -516,8 +516,12 @@ class TTSCacheServiceSync:
 
     # Re-use the static helpers from the async class so there is no duplication.
     extract_voice_id = staticmethod(TTSCacheService.extract_voice_id)
-    sanitize_text_for_filename = staticmethod(TTSCacheService.sanitize_text_for_filename)
-    generate_semantic_filename = staticmethod(TTSCacheService.generate_semantic_filename)
+    sanitize_text_for_filename = staticmethod(
+        TTSCacheService.sanitize_text_for_filename
+    )
+    generate_semantic_filename = staticmethod(
+        TTSCacheService.generate_semantic_filename
+    )
     generate_cache_key = staticmethod(TTSCacheService.generate_cache_key)
     generate_text_hash = staticmethod(TTSCacheService.generate_text_hash)
 
@@ -533,9 +537,7 @@ class TTSCacheServiceSync:
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
-    def lookup(
-        self, text: str, audio_prompt_path: str
-    ) -> Optional[TTSSynthesisCache]:
+    def lookup(self, text: str, audio_prompt_path: str) -> Optional[TTSSynthesisCache]:
         """Look up cached synthesis by text and voice (synchronous).
 
         Verifies file still exists and updates hit statistics **in-place**
@@ -566,8 +568,7 @@ class TTSCacheServiceSync:
             # Verify file still exists.
             if not os.path.exists(abs_path):
                 logger.warning(
-                    f"Cache file missing: {abs_path} "
-                    f"(cache_key={cache_key[:16]}...)"
+                    f"Cache file missing: {abs_path} (cache_key={cache_key[:16]}...)"
                 )
                 self.delete_entry(cache_key)
                 return None
@@ -666,9 +667,7 @@ class TTSCacheServiceSync:
 
         # Return the entry (existing or freshly inserted).
         entry = self.db.execute(
-            select(TTSSynthesisCache).where(
-                TTSSynthesisCache.cache_key == cache_key
-            )
+            select(TTSSynthesisCache).where(TTSSynthesisCache.cache_key == cache_key)
         ).scalar_one()
 
         logger.success(
@@ -776,17 +775,21 @@ class TTSCacheServiceSync:
             Dictionary with ``total_entries``, ``total_hits``,
             ``total_size_mb``, and ``avg_hits_per_entry``.
         """
-        total_entries = self.db.execute(
-            select(func.count(TTSSynthesisCache.cache_key))
-        ).scalar() or 0
+        total_entries = (
+            self.db.execute(select(func.count(TTSSynthesisCache.cache_key))).scalar()
+            or 0
+        )
 
-        total_hits = self.db.execute(
-            select(func.sum(TTSSynthesisCache.hit_count))
-        ).scalar() or 0
+        total_hits = (
+            self.db.execute(select(func.sum(TTSSynthesisCache.hit_count))).scalar() or 0
+        )
 
-        total_size_bytes = self.db.execute(
-            select(func.sum(TTSSynthesisCache.file_size_bytes))
-        ).scalar() or 0
+        total_size_bytes = (
+            self.db.execute(
+                select(func.sum(TTSSynthesisCache.file_size_bytes))
+            ).scalar()
+            or 0
+        )
 
         return {
             "total_entries": total_entries,

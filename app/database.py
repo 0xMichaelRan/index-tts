@@ -112,8 +112,8 @@ if DATABASE_URL:
         _sync_engine = create_engine(
             _sync_url,
             pool_pre_ping=True,  # Verify connections before using
-            pool_recycle=3600,   # Recycle connections after 1 hour
-            pool_size=2,         # Small pool — worker is single-threaded
+            pool_recycle=3600,  # Recycle connections after 1 hour
+            pool_size=2,  # Small pool — worker is single-threaded
             max_overflow=2,
         )
         SyncSessionLocal = sessionmaker(
@@ -138,9 +138,7 @@ def SyncDatabaseSession() -> Generator[Session, None, None]:
             # Auto-commit on success, rollback on exception
     """
     if SyncSessionLocal is None:
-        raise RuntimeError(
-            "Sync database not initialized — check DATABASE_URL in .env"
-        )
+        raise RuntimeError("Sync database not initialized — check DATABASE_URL in .env")
     session: Session = SyncSessionLocal()
     try:
         yield session
@@ -150,6 +148,7 @@ def SyncDatabaseSession() -> Generator[Session, None, None]:
         raise
     finally:
         session.close()
+
 
 # Session factory
 # expire_on_commit=False keeps objects accessible after commit

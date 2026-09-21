@@ -212,9 +212,7 @@ class TestCacheLookup:
         # Cleanup
         cache_service.delete_entry(stored.cache_key)
 
-    def test_lookup_deletes_entry_if_file_missing(
-        self, cache_service, temp_audio_file
-    ):
+    def test_lookup_deletes_entry_if_file_missing(self, cache_service, temp_audio_file):
         """Test that lookup deletes entry if file is missing."""
         text = "Test file deletion"
         voice = "audio-prompts/test_voice.wav"
