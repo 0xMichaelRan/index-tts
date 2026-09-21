@@ -216,7 +216,22 @@ class SynthesisPipeline:
                         job_id, text, audio_prompt_path, speed_ratio
                     )
                     if cache_hit and cached_audio_path:
-                        local_output = cached_audio_path
+                        # Cached audio is always ratio=1.0 (base speed).
+                        # Copy to a job-specific working file to avoid mutating
+                        # the cache, then apply time-stretching if needed.
+                        output_dir = self.storage_manager.create_output_dir(job_id)
+                        if speed_ratio != 1.0:
+                            logger.info(
+                                f"[JOB {job_id}] Cache HIT: applying time-stretch "
+                                f"(ratio={speed_ratio}) to cached base audio"
+                            )
+                            local_output = self.audio_processor.apply_ratio_to_audio(
+                                cached_audio_path, speed_ratio, job_id, output_dir
+                            )
+                        else:
+                            local_output = self.audio_processor.copy_audio_file(
+                                cached_audio_path, job_id, output_dir
+                            )
 
                 # Stage 2: Synthesis (if no cache hit)
                 if not cache_hit:
@@ -447,6 +462,9 @@ class SynthesisPipeline:
                 synthesis_duration,
                 language,
             )
+            # Trigger background eviction if cache exceeds threshold.
+            # Runs in a daemon thread — does not block synthesis.
+            self.cache_manager.maybe_evict(job_id)
 
         # Stage 2d: Apply time-stretching if needed
         output_dir = self.storage_manager.create_output_dir(job_id)
