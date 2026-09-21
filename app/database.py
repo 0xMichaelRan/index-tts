@@ -1,20 +1,24 @@
 """
 Database connection and session management for TTS synthesis cache.
 
-This module provides async database connection using SQLAlchemy with asyncpg driver.
-Supports connection pooling, automatic reconnection, and session management.
+This module provides both async (asyncpg) and sync (psycopg2) database connections
+using SQLAlchemy. The async engine is used by FastAPI / alembic; the sync engine is
+used by the worker's CacheManager to avoid thread+event-loop overhead per DB call.
 """
 
 import os
-from typing import AsyncGenerator
+from contextlib import contextmanager
+from typing import AsyncGenerator, Generator
 
 from dotenv import load_dotenv
+from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import (
     create_async_engine,
     AsyncSession,
     async_sessionmaker,
     AsyncEngine,
 )
+from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.pool import NullPool
 
 # Load environment variables
@@ -94,6 +98,58 @@ if DATABASE_URL:
     _get_logger().info("Database engine initialized successfully (NullPool mode)")
 else:
     _get_logger().warning("Database engine not initialized - cache disabled")
+
+# ---------------------------------------------------------------------------
+# Synchronous engine (psycopg2) — used by CacheManager to avoid per-call
+# thread+asyncio overhead.  Derived from DATABASE_URL by stripping +asyncpg.
+# ---------------------------------------------------------------------------
+_sync_engine = None
+SyncSessionLocal: sessionmaker | None = None
+
+if DATABASE_URL:
+    try:
+        _sync_url = async_to_sync_database_url(DATABASE_URL)
+        _sync_engine = create_engine(
+            _sync_url,
+            pool_pre_ping=True,  # Verify connections before using
+            pool_recycle=3600,   # Recycle connections after 1 hour
+            pool_size=2,         # Small pool — worker is single-threaded
+            max_overflow=2,
+        )
+        SyncSessionLocal = sessionmaker(
+            bind=_sync_engine,
+            autoflush=False,
+            autocommit=False,
+            expire_on_commit=False,
+        )
+    except Exception as _e:
+        _get_logger().warning(f"Sync DB engine not initialized: {_e}")
+
+
+@contextmanager
+def SyncDatabaseSession() -> Generator[Session, None, None]:
+    """
+    Context manager for synchronous database sessions (psycopg2 / cache worker).
+
+    Usage::
+
+        with SyncDatabaseSession() as session:
+            result = session.execute(...)
+            # Auto-commit on success, rollback on exception
+    """
+    if SyncSessionLocal is None:
+        raise RuntimeError(
+            "Sync database not initialized — check DATABASE_URL in .env"
+        )
+    session: Session = SyncSessionLocal()
+    try:
+        yield session
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
 
 # Session factory
 # expire_on_commit=False keeps objects accessible after commit

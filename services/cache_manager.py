@@ -2,9 +2,7 @@
 TTS synthesis cache management with database and file storage.
 """
 
-import asyncio
 import logging
-import threading
 from typing import Optional, Tuple
 
 from services.logging_config import get_logger
@@ -13,8 +11,8 @@ logger = get_logger(__name__)
 
 # Try to import cache components
 try:
-    from app.database import DatabaseSession
-    from app.cache_service import TTSCacheService
+    from app.database import SyncDatabaseSession
+    from app.cache_service import TTSCacheServiceSync
 
     CACHE_AVAILABLE = True
 except ImportError as e:
@@ -23,7 +21,13 @@ except ImportError as e:
 
 
 class CacheManager:
-    """Manages TTS synthesis caching with async database operations."""
+    """Manages TTS synthesis caching with synchronous database operations.
+
+    Phase 2 implementation: all DB calls are made directly on the calling
+    thread via :class:`app.cache_service.TTSCacheServiceSync` and
+    :func:`app.database.SyncDatabaseSession` (psycopg2).  No thread spawning
+    or event-loop creation per cache call.
+    """
 
     def __init__(
         self, cache_dir: str, max_entries: int = 10000, eviction_threshold: int = 9000
@@ -51,21 +55,34 @@ class CacheManager:
         logger.info(f"  Eviction threshold: {eviction_threshold}")
         logger.info(f"  Cache directory: {cache_dir}")
 
-    async def _lookup_async(
-        self, text: str, audio_prompt_path: str
-    ) -> Optional[Tuple[bool, Optional[str], Optional[str]]]:
-        """
-        Async cache lookup.
+    # ------------------------------------------------------------------
+    # Public interface
+    # ------------------------------------------------------------------
+
+    def lookup(
+        self, job_id: str, text: str, audio_prompt_path: str, ratio: float
+    ) -> Tuple[bool, Optional[str], Optional[str]]:
+        """Synchronous cache lookup.
+
+        Args:
+            job_id: Job identifier (used for log context only).
+            text: Text to synthesize.
+            audio_prompt_path: S3 path to audio prompt.
+            ratio: Speed ratio (not used for lookup key, returned for caller convenience).
 
         Returns:
-            (cache_hit, cached_audio_path, cache_key) tuple
+            ``(cache_hit, cached_audio_path, cache_key)`` tuple.
         """
+        if not self.enabled:
+            return (False, None, None)
+
         try:
-            async with DatabaseSession() as db_session:
-                cache_service = TTSCacheService(db_session, self.cache_dir)
-                cache_entry = await cache_service.lookup(text, audio_prompt_path)
+            with SyncDatabaseSession() as db_session:
+                cache_service = TTSCacheServiceSync(db_session, self.cache_dir)
+                cache_entry = cache_service.lookup(text, audio_prompt_path)
 
                 if cache_entry:
+                    logger.success(f"[JOB {job_id}] Cache HIT - reusing base audio")
                     return (
                         True,
                         cache_entry.base_audio_local_path,
@@ -75,99 +92,8 @@ class CacheManager:
                 return (False, None, None)
 
         except Exception as e:
-            logger.warning(f"Cache lookup failed: {e}")
+            logger.warning(f"[JOB {job_id}] Cache lookup failed: {e}")
             return (False, None, None)
-
-    async def _store_async(
-        self,
-        text: str,
-        audio_prompt_path: str,
-        base_audio_path: str,
-        audio_duration: float,
-        synthesis_duration_ms: int,
-        language: str,
-    ) -> Optional[str]:
-        """
-        Async cache storage.
-
-        Args:
-            text: Synthesized text
-            audio_prompt_path: S3 path to audio prompt
-            base_audio_path: Local path to base audio
-            audio_duration: Audio duration in seconds
-            synthesis_duration_ms: Synthesis time in milliseconds
-            language: Language code
-
-        Returns:
-            cache_key if successful, None otherwise
-        """
-        try:
-            async with DatabaseSession() as db_session:
-                cache_service = TTSCacheService(db_session, self.cache_dir)
-                entry = await cache_service.store(
-                    text=text,
-                    audio_prompt_path=audio_prompt_path,
-                    base_audio_local_path=base_audio_path,
-                    audio_duration_seconds=audio_duration,
-                    synthesis_duration_ms=synthesis_duration_ms,
-                    language=language,
-                )
-
-                logger.success("Base audio cached for future reuse")
-                return entry.cache_key
-
-        except Exception as e:
-            logger.warning(f"Failed to cache synthesis: {e}")
-            return None
-
-    def lookup(
-        self, job_id: str, text: str, audio_prompt_path: str, ratio: float
-    ) -> Tuple[bool, Optional[str], Optional[str]]:
-        """
-        Synchronous wrapper for cache lookup.
-
-        Args:
-            job_id: Job identifier
-            text: Text to synthesize
-            audio_prompt_path: S3 path to audio prompt
-            ratio: Speed ratio
-
-        Returns:
-            (cache_hit, cached_audio_path, cache_key) tuple
-        """
-        if not self.enabled:
-            return (False, None, None)
-
-        result_container = {}
-
-        def run_async():
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                result = loop.run_until_complete(
-                    self._lookup_async(text, audio_prompt_path)
-                )
-                result_container["result"] = result
-            except Exception as e:
-                result_container["error"] = e
-            finally:
-                loop.close()
-
-        thread = threading.Thread(target=run_async)
-        thread.start()
-        thread.join(timeout=10.0)
-
-        if "error" in result_container:
-            logger.warning(
-                f"[JOB {job_id}] Cache lookup failed: {result_container['error']}"
-            )
-            return (False, None, None)
-
-        result = result_container.get("result", (False, None, None))
-        if result and result[0]:
-            logger.success(f"[JOB {job_id}] Cache HIT - reusing base audio")
-
-        return result
 
     def store(
         self,
@@ -179,89 +105,52 @@ class CacheManager:
         synthesis_duration: float,
         language: str,
     ) -> Optional[str]:
-        """
-        Synchronous wrapper for cache storage.
+        """Synchronous cache storage.
 
         Args:
-            job_id: Job identifier
-            text: Text to synthesize
-            audio_prompt_path: S3 path to audio prompt
-            base_audio_path: Local path to base audio
-            audio_duration: Audio duration in seconds
-            synthesis_duration: Synthesis time in seconds
-            language: Language code
+            job_id: Job identifier (used for log context only).
+            text: Text to synthesize.
+            audio_prompt_path: S3 path to audio prompt.
+            base_audio_path: Local path to base audio.
+            audio_duration: Audio duration in seconds.
+            synthesis_duration: Synthesis time in seconds (converted to ms internally).
+            language: Language code.
 
         Returns:
-            cache_key if successful, None otherwise
+            ``cache_key`` if successful, ``None`` otherwise.
         """
         if not self.enabled:
             return None
 
-        result_container = {}
-
-        def run_async():
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                result = loop.run_until_complete(
-                    self._store_async(
-                        text,
-                        audio_prompt_path,
-                        base_audio_path,
-                        audio_duration,
-                        int(synthesis_duration * 1000),
-                        language,
-                    )
+        try:
+            with SyncDatabaseSession() as db_session:
+                cache_service = TTSCacheServiceSync(db_session, self.cache_dir)
+                entry = cache_service.store(
+                    text=text,
+                    audio_prompt_path=audio_prompt_path,
+                    base_audio_local_path=base_audio_path,
+                    audio_duration_seconds=audio_duration,
+                    synthesis_duration_ms=int(synthesis_duration * 1000),
+                    language=language,
                 )
-                result_container["result"] = result
-            except Exception as e:
-                logger.warning(f"[JOB {job_id}] Cache store failed: {e}")
-                result_container["error"] = e
-            finally:
-                loop.close()
+                logger.success("Base audio cached for future reuse")
+                return entry.cache_key
 
-        thread = threading.Thread(target=run_async)
-        thread.start()
-        thread.join(timeout=10.0)
-
-        if "error" in result_container:
+        except Exception as e:
+            logger.warning(f"[JOB {job_id}] Failed to cache synthesis: {e}")
             return None
 
-        return result_container.get("result")
-
-    async def _evict_async(self) -> None:
-        """
-        Async LRU eviction helper.
-
-        Checks the current entry count and evicts the oldest entries when
-        ``max_entries`` is exceeded. Evicts ``max_entries - eviction_threshold``
-        entries (e.g. 10 000 − 9 000 = 1 000) to restore the cache to the
-        safe threshold in a single pass.
-        """
-        try:
-            async with DatabaseSession() as db_session:
-                cache_service = TTSCacheService(db_session, self.cache_dir)
-                evict_count = self.max_entries - self.eviction_threshold
-                evicted = await cache_service.evict_old_entries(
-                    max_entries=self.max_entries,
-                    evict_count=max(evict_count, 1),
-                )
-                if evicted > 0:
-                    logger.info(
-                        f"Auto-eviction complete: removed {evicted} cache entries "
-                        f"(max={self.max_entries}, threshold={self.eviction_threshold})"
-                    )
-        except Exception as e:
-            logger.warning(f"Cache auto-eviction failed: {e}")
-
     def maybe_evict(self, job_id: str = "") -> None:
-        """
-        Fire-and-forget background eviction check.
+        """Fire-and-forget LRU eviction check (synchronous, same thread).
 
-        Spawns a daemon thread that runs LRU eviction if the cache has exceeded
-        ``max_entries``.  The thread is daemonised so it never blocks worker
-        shutdown, and we deliberately do **not** join it — eviction must not
-        add latency to the synthesis pipeline.
+        Runs eviction inline after a successful ``store()``.  Because eviction
+        is fast when the cache is within limits (a single COUNT query that
+        returns immediately), running it on the calling thread is fine and
+        avoids the overhead of an extra daemon thread.
+
+        When the threshold is exceeded the eviction loop runs synchronously.
+        This adds a small one-off cost to the job that triggered it; this is
+        the same trade-off as before but without the thread-spawn overhead.
 
         Args:
             job_id: Job identifier used for log context only.
@@ -269,16 +158,18 @@ class CacheManager:
         if not self.enabled:
             return
 
-        def run_async():
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                loop.run_until_complete(self._evict_async())
-            except Exception as e:
-                logger.warning(f"[JOB {job_id}] Background eviction error: {e}")
-            finally:
-                loop.close()
-
-        thread = threading.Thread(target=run_async, daemon=True, name="cache-evict")
-        thread.start()
-        # Intentionally no join — eviction runs in the background.
+        try:
+            with SyncDatabaseSession() as db_session:
+                cache_service = TTSCacheServiceSync(db_session, self.cache_dir)
+                evict_count = max(self.max_entries - self.eviction_threshold, 1)
+                evicted = cache_service.evict_old_entries(
+                    max_entries=self.max_entries,
+                    evict_count=evict_count,
+                )
+                if evicted > 0:
+                    logger.info(
+                        f"Auto-eviction complete: removed {evicted} cache entries "
+                        f"(max={self.max_entries}, threshold={self.eviction_threshold})"
+                    )
+        except Exception as e:
+            logger.warning(f"[JOB {job_id}] Cache auto-eviction failed: {e}")
