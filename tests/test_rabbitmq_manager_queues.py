@@ -4,7 +4,7 @@ Verifies that tts_jobs, tts_results, vox_jobs, and vox_results are declared corr
 """
 
 from unittest.mock import MagicMock
-from services.rabbitmq_manager import RabbitMQManager
+from services.messaging.rabbitmq_manager import RabbitMQManager
 
 
 def test_setup_dlx_queues_declares_vox_results():

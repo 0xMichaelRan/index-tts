@@ -8,7 +8,7 @@ import os
 import pytest
 from unittest.mock import Mock, patch
 import pika
-from services.rabbitmq_config import (
+from services.messaging.rabbitmq_config import (
     configure_queues,
     configure_queue,
     get_queue_info,
@@ -52,7 +52,9 @@ class TestRabbitMQURLParsing:
         """Test parsing invalid URL raises ValueError."""
         # urlparse doesn't fail on invalid schemes, so we need to mock pika.PlainCredentials
         # to raise an error or provide an invalid URL format that will cause an exception
-        with patch("services.rabbitmq_config.pika.PlainCredentials") as mock_creds:
+        with patch(
+            "services.messaging.rabbitmq_config.pika.PlainCredentials"
+        ) as mock_creds:
             mock_creds.side_effect = ValueError("Invalid credentials")
             with pytest.raises(ValueError, match="Invalid RabbitMQ URL"):
                 _parse_rabbitmq_url("not-a-valid-url")
@@ -120,13 +122,13 @@ class TestQueueConfiguration:
 class TestConnectionRetry:
     """Test connection retry logic."""
 
-    @patch("services.rabbitmq_config.time.sleep")
+    @patch("services.messaging.rabbitmq_config.time.sleep")
     def test_connect_success_first_attempt(self, mock_sleep):
         """Test successful connection on first attempt."""
         mock_connection = Mock()
 
         with patch(
-            "services.rabbitmq_config.pika.BlockingConnection"
+            "services.messaging.rabbitmq_config.pika.BlockingConnection"
         ) as mock_blocking_conn:
             mock_blocking_conn.return_value = mock_connection
 
@@ -137,13 +139,13 @@ class TestConnectionRetry:
             mock_blocking_conn.assert_called_once_with(conn_params)
             mock_sleep.assert_not_called()
 
-    @patch("services.rabbitmq_config.time.sleep")
+    @patch("services.messaging.rabbitmq_config.time.sleep")
     def test_connect_success_after_retry(self, mock_sleep):
         """Test successful connection after retry."""
         mock_connection = Mock()
 
         with patch(
-            "services.rabbitmq_config.pika.BlockingConnection"
+            "services.messaging.rabbitmq_config.pika.BlockingConnection"
         ) as mock_blocking_conn:
             mock_blocking_conn.side_effect = [
                 pika.exceptions.AMQPConnectionError("Connection refused"),
@@ -157,11 +159,11 @@ class TestConnectionRetry:
             assert mock_blocking_conn.call_count == 2
             mock_sleep.assert_called_once_with(1)  # First retry delay
 
-    @patch("services.rabbitmq_config.time.sleep")
+    @patch("services.messaging.rabbitmq_config.time.sleep")
     def test_connect_failure_after_retries(self, mock_sleep):
         """Test connection failure after all retries."""
         with patch(
-            "services.rabbitmq_config.pika.BlockingConnection"
+            "services.messaging.rabbitmq_config.pika.BlockingConnection"
         ) as mock_blocking_conn:
             mock_blocking_conn.side_effect = pika.exceptions.AMQPConnectionError(
                 "Connection refused"
@@ -175,11 +177,11 @@ class TestConnectionRetry:
             assert mock_blocking_conn.call_count == 3
             assert mock_sleep.call_count == 2  # Retries before final attempt
 
-    @patch("services.rabbitmq_config.time.sleep")
+    @patch("services.messaging.rabbitmq_config.time.sleep")
     def test_connect_exponential_backoff(self, mock_sleep):
         """Test exponential backoff during retries."""
         with patch(
-            "services.rabbitmq_config.pika.BlockingConnection"
+            "services.messaging.rabbitmq_config.pika.BlockingConnection"
         ) as mock_blocking_conn:
             mock_blocking_conn.side_effect = pika.exceptions.AMQPConnectionError(
                 "Connection refused"
@@ -242,8 +244,8 @@ class TestConfigureQueue:
 class TestConfigureQueues:
     """Test full queue configuration."""
 
-    @patch("services.rabbitmq_config.PIKA_AVAILABLE", True)
-    @patch("services.rabbitmq_config._connect_with_retry")
+    @patch("services.messaging.rabbitmq_config.PIKA_AVAILABLE", True)
+    @patch("services.messaging.rabbitmq_config._connect_with_retry")
     def test_configure_queues_success(self, mock_connect):
         """Test successful configuration of all queues."""
         mock_connection = Mock()
@@ -253,7 +255,7 @@ class TestConfigureQueues:
         mock_connect.return_value = mock_connection
 
         # Run configuration
-        with patch("services.rabbitmq_config.pika.ConnectionParameters"):
+        with patch("services.messaging.rabbitmq_config.pika.ConnectionParameters"):
             configure_queues("amqp://guest:guest@localhost:5672/")
 
         # Verify all queues were declared
@@ -262,7 +264,7 @@ class TestConfigureQueues:
         # Verify connection was closed
         mock_connection.close.assert_called_once()
 
-    @patch("services.rabbitmq_config.PIKA_AVAILABLE", False)
+    @patch("services.messaging.rabbitmq_config.PIKA_AVAILABLE", False)
     def test_configure_queues_pika_not_installed(self):
         """Test error when pika is not installed."""
         with pytest.raises(ImportError, match="pika is required"):
@@ -273,14 +275,16 @@ class TestConfigureQueues:
         with pytest.raises(ValueError, match="RabbitMQ URL not provided"):
             configure_queues()
 
-    @patch("services.rabbitmq_config.PIKA_AVAILABLE", True)
+    @patch("services.messaging.rabbitmq_config.PIKA_AVAILABLE", True)
     def test_configure_queues_uses_env_var(self, monkeypatch):
         """Test configuration uses RABBITMQ_URL environment variable."""
         monkeypatch.setenv("RABBITMQ_URL", "amqp://test:test@testhost:5672/")
 
         with (
-            patch("services.rabbitmq_config._connect_with_retry") as mock_connect,
-            patch("services.rabbitmq_config.pika.ConnectionParameters"),
+            patch(
+                "services.messaging.rabbitmq_config._connect_with_retry"
+            ) as mock_connect,
+            patch("services.messaging.rabbitmq_config.pika.ConnectionParameters"),
         ):
             mock_connection = Mock()
             mock_connection.channel.return_value = Mock()
@@ -296,9 +300,9 @@ class TestConfigureQueues:
 class TestGetQueueInfo:
     """Test queue information retrieval."""
 
-    @patch("services.rabbitmq_config.PIKA_AVAILABLE", True)
-    @patch("services.rabbitmq_config.pika")
-    @patch("services.rabbitmq_config._parse_rabbitmq_url")
+    @patch("services.messaging.rabbitmq_config.PIKA_AVAILABLE", True)
+    @patch("services.messaging.rabbitmq_config.pika")
+    @patch("services.messaging.rabbitmq_config._parse_rabbitmq_url")
     def test_get_queue_info_success(self, mock_parse_url, mock_pika):
         """Test successful queue info retrieval."""
         mock_parse_url.return_value = {
@@ -326,7 +330,7 @@ class TestGetQueueInfo:
         assert info["tts_jobs"]["message_count"] == 10
         assert info["tts_jobs"]["consumer_count"] == 2
 
-    @patch("services.rabbitmq_config.PIKA_AVAILABLE", False)
+    @patch("services.messaging.rabbitmq_config.PIKA_AVAILABLE", False)
     def test_get_queue_info_pika_not_installed(self):
         """Test error when pika is not installed."""
         with pytest.raises(ImportError, match="pika is required"):

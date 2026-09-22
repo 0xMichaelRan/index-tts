@@ -19,9 +19,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from services.cache_manager import CacheManager
-from services.storage_manager import StorageManager
-from services.synthesis_pipeline import SynthesisPipeline
+from services.storage.storage_manager import StorageManager
+from services.tts.cache_manager import CacheManager
+from services.tts.synthesis_pipeline import SynthesisPipeline
 
 
 # ---------------------------------------------------------------------------
@@ -317,7 +317,7 @@ class TestAlignmentFailure:
     def test_alignment_circuit_open_returns_circuit_error_code(
         self, pipeline_and_files
     ):
-        from services.circuit_breaker import CircuitBreakerError
+        from services.common.circuit_breaker import CircuitBreakerError
 
         pipeline, tts_mock, storage_mock, align_mock, *_ = pipeline_and_files
 

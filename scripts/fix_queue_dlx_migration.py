@@ -36,7 +36,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
     import pika
-    from services.rabbitmq_config import configure_queues, _parse_rabbitmq_url
+    from services.messaging.rabbitmq_config import configure_queues, _parse_rabbitmq_url
 except ImportError as e:
     print(f"Error: Missing required dependency: {e}")
     print("Install with: pip install pika")

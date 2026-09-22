@@ -5,7 +5,7 @@ TTS synthesis cache management with database and file storage.
 import logging
 from typing import Optional, Tuple
 
-from services.logging_config import get_logger
+from services.common.logging_config import get_logger
 
 logger = get_logger(__name__)
 

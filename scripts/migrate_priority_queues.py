@@ -42,14 +42,14 @@ except ImportError:
     print("ERROR: pika is not installed. Run: uv add pika", file=sys.stderr)
     sys.exit(1)
 
-from services.rabbitmq_config import (  # noqa: E402
+from services.common.logging_config import configure_logging, get_logger  # noqa: E402
+from services.messaging.rabbitmq_config import (  # noqa: E402
     MQ_PRIORITY_MAX,
     QUEUE_CONFIGS,
     bind_dlq_to_dlx,
     configure_queue,
     declare_dlx_exchanges,
 )
-from services.logging_config import configure_logging, get_logger  # noqa: E402
 
 configure_logging()
 logger = get_logger(__name__)

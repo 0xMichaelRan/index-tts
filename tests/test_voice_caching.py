@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from services.tts_worker import IndexTTSWorker
+from services.tts.tts_worker import IndexTTSWorker
 
 
 class TestVoiceCaching:
@@ -27,7 +27,7 @@ class TestVoiceCaching:
     @pytest.fixture
     def worker_with_mock_tts(self, mock_tts_engine):
         """Create worker with mocked TTS engine."""
-        with patch("services.tts_worker.create_tts_engine") as mock_create:
+        with patch("services.tts.tts_worker.create_tts_engine") as mock_create:
             mock_create.return_value = mock_tts_engine
             worker = IndexTTSWorker(
                 rabbitmq_url="amqp://guest:guest@localhost:5672/",

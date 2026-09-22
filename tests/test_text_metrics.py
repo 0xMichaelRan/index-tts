@@ -1,6 +1,6 @@
 """Unit tests for bilingual word-count metrics."""
 
-from services.text_metrics import count_words
+from services.tts.text_metrics import count_words
 
 
 class TestCountWords:

@@ -7,8 +7,8 @@ Environment variables are loaded from .env file in project root.
 See .env.example for configuration template.
 """
 
-from services.tts_worker import IndexTTSWorker
-from services.worker_config import WorkerConfig
+from services.common.worker_config import WorkerConfig
+from services.tts.tts_worker import IndexTTSWorker
 
 if __name__ == "__main__":
     config = WorkerConfig.from_env()

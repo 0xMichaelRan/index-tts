@@ -28,9 +28,9 @@ from urllib.parse import urlparse
 
 import pika
 
-from services.logging_config import get_logger
-from services.s3_config import S3Client
-from services.vox_render_pipeline import VoxRenderPipeline
+from services.common.logging_config import get_logger
+from services.storage.s3_config import S3Client
+from services.vox.pipeline import VoxRenderPipeline
 
 logger = get_logger(__name__)
 

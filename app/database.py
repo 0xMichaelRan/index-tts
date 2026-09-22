@@ -32,7 +32,7 @@ def _get_logger():
     """Get or initialize logger (lazy init to avoid circular imports)."""
     global _logger
     if _logger is None:
-        from services.logging_config import get_logger
+        from services.common.logging_config import get_logger
 
         _logger = get_logger(__name__)
     return _logger

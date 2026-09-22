@@ -15,7 +15,7 @@ import time
 from datetime import datetime, timedelta
 from unittest.mock import Mock, patch
 
-from services.dlq_monitor import (
+from services.messaging.dlq_monitor import (
     DLQMonitor,
     DLQStats,
     DLQMessage,
@@ -209,7 +209,7 @@ class TestDLQMonitorInit:
 class TestDLQMonitorStats:
     """Test DLQ statistics retrieval."""
 
-    @patch("services.dlq_monitor.pika.BlockingConnection")
+    @patch("services.messaging.dlq_monitor.pika.BlockingConnection")
     def test_get_queue_stats(self, mock_connection_class):
         """DLQMonitor should retrieve queue statistics."""
         # Setup mock
@@ -234,7 +234,7 @@ class TestDLQMonitorStats:
         assert stats.message_count == 42
         assert stats.consumer_count == 2
 
-    @patch("services.dlq_monitor.pika.BlockingConnection")
+    @patch("services.messaging.dlq_monitor.pika.BlockingConnection")
     def test_get_all_stats(self, mock_connection_class):
         """DLQMonitor should retrieve statistics for all queues."""
         # Setup mock
@@ -270,7 +270,7 @@ class TestDLQMonitorStats:
 class TestDLQMonitorAlerts:
     """Test alert triggering."""
 
-    @patch("services.dlq_monitor.pika.BlockingConnection")
+    @patch("services.messaging.dlq_monitor.pika.BlockingConnection")
     def test_default_alert_handler(self, mock_connection_class):
         """DLQMonitor should use default alert handler."""
         mock_channel = Mock()
@@ -315,7 +315,7 @@ class TestDLQMonitorAlerts:
 class TestDLQMonitorMessages:
     """Test DLQ message operations."""
 
-    @patch("services.dlq_monitor.pika.BlockingConnection")
+    @patch("services.messaging.dlq_monitor.pika.BlockingConnection")
     def test_get_dlq_messages(self, mock_connection_class):
         """DLQMonitor should retrieve DLQ messages."""
         # Setup mock
@@ -352,7 +352,7 @@ class TestDLQMonitorMessages:
         assert messages[0].delivery_tag == 1
         assert messages[1].delivery_tag == 2
 
-    @patch("services.dlq_monitor.pika.BlockingConnection")
+    @patch("services.messaging.dlq_monitor.pika.BlockingConnection")
     def test_process_dlq_messages(self, mock_connection_class):
         """DLQMonitor should process DLQ messages with custom processor."""
         # Setup mock
@@ -397,7 +397,7 @@ class TestDLQMonitorMessages:
 class TestDLQMonitorConnectivity:
     """Test DLQ monitor connection management."""
 
-    @patch("services.dlq_monitor.pika.BlockingConnection")
+    @patch("services.messaging.dlq_monitor.pika.BlockingConnection")
     def test_connect_establishes_connection(self, mock_connection_class):
         """DLQMonitor should establish RabbitMQ connection."""
         mock_connection = Mock()
@@ -428,7 +428,7 @@ class TestDLQMonitorConnectivity:
 class TestDLQMonitorBackground:
     """Test DLQ monitor background monitoring."""
 
-    @patch("services.dlq_monitor.pika.BlockingConnection")
+    @patch("services.messaging.dlq_monitor.pika.BlockingConnection")
     def test_start_and_stop_monitoring(self, mock_connection_class):
         """DLQMonitor should start and stop background monitoring."""
         mock_connection = Mock()
@@ -476,7 +476,7 @@ class TestDLQMonitorBackground:
 class TestDLQMonitorPurge:
     """Test DLQ purge functionality."""
 
-    @patch("services.dlq_monitor.pika.BlockingConnection")
+    @patch("services.messaging.dlq_monitor.pika.BlockingConnection")
     def test_purge_dlq(self, mock_connection_class):
         """DLQMonitor should purge all messages from DLQ."""
         mock_channel = Mock()

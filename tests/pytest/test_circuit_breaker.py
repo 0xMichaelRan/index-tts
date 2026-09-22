@@ -14,7 +14,7 @@ import pytest
 import time
 import threading
 
-from services.circuit_breaker import (
+from services.common.circuit_breaker import (
     CircuitBreaker,
     CircuitBreakerError,
     CircuitState,

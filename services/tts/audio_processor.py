@@ -7,7 +7,7 @@ import shutil
 import wave
 from datetime import datetime
 
-from services.logging_config import get_logger
+from services.common.logging_config import get_logger
 
 logger = get_logger(__name__)
 

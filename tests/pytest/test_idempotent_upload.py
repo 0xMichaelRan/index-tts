@@ -15,11 +15,11 @@ import pytest
 import tempfile
 from unittest.mock import Mock, patch, call
 
-from services.idempotent_upload import (
+from services.storage.idempotent_upload import (
     IdempotentUploader,
     UploadMetadata,
 )
-from services.s3_config import S3ConfigError
+from services.storage.s3_config import S3ConfigError
 
 
 class TestUploadMetadata:

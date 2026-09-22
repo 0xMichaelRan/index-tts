@@ -8,6 +8,7 @@ alignment data and burns them into the video stream.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 import subprocess
 
 from services.common.logging_config import get_logger
@@ -21,8 +22,6 @@ logger = get_logger(__name__)
 # Resolved relative to this file's location so it works regardless of the
 # current working directory when the worker is launched.
 # services/vox/subtitles.py → two parents up → project root → assets/fonts/
-from pathlib import Path
-
 _FONTS_DIR: str = str(Path(__file__).parent.parent.parent / "assets" / "fonts")
 
 

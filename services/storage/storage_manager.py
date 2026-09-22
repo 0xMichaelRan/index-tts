@@ -8,9 +8,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from services.idempotent_upload import IdempotentUploader
-from services.logging_config import get_logger
-from services.s3_config import S3Client, S3ConfigError
+from services.common.logging_config import get_logger
+from services.storage.idempotent_upload import IdempotentUploader
+from services.storage.s3_config import S3Client, S3ConfigError
 
 logger = get_logger(__name__)
 

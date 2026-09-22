@@ -12,21 +12,21 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
-from services.audio_processor import AudioProcessor
-from services.cache_manager import CacheManager
-from services.circuit_breaker import CircuitBreakerError, get_circuit_breaker
-from services.logging_config import get_logger
-from services.s3_config import S3ConfigError
-from services.job_utils import extract_job_id
-from services.storage_manager import StorageManager
-from services.text_sanitizer import sanitize_tts_text
-from services.tts_job_service import TTSJobService
+from services.common.circuit_breaker import CircuitBreakerError, get_circuit_breaker
+from services.common.job_utils import extract_job_id
+from services.common.logging_config import get_logger
+from services.storage.s3_config import S3ConfigError
+from services.storage.storage_manager import StorageManager
+from services.tts.audio_processor import AudioProcessor
+from services.tts.cache_manager import CacheManager
+from services.tts.text_sanitizer import sanitize_tts_text
+from services.tts.tts_job_service import TTSJobService
 
 logger = get_logger(__name__)
 
 # Import alignment service
 try:
-    from services.alignment import AlignmentService
+    from services.tts.alignment import AlignmentService
 
     ALIGNMENT_AVAILABLE = True
 except ImportError as e:

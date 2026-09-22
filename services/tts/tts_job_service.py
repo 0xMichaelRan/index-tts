@@ -12,9 +12,9 @@ import os
 import threading
 from typing import Any
 
-from services.job_utils import extract_job_id
-from services.logging_config import get_logger
-from services.text_metrics import count_words
+from services.common.job_utils import extract_job_id
+from services.common.logging_config import get_logger
+from services.tts.text_metrics import count_words
 
 logger = get_logger(__name__)
 

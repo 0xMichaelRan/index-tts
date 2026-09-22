@@ -10,7 +10,7 @@ Tests Phase 1 fixes:
 from unittest.mock import MagicMock, patch
 import pytest
 
-from services.synthesis_pipeline import SynthesisPipeline
+from services.tts.synthesis_pipeline import SynthesisPipeline
 
 
 @pytest.fixture
@@ -27,7 +27,7 @@ def mock_pipeline():
     mock_job_service = MagicMock()
     mock_job_service.create_job_record.return_value = "test-job-uuid"
 
-    with patch("services.synthesis_pipeline.AudioProcessor"):
+    with patch("services.tts.synthesis_pipeline.AudioProcessor"):
         pipeline = SynthesisPipeline(
             tts_engine=mock_tts_engine,
             storage_manager=mock_storage_manager,

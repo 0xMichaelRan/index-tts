@@ -15,7 +15,7 @@ Alert Thresholds:
     - Any message in DLQ >24 hours: Critical alert
 
 Usage:
-    from services.dlq_monitor import DLQMonitor
+    from services.messaging.dlq_monitor import DLQMonitor
 
     # Initialize monitor
     monitor = DLQMonitor(
@@ -611,7 +611,7 @@ def main():
         else:
             print(f"Unknown command: {command}")
             print(
-                "Usage: python -m services.dlq_monitor [monitor|check|peek [queue_name] [limit]]"
+                "Usage: python -m services.messaging.dlq_monitor [monitor|check|peek [queue_name] [limit]]"
             )
             return 1
 

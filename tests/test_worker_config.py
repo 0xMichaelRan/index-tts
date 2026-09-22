@@ -1,5 +1,5 @@
 """
-Unit tests for services.worker_config.WorkerConfig.
+Unit tests for services.common.worker_config.WorkerConfig.
 
 Tests cover:
 - Default values when no env vars are set
@@ -14,7 +14,7 @@ import logging
 
 import pytest
 
-from services.worker_config import WorkerConfig, _env_bool, _env_float, _env_int
+from services.common.worker_config import WorkerConfig, _env_bool, _env_float, _env_int
 
 
 # ---------------------------------------------------------------------------

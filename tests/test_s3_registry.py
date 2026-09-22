@@ -19,7 +19,7 @@ from unittest.mock import patch
 
 import pytest
 
-from services.s3_registry import (
+from services.storage.s3_registry import (
     S3BucketConfig,
     clear_registry_cache,
     get_bucket,
@@ -291,7 +291,7 @@ class TestRegistryLookups:
     def populated_registry(self, tmp_path, monkeypatch):
         """Patch CONFIG_FILE and env so get_registry() loads test data."""
         toml_file = make_toml_file(tmp_path, MINIMAL_TOML)
-        monkeypatch.setattr("services.s3_registry.CONFIG_FILE", toml_file)
+        monkeypatch.setattr("services.storage.s3_registry.CONFIG_FILE", toml_file)
         env = {**MISC_ENV, **AUDIO_ENV}
         with patch.dict(os.environ, env, clear=False):
             yield

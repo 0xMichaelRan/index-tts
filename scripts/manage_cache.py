@@ -26,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app.database import SyncDatabaseSession
 from app.cache_service import TTSCacheServiceSync
-from services.logging_config import get_logger
+from services.common.logging_config import get_logger
 
 logger = get_logger(__name__)
 
@@ -262,7 +262,7 @@ def cmd_inspect(cache_key: str):
 
         local_path = entry.base_audio_local_path
         if not os.path.isabs(local_path):
-            from services.worker_config import get_worker_config
+            from services.common.worker_config import get_worker_config
 
             cache_dir = Path(get_worker_config().cache_local_dir).resolve()
             local_path = str(cache_dir / local_path)

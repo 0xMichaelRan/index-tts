@@ -25,7 +25,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app.database import DatabaseSession, check_db_connection
 from app.cache_service import TTSCacheService
-from services.logging_config import get_logger
+from services.common.logging_config import get_logger
 
 logger = get_logger(__name__)
 

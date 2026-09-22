@@ -6,8 +6,8 @@ from datetime import datetime, timezone
 from unittest.mock import patch
 
 from app.models import TTSJob
-from services.tts_job_service import TTSJobService
-from services.synthesis_pipeline import SynthesisPipeline
+from services.tts.synthesis_pipeline import SynthesisPipeline
+from services.tts.tts_job_service import TTSJobService
 
 
 def test_tts_job_model_attributes():
@@ -37,8 +37,8 @@ def test_tts_job_service_test_job_persists_with_is_test_flag():
     service.enabled = True
 
     with (
-        patch("services.tts_job_service.DatabaseSession"),
-        patch("services.tts_job_service._run_coroutine") as mock_run,
+        patch("services.tts.tts_job_service.DatabaseSession"),
+        patch("services.tts.tts_job_service._run_coroutine") as mock_run,
     ):
 
         def mock_runner(coro, timeout=10.0):
@@ -63,8 +63,8 @@ def test_tts_job_service_create_and_update():
     service.enabled = True
 
     with (
-        patch("services.tts_job_service.DatabaseSession"),
-        patch("services.tts_job_service._run_coroutine") as mock_run,
+        patch("services.tts.tts_job_service.DatabaseSession"),
+        patch("services.tts.tts_job_service._run_coroutine") as mock_run,
     ):
         # Mock _run_coroutine to simulate return of tts_id
         def mock_runner(coro, timeout=10.0):

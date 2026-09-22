@@ -19,22 +19,22 @@ from unittest.mock import MagicMock, patch
 def _make_worker():
     """Return an IndexTTSWorker whose heavy __init__ is fully mocked."""
     with (
-        patch("services.tts_worker.configure_logging"),
-        patch("services.tts_worker.get_logger", return_value=MagicMock()),
-        patch("services.tts_worker.create_tts_engine", return_value=MagicMock()),
-        patch("services.tts_worker.StorageManager", return_value=MagicMock()),
-        patch("services.tts_worker.CacheManager", return_value=MagicMock()),
-        patch("services.tts_worker.SynthesisPipeline", return_value=MagicMock()),
-        patch("services.tts_worker.RabbitMQManager", return_value=MagicMock()),
-        patch("services.tts_worker.signal"),
+        patch("services.tts.tts_worker.configure_logging"),
+        patch("services.tts.tts_worker.get_logger", return_value=MagicMock()),
+        patch("services.tts.tts_worker.create_tts_engine", return_value=MagicMock()),
+        patch("services.tts.tts_worker.StorageManager", return_value=MagicMock()),
+        patch("services.tts.tts_worker.CacheManager", return_value=MagicMock()),
+        patch("services.tts.tts_worker.SynthesisPipeline", return_value=MagicMock()),
+        patch("services.tts.tts_worker.RabbitMQManager", return_value=MagicMock()),
+        patch("services.tts.tts_worker.signal"),
     ):
-        from services.worker_config import WorkerConfig
-        from services.tts_worker import IndexTTSWorker
+        from services.common.worker_config import WorkerConfig
+        from services.tts.tts_worker import IndexTTSWorker
 
         cfg = WorkerConfig(rabbitmq_url="amqp://localhost/")
         worker = IndexTTSWorker(config=cfg)
         # Silence the module-level logger that __init__ swapped in
-        import services.tts_worker as tw_mod
+        import services.tts.tts_worker as tw_mod
 
         tw_mod.logger = MagicMock()
         return worker
@@ -144,7 +144,7 @@ class TestHandleMessagePriority:
         assert call_kwargs.kwargs.get("priority") == 7
 
     def test_priority_clamped_above_max(self):
-        from services.rabbitmq_config import MQ_PRIORITY_MAX
+        from services.messaging.rabbitmq_config import MQ_PRIORITY_MAX
 
         worker = _make_worker()
         worker.synthesis_pipeline.process_job.return_value = {"jobId": "p3"}

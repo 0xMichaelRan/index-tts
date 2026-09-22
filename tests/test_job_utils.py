@@ -1,5 +1,5 @@
 """
-Unit tests for services.job_utils.extract_job_id.
+Unit tests for services.common.job_utils.extract_job_id.
 
 Covers:
 - camelCase key (jobId)
@@ -10,7 +10,7 @@ Covers:
 - None values are treated as absent
 """
 
-from services.job_utils import extract_job_id
+from services.common.job_utils import extract_job_id
 
 
 class TestExtractJobId:

@@ -12,25 +12,25 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from indextts.infer import create_tts_engine
-from services.cache_manager import CacheManager
-from services.circuit_breaker import get_all_circuit_breaker_stats
-from services.vox_render_consumer import VoxRenderConsumer
-from services.logging_config import (
+from services.common.circuit_breaker import get_all_circuit_breaker_stats
+from services.common.job_utils import extract_job_id
+from services.common.logging_config import (
     configure_logging,
     get_logger,
     log_shutdown_summary,
     log_startup_summary,
 )
-from services.job_utils import extract_job_id
-from services.rabbitmq_config import MQ_PRIORITY_DEFAULT, MQ_PRIORITY_MAX
-from services.rabbitmq_manager import RabbitMQManager
-from services.s3_registry import list_buckets
-from services.storage_manager import StorageManager
-from services.synthesis_pipeline import SynthesisPipeline
-from services.worker_config import WorkerConfig
+from services.common.worker_config import WorkerConfig
+from services.messaging.rabbitmq_config import MQ_PRIORITY_DEFAULT, MQ_PRIORITY_MAX
+from services.messaging.rabbitmq_manager import RabbitMQManager
+from services.storage.s3_registry import list_buckets
+from services.storage.storage_manager import StorageManager
+from services.tts.cache_manager import CacheManager
+from services.tts.synthesis_pipeline import SynthesisPipeline
+from services.vox.vox_render_consumer import VoxRenderConsumer
 
 # Load environment variables
-_env_file = Path(__file__).parent.parent / ".env"
+_env_file = Path(__file__).resolve().parent.parent.parent / ".env"
 if _env_file.exists():
     load_dotenv(str(_env_file))
 

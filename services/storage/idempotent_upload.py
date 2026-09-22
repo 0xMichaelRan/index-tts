@@ -17,7 +17,7 @@ Bucket types:
   - "audio" – synthesised TTS audio and alignment JSON (default for uploads)
 
 Usage:
-    from services.idempotent_upload import IdempotentUploader
+    from services.storage.idempotent_upload import IdempotentUploader
 
     uploader = IdempotentUploader(s3_client)
     s3_path = uploader.upload_with_retry(
@@ -35,7 +35,7 @@ import time
 from datetime import datetime
 from typing import Any
 
-from services.s3_config import S3Client, S3ConfigError
+from services.storage.s3_config import S3Client, S3ConfigError
 
 logger = logging.getLogger(__name__)
 

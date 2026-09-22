@@ -11,7 +11,7 @@ Circuit States:
     - HALF_OPEN: Testing recovery, limited requests allowed
 
 Usage:
-    from services.circuit_breaker import CircuitBreaker, CircuitBreakerError
+    from services.common.circuit_breaker import CircuitBreaker, CircuitBreakerError
 
     # Create circuit breakers for different services
     s3_breaker = CircuitBreaker(
@@ -49,7 +49,7 @@ from datetime import datetime
 
 # Use structured logging if available, fall back to default
 try:
-    from services.logging_config import get_logger
+    from services.common.logging_config import get_logger
 
     logger = get_logger(__name__)
 except ImportError:

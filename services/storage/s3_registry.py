@@ -36,10 +36,10 @@ logger = logging.getLogger("s3.registry")
 # ---------------------------------------------------------------------------
 
 # Canonical location: <project_root>/config/buckets.toml
-CONFIG_FILE = Path(__file__).resolve().parent.parent / "config" / "buckets.toml"
+CONFIG_FILE = Path(__file__).resolve().parent.parent.parent / "config" / "buckets.toml"
 if not CONFIG_FILE.exists():
     # Fallback: buckets.toml at project root
-    _fallback = Path(__file__).resolve().parent.parent / "buckets.toml"
+    _fallback = Path(__file__).resolve().parent.parent.parent / "buckets.toml"
     if _fallback.exists():
         CONFIG_FILE = _fallback
 

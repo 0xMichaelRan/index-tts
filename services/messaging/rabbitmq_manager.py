@@ -9,8 +9,8 @@ from urllib.parse import urlparse
 
 import pika
 
-from services.logging_config import get_logger
-from services.rabbitmq_config import MQ_PRIORITY_DEFAULT, MQ_PRIORITY_MAX
+from services.common.logging_config import get_logger
+from services.messaging.rabbitmq_config import MQ_PRIORITY_DEFAULT, MQ_PRIORITY_MAX
 
 logger = get_logger(__name__)
 

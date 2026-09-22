@@ -28,8 +28,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from app.models import TTSSynthesisCache
-from services.logging_config import get_logger
-from services.text_metrics import count_words
+from services.common.logging_config import get_logger
+from services.tts.text_metrics import count_words
 
 logger = get_logger(__name__)
 
@@ -617,7 +617,7 @@ class TTSCacheServiceSync:
     """Synchronous mirror of TTSCacheService using a plain SQLAlchemy Session.
 
     All methods are regular ``def`` (no async/await).  This is used by
-    :class:`services.cache_manager.CacheManager` so it can query the DB
+    :class:`services.tts.cache_manager.CacheManager` so it can query the DB
     directly from the synchronous ``process_job()`` call chain without
     spawning a thread + event loop per call.
 

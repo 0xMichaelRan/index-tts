@@ -14,7 +14,7 @@ import wave
 
 import pytest
 
-from services.alignment import (
+from services.tts.alignment import (
     AlignmentResult,
     AlignmentService,
     detect_language_strategy,

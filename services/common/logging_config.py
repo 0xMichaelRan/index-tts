@@ -11,7 +11,7 @@ This module configures Python's built-in logging with custom formatters
 that adapt output based on destination (console vs. file).
 
 Usage:
-    from services.logging_config import get_logger, configure_logging
+    from services.common.logging_config import get_logger, configure_logging
 
     # Configure logging (call once at startup)
     configure_logging(

@@ -24,7 +24,7 @@ Queue Architecture (Standardized DLX Pattern):
     └── vox_results_failed (TTL: 7 days) - Failed render result processing
 
 Usage:
-    from services.rabbitmq_config import configure_queues
+    from services.messaging.rabbitmq_config import configure_queues
 
     # Configure all queues (idempotent)
     configure_queues(
