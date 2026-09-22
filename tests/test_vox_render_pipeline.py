@@ -12,10 +12,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from services.vox_render_pipeline import (
-    VoxRenderPipeline,
-    _adapt_clip_speed_up,
-)
+from services.vox.pipeline import VoxRenderPipeline
+from services.vox.video_utils import _adapt_clip_speed_up
 
 
 class ClipAlignmentStrategy(str, Enum):
@@ -143,10 +141,10 @@ class TestFlowRenderPipelineJobParsing:
             captured_skip = kwargs.get("skip_first_frame")
 
         monkeypatch.setattr(
-            "services.vox_render_pipeline._get_video_duration", lambda *a, **kw: 4.0
+            "services.vox.video_utils._get_video_duration", lambda *a, **kw: 4.0
         )
         monkeypatch.setattr(
-            "services.vox_render_pipeline._adapt_clip_speed_up", fake_adapt_speed_up
+            "services.vox.video_utils._adapt_clip_speed_up", fake_adapt_speed_up
         )
 
         pipeline._adapt_clips(
@@ -170,10 +168,10 @@ class TestFlowRenderPipelineJobParsing:
             captured_skip = kwargs.get("skip_first_frame")
 
         monkeypatch.setattr(
-            "services.vox_render_pipeline._get_video_duration", lambda *a, **kw: 4.0
+            "services.vox.video_utils._get_video_duration", lambda *a, **kw: 4.0
         )
         monkeypatch.setattr(
-            "services.vox_render_pipeline._adapt_clip_speed_up", fake_adapt_speed_up
+            "services.vox.video_utils._adapt_clip_speed_up", fake_adapt_speed_up
         )
 
         pipeline._adapt_clips(

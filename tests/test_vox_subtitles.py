@@ -1,5 +1,5 @@
 """
-Unit tests for subtitle generation and burn-in helpers in vox_render_pipeline.py.
+Unit tests for subtitle generation helpers in services/vox/subtitles.py.
 """
 
 from __future__ import annotations
@@ -7,7 +7,7 @@ from __future__ import annotations
 import os
 import tempfile
 
-from services.vox_render_pipeline import (
+from services.vox.subtitles import (
     _sec_to_ass_time,
     _has_cjk_chars,
     _group_words_by_beats,

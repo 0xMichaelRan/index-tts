@@ -16,7 +16,7 @@ environment variables.  See ``services/s3_registry.py`` for details.
 
 Usage::
 
-    from services.s3_config import S3Client, S3ConfigError
+    from services.storage.s3_config import S3Client, S3ConfigError
 
     client = S3Client()
 
@@ -52,7 +52,7 @@ except ImportError:
     logging.warning("boto3 is not installed. Install with: pip install boto3")
 
 try:
-    from services.logging_config import get_logger
+    from services.common.logging_config import get_logger
 
     logger = get_logger(__name__)
 except ImportError:
@@ -62,7 +62,7 @@ except ImportError:
     )
     logger = logging.getLogger(__name__)
 
-from services.s3_registry import (
+from services.storage.s3_registry import (
     S3BucketConfig,
     clear_registry_cache,
     get_bucket,

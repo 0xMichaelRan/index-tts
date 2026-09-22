@@ -1,5 +1,5 @@
 """
-Unit tests for ScriptGuidedAligner in vox_render_pipeline.py.
+Unit tests for ScriptGuidedAligner in services/vox/aligner.py.
 
 Tests cover:
 - Token counting: Latin whitespace-split vs CJK character counting
@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from services.vox_render_pipeline import ScriptGuidedAligner
+from services.vox.aligner import ScriptGuidedAligner
 
 
 # ---------------------------------------------------------------------------
