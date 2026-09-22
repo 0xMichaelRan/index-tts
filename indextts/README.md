@@ -185,7 +185,6 @@ wget https://huggingface.co/IndexTeam/IndexTTS-1.5/resolve/main/config.yaml -P c
 
 
 ```bash
-# Please put your prompt audio in 'test_data' and rename it to 'input.wav'
 python indextts/infer.py
 ```
 
