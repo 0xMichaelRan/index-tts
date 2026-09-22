@@ -17,7 +17,6 @@ Usage:
     python scripts/manage_cache.py invalidate --voice "audio-prompts/voice_123.wav"
 """
 
-import asyncio
 import argparse
 import sys
 from pathlib import Path
@@ -25,20 +24,20 @@ from pathlib import Path
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from app.database import DatabaseSession
-from app.cache_service import TTSCacheService
+from app.database import SyncDatabaseSession
+from app.cache_service import TTSCacheServiceSync
 from services.logging_config import get_logger
 
 logger = get_logger(__name__)
 
 
-async def cmd_stats():
+def cmd_stats():
     """Show cache statistics."""
     logger.section("CACHE STATISTICS")
 
-    async with DatabaseSession() as db:
-        service = TTSCacheService(db)
-        stats = await service.get_cache_stats()
+    with SyncDatabaseSession() as db:
+        service = TTSCacheServiceSync(db)
+        stats = service.get_cache_stats()
 
         print(f"📊 Total entries:        {stats['total_entries']:,}")
         print(f"🎯 Total hits:           {stats['total_hits']:,}")
@@ -52,13 +51,13 @@ async def cmd_stats():
             )
 
 
-async def cmd_top(limit: int = 20):
+def cmd_top(limit: int = 20):
     """Show most frequently accessed entries."""
     logger.section(f"TOP {limit} CACHE ENTRIES")
 
-    async with DatabaseSession() as db:
-        service = TTSCacheService(db)
-        entries = await service.get_top_entries(limit)
+    with SyncDatabaseSession() as db:
+        service = TTSCacheServiceSync(db)
+        entries = service.get_top_entries(limit)
 
         if not entries:
             print("No cache entries found.")
@@ -84,7 +83,7 @@ async def cmd_top(limit: int = 20):
             print()
 
 
-async def cmd_evict(count: int = 1000, max_size_mb: int = 0):
+def cmd_evict(count: int = 1000, max_size_mb: int = 0):
     """Evict oldest cache entries."""
     if max_size_mb > 0:
         logger.section(
@@ -93,11 +92,11 @@ async def cmd_evict(count: int = 1000, max_size_mb: int = 0):
     else:
         logger.section(f"EVICTING {count} ENTRIES")
 
-    async with DatabaseSession() as db:
-        service = TTSCacheService(db)
+    with SyncDatabaseSession() as db:
+        service = TTSCacheServiceSync(db)
 
         # Get stats before
-        stats_before = await service.get_cache_stats()
+        stats_before = service.get_cache_stats()
         entries_before = stats_before["total_entries"]
         size_before = stats_before["total_size_mb"]
 
@@ -123,14 +122,14 @@ async def cmd_evict(count: int = 1000, max_size_mb: int = 0):
         target_max_entries = (
             (entries_before - actual_count) if max_size_mb == 0 else entries_before
         )
-        evicted = await service.evict_old_entries(
+        evicted = service.evict_old_entries(
             max_entries=target_max_entries,
             evict_count=actual_count,
             max_size_mb=max_size_mb,
         )
 
         # Get stats after
-        stats_after = await service.get_cache_stats()
+        stats_after = service.get_cache_stats()
         entries_after = stats_after["total_entries"]
         size_after = stats_after["total_size_mb"]
 
@@ -141,15 +140,15 @@ async def cmd_evict(count: int = 1000, max_size_mb: int = 0):
         )
 
 
-async def cmd_clear(confirm: bool = False):
+def cmd_clear(confirm: bool = False):
     """Clear entire cache."""
     logger.section("CLEAR ENTIRE CACHE")
 
-    async with DatabaseSession() as db:
-        service = TTSCacheService(db)
+    with SyncDatabaseSession() as db:
+        service = TTSCacheServiceSync(db)
 
         # Get stats
-        stats = await service.get_cache_stats()
+        stats = service.get_cache_stats()
         entries = stats["total_entries"]
 
         if entries == 0:
@@ -169,19 +168,19 @@ async def cmd_clear(confirm: bool = False):
                 return
 
         # Clear
-        deleted = await service.clear_all()
+        deleted = service.clear_all()
 
         print(f"\n✅ Cleared cache: {deleted:,} entries deleted")
 
 
-async def cmd_invalidate(voice_path: str):
+def cmd_invalidate(voice_path: str):
     """Invalidate all entries for a specific voice."""
     logger.section("INVALIDATE VOICE CACHE")
 
     print(f"Voice: {voice_path}")
 
-    async with DatabaseSession() as db:
-        service = TTSCacheService(db)
+    with SyncDatabaseSession() as db:
+        service = TTSCacheServiceSync(db)
 
         # Preview affected entries
         from sqlalchemy import select
@@ -190,8 +189,7 @@ async def cmd_invalidate(voice_path: str):
         stmt = select(TTSSynthesisCache).where(
             TTSSynthesisCache.audio_prompt_path == voice_path
         )
-        result = await db.execute(stmt)
-        entries = result.scalars().all()
+        entries = db.execute(stmt).scalars().all()
 
         if not entries:
             print(f"No cache entries found for voice: {voice_path}")
@@ -218,24 +216,23 @@ async def cmd_invalidate(voice_path: str):
             return
 
         # Invalidate
-        deleted = await service.invalidate_voice_cache(voice_path)
+        deleted = service.invalidate_voice_cache(voice_path)
 
         print(f"\n✅ Invalidated {deleted} cache entries for voice")
 
 
-async def cmd_inspect(cache_key: str):
+def cmd_inspect(cache_key: str):
     """Inspect a specific cache entry."""
     logger.section("INSPECT CACHE ENTRY")
 
-    async with DatabaseSession() as db:
+    with SyncDatabaseSession() as db:
         from sqlalchemy import select
         from app.models import TTSSynthesisCache
 
         stmt = select(TTSSynthesisCache).where(
             TTSSynthesisCache.cache_key.like(f"{cache_key}%")
         )
-        result = await db.execute(stmt)
-        entry = result.scalar_one_or_none()
+        entry = db.execute(stmt).scalar_one_or_none()
 
         if not entry:
             print(f"❌ No cache entry found matching: {cache_key}")
@@ -259,12 +256,21 @@ async def cmd_inspect(cache_key: str):
         print(f"🌍 Language:            {entry.language or '(unknown)'}")
         print(f"🔧 TTS Engine:          {entry.tts_engine}")
 
-        # Check file existence
+        # Check file existence — resolve relative paths the same way the
+        # service does (_resolve_path), without instantiating the service.
         import os
 
-        file_exists = os.path.exists(entry.base_audio_local_path)
+        local_path = entry.base_audio_local_path
+        if not os.path.isabs(local_path):
+            from services.worker_config import get_worker_config
+            cache_dir = Path(get_worker_config().cache_local_dir).resolve()
+            local_path = str(cache_dir / local_path)
+
+        file_exists = os.path.exists(local_path)
         status = "✅ exists" if file_exists else "❌ missing"
         print(f"📂 File Status:         {status}")
+        if not os.path.isabs(entry.base_audio_local_path):
+            print(f"   Resolved path:      {local_path}")
 
 
 def main():
@@ -344,17 +350,17 @@ Examples:
     # Run command
     try:
         if args.command == "stats":
-            asyncio.run(cmd_stats())
+            cmd_stats()
         elif args.command == "top":
-            asyncio.run(cmd_top(args.limit))
+            cmd_top(args.limit)
         elif args.command == "evict":
-            asyncio.run(cmd_evict(args.count, args.max_size_mb))
+            cmd_evict(args.count, args.max_size_mb)
         elif args.command == "clear":
-            asyncio.run(cmd_clear(args.confirm))
+            cmd_clear(args.confirm)
         elif args.command == "invalidate":
-            asyncio.run(cmd_invalidate(args.voice))
+            cmd_invalidate(args.voice)
         elif args.command == "inspect":
-            asyncio.run(cmd_inspect(args.key))
+            cmd_inspect(args.key)
         else:
             parser.print_help()
             return 1
