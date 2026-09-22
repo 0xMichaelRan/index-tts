@@ -16,7 +16,7 @@ Then you can run Python commands normally:
 
 ```bash
 python -m services.tts.tts_worker
-python -m pytest tests/pytest/test_tts_worker_core.py
+python -m pytest tests/unit/test_tts_worker_core.py
 ```
 
 **Note**: Do NOT use `uv` on Windows. The project uses conda for environment management on Windows.
@@ -234,7 +234,7 @@ CIRCUIT_BREAKER_ALIGNMENT_RESET_TIMEOUT=60
 uv run pytest tests/test_alignment.py -v
 
 # Run worker integration tests (Windows/Linux with GPU only)
-python -m pytest tests/pytest/test_tts_worker_alignment.py -v
+python -m pytest tests/unit/test_tts_worker_alignment.py -v
 ```
 
 ---

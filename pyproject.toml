@@ -149,7 +149,7 @@ include = ["indextts*", "services*", "app*"]
 exclude = ["tests*"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests/unit", "tests/integration"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
