@@ -461,6 +461,20 @@ uv run ruff check --fix .
 - **Type hints**: Required for function signatures
 - **Docstrings**: Google-style for public methods
 
+### Message Schema & Naming Conventions
+
+The codebase strictly enforces two naming domains:
+
+1. **RabbitMQ Wire Protocol (JSON Payloads)**: **camelCase**
+   - Inbound job payloads (`tts_jobs`, `vox_jobs`): `jobId`, `jobType`, `audioPromptPath`, `speedRatio`, `spokenLang`, `resolution`, `aspectRatio`, `clipS3Keys`, `beatNarrations`, etc.
+   - Outbound result payloads (`tts_results`, `vox_results`): `jobId`, `jobType`, `audioPath`, `alignmentPath`, `audioDurationSeconds`, `synthesisDurationSeconds`, `alignmentDurationSeconds`, `cacheHit`, `retryCount`, `errorCode`, `errorMessage`, `startedAt`, `completedAt`.
+   - **No snake_case fallbacks** in message handling code (e.g. do NOT use `job_data.get("jobId") or job_data.get("job_id")`).
+
+2. **Internal Python Code**: **snake_case** (PEP 8)
+   - Variables, function/method names, class attributes, and SQLAlchemy DB model columns (`job_id`, `cache_key`, `created_at`, etc.).
+   - S3 object metadata keys (`job_id`, `upload_timestamp`, etc.).
+   - Alignment JSON file format (`*_alignment.json` file artefacts on disk/S3 use `job_id`, `audio_duration_seconds`, `aligned_at`).
+
 ## Key Patterns
 
 ### Circuit Breaker Usage

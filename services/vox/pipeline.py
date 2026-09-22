@@ -113,8 +113,8 @@ class VoxRenderPipeline:
         logger.info(f"[VOX {job_id}] Starting vox render pipeline")
 
         # --- Validate mandatory fields ---
-        resolution = job_data.get("resolution") or job_data.get("resolution")
-        aspect_ratio = job_data.get("aspectRatio") or job_data.get("aspect_ratio")
+        resolution = job_data.get("resolution")
+        aspect_ratio = job_data.get("aspectRatio")
         if not resolution:
             raise ValueError(
                 f"[VOX {job_id}] 'resolution' is a mandatory field — not provided"
@@ -129,21 +129,13 @@ class VoxRenderPipeline:
             f"[VOX {job_id}] Output: {width}x{height} ({resolution}, {aspect_ratio})"
         )
 
-        clip_s3_keys: list[str] = (
-            job_data.get("clipS3Keys") or job_data.get("clip_s3_keys") or []
-        )
-        beat_narrations: list[str] = (
-            job_data.get("beatNarrations") or job_data.get("beat_narrations") or []
-        )
-        audio_path_s3: str = job_data.get("audioPath") or job_data.get("audio_path", "")
-        alignment_path_s3: str = job_data.get("alignmentPath") or job_data.get(
-            "alignment_path", ""
-        )
-        output_s3_key: str = job_data.get("outputS3Key") or job_data.get(
-            "output_s3_key", ""
-        )
+        clip_s3_keys: list[str] = job_data.get("clipS3Keys") or []
+        beat_narrations: list[str] = job_data.get("beatNarrations") or []
+        audio_path_s3: str = job_data.get("audioPath", "")
+        alignment_path_s3: str = job_data.get("alignmentPath", "")
+        output_s3_key: str = job_data.get("outputS3Key", "")
         language: str = job_data.get("language", "en")
-        project_id = job_data.get("projectId") or job_data.get("project_id")
+        project_id = job_data.get("projectId")
 
         if not clip_s3_keys:
             raise ValueError(f"[VOX {job_id}] No clip S3 keys provided")

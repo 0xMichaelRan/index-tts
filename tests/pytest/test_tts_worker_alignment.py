@@ -210,27 +210,24 @@ class TestAlignmentCalledWithLocalOutput:
 
 
 class TestResultPayload:
-    """Verify alignment_path and alignment_duration_seconds in the result dict."""
+    """Verify alignmentPath and alignmentDurationSeconds in the result dict."""
 
     def test_result_contains_alignment_path(self, pipeline_and_files):
         pipeline, *_ = pipeline_and_files
         result = pipeline.process_job(_default_job())
         assert result["status"] == "completed"
-        assert "alignmentPath" in result or "alignment_path" in result
+        assert "alignmentPath" in result
 
     def test_result_contains_alignment_duration(self, pipeline_and_files):
         pipeline, *_ = pipeline_and_files
         result = pipeline.process_job(_default_job())
-        assert (
-            "alignmentDurationSeconds" in result
-            or "alignment_duration_seconds" in result
-        )
+        assert "alignmentDurationSeconds" in result
 
     def test_result_does_not_contain_subtitle_path(self, pipeline_and_files):
-        """subtitle_path must NOT appear in the result."""
+        """subtitlePath must NOT appear in the result."""
         pipeline, *_ = pipeline_and_files
         result = pipeline.process_job(_default_job())
-        assert "subtitlePath" not in result and "subtitle_path" not in result
+        assert "subtitlePath" not in result
 
 
 class TestOnlyParsedJsonUploaded:
@@ -342,7 +339,7 @@ class TestAlignmentFailure:
 
         result = pipeline.process_job(_default_job())
         assert result["status"] == "failed"
-        assert (result.get("errorCode") or result.get("error_code")) in (
+        assert result.get("errorCode") in (
             "ALIGNMENT_CIRCUIT_OPEN",
             "NON_RETRYABLE_ERROR",
         )

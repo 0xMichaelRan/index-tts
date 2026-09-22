@@ -12,29 +12,23 @@ from typing import Any
 
 
 def extract_job_id(job_data: dict[str, Any]) -> str | None:
-    """Resolve jobId from camelCase or snake_case key.
+    """Resolve jobId from camelCase key.
 
-    The RabbitMQ message schema uses ``jobId`` (camelCase), but some
-    internal paths fall back to ``job_id`` (snake_case) for backwards
-    compatibility.  This function checks both and returns the first
-    non-None value as a string, or ``None`` if neither key is present.
+    The RabbitMQ message schema strictly uses ``jobId`` (camelCase).
+    This function returns the value as a string, or ``None`` if absent.
 
     Args:
         job_data: Parsed JSON payload from the RabbitMQ message body.
 
     Returns:
-        The job ID as a string, or ``None`` if both keys are absent.
+        The job ID as a string, or ``None`` if absent.
 
     Example::
 
         >>> extract_job_id({"jobId": 42})
         '42'
-        >>> extract_job_id({"job_id": "abc"})
-        'abc'
         >>> extract_job_id({})
         None
     """
     val = job_data.get("jobId")
-    if val is None:
-        val = job_data.get("job_id")
     return str(val) if val is not None else None

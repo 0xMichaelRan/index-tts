@@ -99,17 +99,15 @@ class TestHandleMessageSuccess:
 
         assert "abc" in worker._processed_jobs
 
-    def test_snake_case_job_id_is_extracted(self):
-        """extract_job_id falls back to job_id (snake_case) key."""
+    def test_integer_job_id_is_tracked_in_processed_jobs(self):
+        """extract_job_id stringifies integer jobId from camelCase key."""
         worker = _make_worker()
-        worker.synthesis_pipeline.process_job.return_value = {"job_id": "snake1"}
+        worker.synthesis_pipeline.process_job.return_value = {"jobId": "123"}
 
-        ch, method, properties, body = _make_amqp_args(
-            {"job_id": "snake1", "text": "Hello"}
-        )
+        ch, method, properties, body = _make_amqp_args({"jobId": 123, "text": "Hello"})
         worker._handle_message(ch, method, properties, body)
 
-        assert "snake1" in worker._processed_jobs
+        assert "123" in worker._processed_jobs
 
 
 # ---------------------------------------------------------------------------

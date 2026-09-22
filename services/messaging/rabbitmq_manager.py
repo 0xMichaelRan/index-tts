@@ -378,7 +378,7 @@ class RabbitMQManager:
             Exception: If all retries exhausted
         """
         retry_count = 0
-        job_id = result.get("jobId") or result.get("job_id")
+        job_id = result.get("jobId")
         # Clamp priority to valid range
         priority = max(0, min(priority, MQ_PRIORITY_MAX))
 
