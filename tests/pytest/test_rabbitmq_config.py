@@ -371,5 +371,5 @@ class TestIntegration:
 
         assert "tts_jobs" in info
         assert "tts_results" in info
-        assert "tts_jobs_dlq" in info
-        assert "tts_results_dlq" in info
+        assert "tts_jobs_failed" in info
+        assert "tts_results_failed" in info
