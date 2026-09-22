@@ -161,9 +161,13 @@ addopts = [
 markers = [
     "macos: marks tests as macOS-specific (deselect with '-m \"not macos\"')",
     "cuda: marks tests as requiring CUDA/GPU (deselect with '-m \"not cuda\"')",
+    "slow: marks tests as slow-running",
+    "integration: marks tests as integration tests with real S3 credentials",
+    "asyncio: marks tests as asyncio tests (for pytest-asyncio)",
 ]
 filterwarnings = [
     "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
 ]
 
 [tool.ruff.lint]

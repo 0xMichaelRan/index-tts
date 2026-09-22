@@ -6,7 +6,7 @@ This project uses pytest to manage tests. The test suite includes platform-speci
 
 - **Location**: All pytest tests are in `tests/pytest/`
 - **Python path setup**: `tests/conftest.py` automatically adds the project root to `sys.path` so imports work correctly
-- **Configuration**: `pytest.ini` at the project root configures pytest discovery and behavior
+- **Configuration**: `pyproject.toml` (`[tool.pytest.ini_options]`) at the project root configures pytest discovery and behavior
 - **Package manager**: Tests should be run with `uv run pytest` for consistency with the project setup
 
 ## Installation
