@@ -263,6 +263,7 @@ def cmd_inspect(cache_key: str):
         local_path = entry.base_audio_local_path
         if not os.path.isabs(local_path):
             from services.worker_config import get_worker_config
+
             cache_dir = Path(get_worker_config().cache_local_dir).resolve()
             local_path = str(cache_dir / local_path)
 
