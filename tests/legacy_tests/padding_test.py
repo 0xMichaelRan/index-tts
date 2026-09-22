@@ -22,7 +22,7 @@ if __name__ == "__main__":
         model_dir = sys.argv[1]
     else:
         model_dir = "checkpoints"
-    audio_prompt = "tests/sample_prompt.wav"
+    audio_prompt = "tests/legacy_tests/sample_prompt.wav"
     tts = IndexTTS(
         cfg_path=f"{model_dir}/config.yaml",
         model_dir=model_dir,

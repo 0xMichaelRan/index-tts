@@ -1,7 +1,7 @@
 from indextts.infer import IndexTTS
 
 if __name__ == "__main__":
-    prompt_wav = "tests/sample_prompt.wav"
+    prompt_wav = "tests/legacy_tests/sample_prompt.wav"
     tts = IndexTTS(
         cfg_path="checkpoints/config.yaml",
         model_dir="checkpoints",
