@@ -391,13 +391,23 @@ class TestEdgeCases:
         # Create clipped audio at int16 max amplitude
         audio = np.full(sample_rate, 32767.0, dtype=np.float32)
 
-        normalized, metrics = normalize_loudness(
-            audio=audio,
-            sample_rate=sample_rate,
-            target_lufs=-16.0,
-            enable_normalization=True,
-            verbose=False,
-        )
+        if check_normalization_available():
+            with pytest.warns(UserWarning, match="Possible clipped samples in output"):
+                normalized, metrics = normalize_loudness(
+                    audio=audio,
+                    sample_rate=sample_rate,
+                    target_lufs=-16.0,
+                    enable_normalization=True,
+                    verbose=False,
+                )
+        else:
+            normalized, metrics = normalize_loudness(
+                audio=audio,
+                sample_rate=sample_rate,
+                target_lufs=-16.0,
+                enable_normalization=True,
+                verbose=False,
+            )
 
         # Should handle without crashing
         assert isinstance(normalized, np.ndarray)
