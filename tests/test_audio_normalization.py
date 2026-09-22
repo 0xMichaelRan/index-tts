@@ -475,7 +475,9 @@ class TestConsistency:
         if metrics1["original_lufs"] is not None:
             import math
 
-            if math.isinf(metrics1["original_lufs"]) or math.isinf(metrics2["original_lufs"]):
+            if math.isinf(metrics1["original_lufs"]) or math.isinf(
+                metrics2["original_lufs"]
+            ):
                 assert metrics1["original_lufs"] == metrics2["original_lufs"]
             else:
                 assert abs(metrics1["original_lufs"] - metrics2["original_lufs"]) < 0.1

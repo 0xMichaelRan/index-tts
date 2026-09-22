@@ -284,8 +284,9 @@ class TestConfigureQueues:
         with pytest.raises(ImportError, match="pika is required"):
             configure_queues("amqp://guest:guest@localhost:5672/")
 
-    def test_configure_queues_no_url(self):
+    def test_configure_queues_no_url(self, monkeypatch):
         """Test error when no URL provided."""
+        monkeypatch.delenv("RABBITMQ_URL", raising=False)
         with pytest.raises(ValueError, match="RabbitMQ URL not provided"):
             configure_queues()
 
