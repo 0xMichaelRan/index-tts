@@ -149,7 +149,12 @@ class TestRabbitMQWorkerConnection:
 
     @pytest.mark.parametrize(
         "queue_name",
-        ["tts_jobs_failed", "tts_results_failed", "vox_jobs_failed", "vox_results_failed"],
+        [
+            "tts_jobs_failed",
+            "tts_results_failed",
+            "vox_jobs_failed",
+            "vox_results_failed",
+        ],
     )
     def test_dlq_exists(self, channel, queue_name: str) -> None:
         """Dead-letter queues must exist (passive declare)."""
@@ -224,9 +229,7 @@ class TestRabbitMQWorkerConnection:
                 break
             else:
                 # Not ours — nack without requeue so it gets redelivered
-                channel.basic_nack(
-                    delivery_tag=method_frame.delivery_tag, requeue=True
-                )
+                channel.basic_nack(delivery_tag=method_frame.delivery_tag, requeue=True)
 
         assert received is not None, (
             "Test message was not received from tts_jobs within the retry window. "

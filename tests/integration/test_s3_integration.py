@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 import requests
 
-from services.storage.s3_config import S3Client, S3ConfigError
+from services.storage.s3_config import S3Client
 
 # ---------------------------------------------------------------------------
 # Guard — skip entire module when S3 is not configured
@@ -51,9 +51,7 @@ def tts_test_key() -> str:
 @pytest.fixture(scope="function")
 def tmp_text_file() -> str:
     """Temporary local text file with known content."""
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".txt", delete=False
-    ) as fh:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as fh:
         fh.write(f"integration-test-content-{uuid.uuid4()}")
         path = fh.name
     yield path
@@ -130,9 +128,7 @@ class TestS3TTSBucketRoundTrip:
             if os.path.exists(download_path):
                 os.remove(download_path)
 
-    def test_upload_with_metadata(
-        self, s3: S3Client, tmp_text_file: str
-    ) -> None:
+    def test_upload_with_metadata(self, s3: S3Client, tmp_text_file: str) -> None:
         """Metadata tags must survive the upload round-trip (head_object check).
 
         Uses the misc bucket (Cloudflare R2) because Filebase (TTS bucket) does
@@ -158,8 +154,6 @@ class TestS3TTSBucketRoundTrip:
                 boto_client.delete_object(Bucket=bucket_name, Key=misc_key)
             except Exception:
                 pass
-
-
 
     def test_presigned_url_is_reachable(
         self, s3: S3Client, tts_test_key: str, tmp_text_file: str

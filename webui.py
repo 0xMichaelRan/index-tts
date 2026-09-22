@@ -70,7 +70,10 @@ with open("tests/cases.jsonl", "r", encoding="utf-8") as f:
         example = json.loads(line)
         example_cases.append(
             [
-                os.path.join("tests", example.get("prompt_audio", "legacy_tests/sample_prompt.wav")),
+                os.path.join(
+                    "tests",
+                    example.get("prompt_audio", "legacy_tests/sample_prompt.wav"),
+                ),
                 example.get("text"),
                 ["普通推理", "批次推理"][example.get("infer_mode", 0)],
             ]

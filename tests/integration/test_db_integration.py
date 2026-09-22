@@ -135,9 +135,7 @@ class TestDatabaseSchema:
         ).fetchall()
         actual_columns = {row[0] for row in rows}
         missing = expected_columns - actual_columns
-        assert not missing, (
-            f"Missing columns in tts_synthesis_cache: {missing}"
-        )
+        assert not missing, f"Missing columns in tts_synthesis_cache: {missing}"
 
 
 # ---------------------------------------------------------------------------
@@ -148,9 +146,7 @@ class TestDatabaseSchema:
 @pytest.fixture(scope="function")
 def cache_audio_file() -> str:
     """Real temporary WAV-like file that satisfies store()'s FileNotFoundError guard."""
-    with tempfile.NamedTemporaryFile(
-        mode="wb", suffix=".wav", delete=False
-    ) as fh:
+    with tempfile.NamedTemporaryFile(mode="wb", suffix=".wav", delete=False) as fh:
         # Write a minimal WAV header so file_size_bytes > 0
         fh.write(b"RIFF\x24\x00\x00\x00WAVEfmt ")
         path = fh.name
@@ -201,9 +197,7 @@ class TestCacheServiceIntegration:
         result = cache_svc.lookup(unique_text, unique_voice)
         assert result is None
 
-    def test_store_and_lookup_hit(
-        self, cache_svc, unique_text, unique_voice
-    ) -> None:
+    def test_store_and_lookup_hit(self, cache_svc, unique_text, unique_voice) -> None:
         """store() followed by lookup() must return the same cache_key."""
         entry = cache_svc.store(
             text=unique_text,
@@ -221,9 +215,7 @@ class TestCacheServiceIntegration:
         assert hit is not None
         assert hit.cache_key == expected_key
 
-    def test_hit_count_increments(
-        self, cache_svc, unique_text, unique_voice
-    ) -> None:
+    def test_hit_count_increments(self, cache_svc, unique_text, unique_voice) -> None:
         """Each lookup() after store() must increment hit_count by 1."""
         cache_svc.store(
             text=unique_text,
@@ -252,7 +244,6 @@ class TestCacheServiceIntegration:
 
     def test_evict_old_entries(self, db, cache_svc, unique_text, unique_voice) -> None:
         """An entry backdated past max_age_days must be removed by evict_old_entries()."""
-        from app.models import TTSSynthesisCache
 
         entry = cache_svc.store(
             text=unique_text,
@@ -287,9 +278,7 @@ class TestCacheServiceIntegration:
         for key in ("total_entries", "total_size_mb"):
             assert key in stats, f"Missing key in cache stats: {key!r}"
 
-    def test_invalidate_voice_cache(
-        self, cache_svc, unique_voice
-    ) -> None:
+    def test_invalidate_voice_cache(self, cache_svc, unique_voice) -> None:
         """invalidate_voice_cache() must remove all entries sharing the same voice."""
         texts = [f"text {uuid.uuid4()}" for _ in range(2)]
         for t in texts:
