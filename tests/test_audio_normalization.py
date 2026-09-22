@@ -55,13 +55,18 @@ class TestNormalizeLoudness:
 
     @pytest.fixture
     def sample_audio_numpy(self):
-        """Create sample audio as numpy array (1 second at 24kHz)."""
+        """Create sample audio as numpy array (1 second at 24kHz) in int16 range.
+
+        normalize_loudness() expects audio in int16 range (~[-32767, 32767]) as
+        produced by the TTS engine, so fixtures must reflect that scale.
+        """
         sample_rate = 24000
         duration = 1.0
         frequency = 440.0  # A4 note
 
         t = np.linspace(0, duration, int(sample_rate * duration))
-        audio = np.sin(2 * np.pi * frequency * t).astype(np.float32) * 0.5
+        # Scale to int16 range (simulating actual TTS engine output)
+        audio = (np.sin(2 * np.pi * frequency * t).astype(np.float32) * 0.5) * 16000
 
         return audio, sample_rate
 
@@ -143,22 +148,31 @@ class TestNormalizeLoudness:
 
     def test_silent_audio_handling(self):
         """Test that very quiet/silent audio is handled gracefully."""
-        # Create nearly silent audio
+        # Create nearly silent audio (in int16 range but extremely quiet)
         sample_rate = 24000
         audio = np.random.randn(sample_rate) * 0.0001  # Very quiet noise
 
-        normalized, metrics = normalize_loudness(
-            audio=audio,
-            sample_rate=sample_rate,
-            target_lufs=-16.0,
-            enable_normalization=True,
-            verbose=False,
-        )
-
-        # Should skip normalization for silent audio
         if check_normalization_available():
+            # Expect a RuntimeWarning about silent audio before falling back
+            with pytest.warns(
+                RuntimeWarning, match="too quiet or silent|LUFS normalization failed"
+            ):
+                normalized, metrics = normalize_loudness(
+                    audio=audio,
+                    sample_rate=sample_rate,
+                    target_lufs=-16.0,
+                    enable_normalization=True,
+                    verbose=False,
+                )
             assert metrics["method"] in ["skipped_silent", "peak_fallback"]
         else:
+            normalized, metrics = normalize_loudness(
+                audio=audio,
+                sample_rate=sample_rate,
+                target_lufs=-16.0,
+                enable_normalization=True,
+                verbose=False,
+            )
             assert metrics["method"] == "peak_fallback"
 
     def test_int16_range_audio(self, sample_audio_numpy):
@@ -203,10 +217,10 @@ class TestNormalizeLoudness:
         sample_rate = 24000
         duration = 1.0
 
-        # Create stereo audio (2 channels)
+        # Create stereo audio (2 channels) in int16 range
         t = np.linspace(0, duration, int(sample_rate * duration))
-        left = np.sin(2 * np.pi * 440 * t).astype(np.float32) * 0.5
-        right = np.sin(2 * np.pi * 554.37 * t).astype(np.float32) * 0.5  # C#5
+        left = np.sin(2 * np.pi * 440 * t).astype(np.float32) * 0.5 * 16000
+        right = np.sin(2 * np.pi * 554.37 * t).astype(np.float32) * 0.5 * 16000  # C#5
 
         # Shape: (2, samples) or (samples, 2) - both should work
         audio_channels_first = np.stack([left, right])
@@ -265,11 +279,12 @@ class TestGetAudioLufs:
     """Test the get_audio_lufs helper function."""
 
     def test_measure_lufs_numpy(self):
-        """Test LUFS measurement with numpy array."""
+        """Test LUFS measurement with numpy array (values in [-1, 1] as pyloudnorm expects)."""
         sample_rate = 24000
         duration = 1.0
 
-        # Create test audio
+        # get_audio_lufs receives already-normalised float audio from the caller,
+        # so use [-1, 1] range (not int16 range) here.
         t = np.linspace(0, duration, int(sample_rate * duration))
         audio = np.sin(2 * np.pi * 440 * t).astype(np.float32) * 0.5
 
@@ -285,11 +300,11 @@ class TestGetAudioLufs:
 
     @pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not available")
     def test_measure_lufs_torch(self):
-        """Test LUFS measurement with torch tensor."""
+        """Test LUFS measurement with torch tensor (values in [-1, 1] as pyloudnorm expects)."""
         sample_rate = 24000
         duration = 1.0
 
-        # Create test audio
+        # get_audio_lufs receives already-normalised float audio, so use [-1, 1] range.
         t = np.linspace(0, duration, int(sample_rate * duration))
         audio = torch.from_numpy(np.sin(2 * np.pi * 440 * t).astype(np.float32) * 0.5)
 
@@ -355,21 +370,26 @@ class TestEdgeCases:
 
     @pytest.fixture
     def sample_audio_numpy(self):
-        """Create sample audio as numpy array (1 second at 24kHz)."""
+        """Create sample audio as numpy array (1 second at 24kHz) in int16 range.
+
+        normalize_loudness() expects audio in int16 range (~[-32767, 32767]) as
+        produced by the TTS engine, so fixtures must reflect that scale.
+        """
         sample_rate = 24000
         duration = 1.0
         frequency = 440.0  # A4 note
 
         t = np.linspace(0, duration, int(sample_rate * duration))
-        audio = np.sin(2 * np.pi * frequency * t).astype(np.float32) * 0.5
+        # Scale to int16 range (simulating actual TTS engine output)
+        audio = (np.sin(2 * np.pi * frequency * t).astype(np.float32) * 0.5) * 16000
 
         return audio, sample_rate
 
     def test_extremely_loud_audio(self):
-        """Test normalization on clipped/extremely loud audio."""
+        """Test normalization on clipped/extremely loud audio (int16 max amplitude)."""
         sample_rate = 24000
-        # Create clipped audio at max amplitude
-        audio = np.ones(sample_rate, dtype=np.float32)
+        # Create clipped audio at int16 max amplitude
+        audio = np.full(sample_rate, 32767.0, dtype=np.float32)
 
         normalized, metrics = normalize_loudness(
             audio=audio,
@@ -384,21 +404,35 @@ class TestEdgeCases:
         assert metrics["method"] in ["lufs_bs1770", "peak_fallback", "skipped_silent"]
 
     def test_very_short_audio(self):
-        """Test normalization on very short audio clips."""
+        """Test normalization on very short audio clips (< pyloudnorm block size)."""
         sample_rate = 24000
-        # 100ms of audio
-        audio = np.random.randn(int(sample_rate * 0.1)).astype(np.float32) * 0.5
+        # 100ms of audio — too short for BS.1770 400ms analysis block
+        audio = np.random.randn(int(sample_rate * 0.1)).astype(np.float32) * 0.5 * 16000
 
-        normalized, metrics = normalize_loudness(
-            audio=audio,
-            sample_rate=sample_rate,
-            target_lufs=-16.0,
-            enable_normalization=True,
-            verbose=False,
-        )
+        if check_normalization_available():
+            with pytest.warns(
+                RuntimeWarning,
+                match="Audio must have length greater than the block size",
+            ):
+                normalized, metrics = normalize_loudness(
+                    audio=audio,
+                    sample_rate=sample_rate,
+                    target_lufs=-16.0,
+                    enable_normalization=True,
+                    verbose=False,
+                )
+        else:
+            normalized, metrics = normalize_loudness(
+                audio=audio,
+                sample_rate=sample_rate,
+                target_lufs=-16.0,
+                enable_normalization=True,
+                verbose=False,
+            )
 
-        # Should handle without crashing
+        # Should handle without crashing and fall back to peak normalization
         assert isinstance(normalized, np.ndarray)
+        assert metrics["method"] in ["peak_fallback", "disabled"]
 
     def test_unsupported_audio_shape(self):
         """Test error handling for unsupported audio shapes."""
@@ -437,13 +471,18 @@ class TestConsistency:
 
     @pytest.fixture
     def sample_audio_numpy(self):
-        """Create sample audio as numpy array (1 second at 24kHz)."""
+        """Create sample audio as numpy array (1 second at 24kHz) in int16 range.
+
+        normalize_loudness() expects audio in int16 range (~[-32767, 32767]) as
+        produced by the TTS engine, so fixtures must reflect that scale.
+        """
         sample_rate = 24000
         duration = 1.0
         frequency = 440.0  # A4 note
 
         t = np.linspace(0, duration, int(sample_rate * duration))
-        audio = np.sin(2 * np.pi * frequency * t).astype(np.float32) * 0.5
+        # Scale to int16 range (simulating actual TTS engine output)
+        audio = (np.sin(2 * np.pi * frequency * t).astype(np.float32) * 0.5) * 16000
 
         return audio, sample_rate
 
