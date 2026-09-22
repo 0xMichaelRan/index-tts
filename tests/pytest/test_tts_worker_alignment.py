@@ -105,6 +105,7 @@ def pipeline_and_files(tmp_path):
     prompt_path = str(tmp_path / "prompt.wav")
     _make_wav(prompt_path)
     storage_manager_mock.download_audio_prompt = MagicMock(return_value=prompt_path)
+    storage_manager_mock.create_output_dir = MagicMock(return_value=str(tmp_path))
     storage_manager_mock.upload_audio = MagicMock(
         return_value="tts-audio/studio/test_job_001.mp3"
     )
@@ -114,8 +115,13 @@ def pipeline_and_files(tmp_path):
     storage_manager_mock.cleanup_local_files = MagicMock()
 
     # Setup TTS engine mock to return synthesised audio
-    tts_engine_mock.infer = MagicMock(return_value=wav_path)
-    tts_engine_mock.infer_fast = MagicMock(return_value=wav_path)
+    def _fake_infer(*a, output_path=None, **kw):
+        if output_path:
+            _make_wav(output_path)
+        return wav_path
+
+    tts_engine_mock.infer = MagicMock(side_effect=_fake_infer)
+    tts_engine_mock.infer_fast = MagicMock(side_effect=_fake_infer)
 
     # Setup alignment service mock
     alignment_service_mock.align_to_files = MagicMock(
@@ -333,7 +339,7 @@ class TestAlignmentFailure:
 
         result = pipeline.process_job(_default_job())
         assert result["status"] == "failed"
-        assert result["error_code"] == "ALIGNMENT_CIRCUIT_OPEN"
+        assert (result.get("errorCode") or result.get("error_code")) == "ALIGNMENT_CIRCUIT_OPEN"
 
     def test_alignment_value_error_fails_job_non_retryable(self, pipeline_and_files):
         pipeline, tts_mock, storage_mock, align_mock, *_ = pipeline_and_files

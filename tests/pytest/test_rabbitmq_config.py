@@ -65,7 +65,16 @@ class TestQueueConfiguration:
 
     def test_queue_configs_structure(self):
         """Test QUEUE_CONFIGS has all required queues."""
-        required_queues = ["tts_jobs", "tts_results", "tts_jobs_dlq", "tts_results_dlq"]
+        required_queues = [
+            "tts_jobs",
+            "tts_results",
+            "vox_jobs",
+            "vox_results",
+            "tts_jobs_failed",
+            "tts_results_failed",
+            "vox_jobs_failed",
+            "vox_results_failed",
+        ]
 
         for queue_name in required_queues:
             assert queue_name in QUEUE_CONFIGS
@@ -75,14 +84,14 @@ class TestQueueConfiguration:
 
     def test_main_queues_have_dlq_routing(self):
         """Test main queues are configured with dead-letter routing."""
-        main_queues = ["tts_jobs", "tts_results"]
+        main_queues = ["tts_jobs", "tts_results", "vox_jobs", "vox_results"]
 
         for queue_name in main_queues:
             config = QUEUE_CONFIGS[queue_name]
             args = config["arguments"]
 
             assert "x-dead-letter-exchange" in args
-            assert args["x-dead-letter-exchange"] == ""
+            assert args["x-dead-letter-exchange"] == f"{queue_name}.dlx"
             assert "x-dead-letter-routing-key" in args
 
     def test_tts_jobs_queue_configuration(self):
@@ -94,7 +103,7 @@ class TestQueueConfiguration:
         assert args["x-message-ttl"] == 86400000  # 24 hours
         assert args["x-max-length"] == 10000
         assert args["x-overflow"] == "reject-publish"
-        assert args["x-dead-letter-routing-key"] == "tts_jobs_dlq"
+        assert args["x-dead-letter-routing-key"] == "tts_jobs_failed"
 
     def test_tts_results_queue_configuration(self):
         """Test tts_results queue has correct configuration."""
@@ -104,11 +113,16 @@ class TestQueueConfiguration:
         assert config["durable"] is True
         assert args["x-message-ttl"] == 604800000  # 7 days
         assert args["x-max-length"] == 10000
-        assert args["x-dead-letter-routing-key"] == "tts_results_dlq"
+        assert args["x-dead-letter-routing-key"] == "tts_results_failed"
 
     def test_dlq_configuration(self):
         """Test dead-letter queues have correct configuration."""
-        dlqs = ["tts_jobs_dlq", "tts_results_dlq"]
+        dlqs = [
+            "tts_jobs_failed",
+            "tts_results_failed",
+            "vox_jobs_failed",
+            "vox_results_failed",
+        ]
 
         for queue_name in dlqs:
             config = QUEUE_CONFIGS[queue_name]
@@ -259,7 +273,7 @@ class TestConfigureQueues:
             configure_queues("amqp://guest:guest@localhost:5672/")
 
         # Verify all queues were declared
-        assert mock_channel.queue_declare.call_count == 4
+        assert mock_channel.queue_declare.call_count == len(QUEUE_CONFIGS)
 
         # Verify connection was closed
         mock_connection.close.assert_called_once()

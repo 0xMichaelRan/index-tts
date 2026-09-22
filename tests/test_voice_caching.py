@@ -5,11 +5,11 @@ This test verifies that the worker correctly reuses cached voice data
 when processing multiple jobs with the same audio prompt (S3 path).
 """
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
-from services.tts.tts_worker import IndexTTSWorker
+from services.tts.synthesis_pipeline import SynthesisPipeline
 
 
 class TestVoiceCaching:
@@ -25,19 +25,21 @@ class TestVoiceCaching:
         return mock_tts
 
     @pytest.fixture
-    def worker_with_mock_tts(self, mock_tts_engine):
-        """Create worker with mocked TTS engine."""
-        with patch("services.tts.tts_worker.create_tts_engine") as mock_create:
-            mock_create.return_value = mock_tts_engine
-            worker = IndexTTSWorker(
-                rabbitmq_url="amqp://guest:guest@localhost:5672/",
-            )
-            # Replace TTS engine with our mock
-            worker.tts = mock_tts_engine
-            yield worker
+    def pipeline_with_mock_tts(self, mock_tts_engine):
+        """Create SynthesisPipeline with mocked TTS engine configured for Linux fast inference."""
+        mock_storage = MagicMock()
+        mock_storage.create_output_dir.return_value = "/tmp/mock_out"
+        pipeline = SynthesisPipeline(
+            tts_engine=mock_tts_engine,
+            storage_manager=mock_storage,
+            cache_manager=MagicMock(enabled=False),
+            use_fast_inference=True,
+        )
+        pipeline.platform = "Linux"
+        return pipeline
 
     def test_first_job_loads_voice(
-        self, worker_with_mock_tts, mock_tts_engine, tmp_path
+        self, pipeline_with_mock_tts, mock_tts_engine, tmp_path
     ):
         """Test that first job with a voice loads and caches it."""
         # Arrange
@@ -47,13 +49,12 @@ class TestVoiceCaching:
         local_path.write_text("fake audio data")
 
         # Act
-        worker_with_mock_tts._synthesize_audio(
+        pipeline_with_mock_tts._synthesize_audio(
             job_id=job_id,
             text="Hello world",
             audio_prompt=str(local_path),
             audio_prompt_s3_path=s3_path,
             language="en",
-            ratio=1.0,
         )
 
         # Assert
@@ -63,7 +64,7 @@ class TestVoiceCaching:
         assert mock_tts_engine.cache_audio_prompt == s3_path
 
     def test_second_job_reuses_voice_cache(
-        self, worker_with_mock_tts, mock_tts_engine, tmp_path
+        self, pipeline_with_mock_tts, mock_tts_engine, tmp_path
     ):
         """Test that second job with same voice reuses cache."""
         # Arrange
@@ -78,13 +79,12 @@ class TestVoiceCaching:
         local_path_2.write_text("fake audio data")
 
         # Simulate first job
-        worker_with_mock_tts._synthesize_audio(
+        pipeline_with_mock_tts._synthesize_audio(
             job_id=job_id_1,
             text="Hello world",
             audio_prompt=str(local_path_1),
             audio_prompt_s3_path=s3_path,
             language="en",
-            ratio=1.0,
         )
 
         # Verify cache is set
@@ -94,13 +94,12 @@ class TestVoiceCaching:
         mock_tts_engine.infer_fast.reset_mock()
 
         # Act - second job with same S3 path but different local path
-        worker_with_mock_tts._synthesize_audio(
+        pipeline_with_mock_tts._synthesize_audio(
             job_id=job_id_2,
             text="Different text",
             audio_prompt=str(local_path_2),  # Different local path
             audio_prompt_s3_path=s3_path,  # Same S3 path
             language="en",
-            ratio=1.0,
         )
 
         # Assert
@@ -110,7 +109,7 @@ class TestVoiceCaching:
         assert mock_tts_engine.cache_audio_prompt == s3_path
 
     def test_different_voice_clears_cache(
-        self, worker_with_mock_tts, mock_tts_engine, tmp_path
+        self, pipeline_with_mock_tts, mock_tts_engine, tmp_path
     ):
         """Test that different voice clears cache."""
         # Arrange
@@ -126,24 +125,22 @@ class TestVoiceCaching:
         local_path_2.write_text("fake audio data 2")
 
         # First job
-        worker_with_mock_tts._synthesize_audio(
+        pipeline_with_mock_tts._synthesize_audio(
             job_id=job_id_1,
             text="Hello",
             audio_prompt=str(local_path_1),
             audio_prompt_s3_path=s3_path_1,
             language="en",
-            ratio=1.0,
         )
         assert mock_tts_engine.cache_audio_prompt == s3_path_1
 
         # Act - second job with different voice
-        worker_with_mock_tts._synthesize_audio(
+        pipeline_with_mock_tts._synthesize_audio(
             job_id=job_id_2,
             text="Hola",
             audio_prompt=str(local_path_2),
             audio_prompt_s3_path=s3_path_2,  # Different S3 path
             language="es",
-            ratio=1.0,
         )
 
         # Assert
@@ -151,7 +148,7 @@ class TestVoiceCaching:
         assert mock_tts_engine.cache_audio_prompt == s3_path_2
 
     def test_no_s3_path_disables_caching(
-        self, worker_with_mock_tts, mock_tts_engine, tmp_path
+        self, pipeline_with_mock_tts, mock_tts_engine, tmp_path
     ):
         """Test that missing S3 path disables caching."""
         # Arrange
@@ -160,20 +157,19 @@ class TestVoiceCaching:
         local_path.write_text("fake audio data")
 
         # Act - synthesize without S3 path
-        worker_with_mock_tts._synthesize_audio(
+        pipeline_with_mock_tts._synthesize_audio(
             job_id=job_id,
             text="Hello",
             audio_prompt=str(local_path),
             audio_prompt_s3_path=None,  # No S3 path
             language="en",
-            ratio=1.0,
         )
 
         # Assert
         # infer_fast should still be called
         assert mock_tts_engine.infer_fast.called
         # Cache should not be set (or cleared)
-        # Since we didn't set it, it should still be None from fixture
+        assert mock_tts_engine.cache_audio_prompt is None
 
 
 if __name__ == "__main__":

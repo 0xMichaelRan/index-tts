@@ -180,16 +180,18 @@ class TestLoadBuckets:
             registry = load_buckets(toml_file)
         assert "my-audio-bucket" not in registry
 
-    def test_missing_endpoint_skips_bucket(self, tmp_path):
+    def test_missing_endpoint_skips_bucket(self, tmp_path, monkeypatch):
         toml_file = make_toml_file(tmp_path, MINIMAL_TOML)
+        monkeypatch.delenv("S3_MISC_ENDPOINT_URL", raising=False)
         # Provide AUDIO creds only — MISC endpoint missing
         with patch.dict(os.environ, AUDIO_ENV, clear=False):
             registry = load_buckets(toml_file)
         assert "my-misc-bucket" not in registry
         assert "my-audio-bucket" in registry
 
-    def test_missing_access_key_skips_bucket(self, tmp_path):
+    def test_missing_access_key_skips_bucket(self, tmp_path, monkeypatch):
         toml_file = make_toml_file(tmp_path, MINIMAL_TOML)
+        monkeypatch.delenv("S3_MISC_ACCESS_KEY_ID", raising=False)
         env = {
             "S3_MISC_ENDPOINT_URL": "https://misc.example.com",
             "S3_MISC_SECRET_ACCESS_KEY": "misc-secret",

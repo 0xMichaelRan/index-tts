@@ -473,7 +473,12 @@ class TestConsistency:
         assert metrics1["method"] == metrics2["method"]
 
         if metrics1["original_lufs"] is not None:
-            assert abs(metrics1["original_lufs"] - metrics2["original_lufs"]) < 0.1
+            import math
+
+            if math.isinf(metrics1["original_lufs"]) or math.isinf(metrics2["original_lufs"]):
+                assert metrics1["original_lufs"] == metrics2["original_lufs"]
+            else:
+                assert abs(metrics1["original_lufs"] - metrics2["original_lufs"]) < 0.1
 
     def test_gain_application_correctness(self, sample_audio_numpy):
         """Test that gain is applied correctly."""

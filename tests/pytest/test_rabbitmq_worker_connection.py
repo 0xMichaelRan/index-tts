@@ -65,23 +65,23 @@ class TestRabbitMQWorkerConnection:
             connection.close()
 
     def test_tts_jobs_queue_exists(self, connection_params):
-        """Test that tts_jobs queue can be declared."""
+        """Test that tts_jobs queue exists."""
         connection = pika.BlockingConnection([connection_params])
         try:
             channel = connection.channel()
-            channel.queue_declare(queue="tts_jobs", durable=True, passive=False)
-            # If we get here, queue is ready
+            channel.queue_declare(queue="tts_jobs", passive=True)
+            # If we get here, queue exists
             assert True
         finally:
             connection.close()
 
     def test_tts_results_queue_exists(self, connection_params):
-        """Test that tts_results queue can be declared."""
+        """Test that tts_results queue exists."""
         connection = pika.BlockingConnection([connection_params])
         try:
             channel = connection.channel()
-            channel.queue_declare(queue="tts_results", durable=True, passive=False)
-            # If we get here, queue is ready
+            channel.queue_declare(queue="tts_results", passive=True)
+            # If we get here, queue exists
             assert True
         finally:
             connection.close()
