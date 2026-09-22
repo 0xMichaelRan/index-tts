@@ -15,7 +15,7 @@ conda activate index-tts
 Then you can run Python commands normally:
 
 ```bash
-python -m services.tts_worker
+python -m services.tts.tts_worker
 python -m pytest tests/pytest/test_tts_worker_core.py
 ```
 
@@ -47,12 +47,12 @@ Never use:
 
 ### Key Components
 
-- **`services/tts_worker.py`** - Main worker process (RabbitMQ consumer, orchestration)
-- **`services/circuit_breaker.py`** - Circuit breaker pattern for resilience (S3, TTS)
-- **`services/s3_config.py`** - Registry-backed S3 client (`config/buckets.toml`)
-- **`services/s3_registry.py`** - Unified S3 bucket registry (definitions & credential resolution)
-- **`services/idempotent_upload.py`** - Idempotent upload with integrity verification
-- **`services/logging_config.py`** - Structured logging with visual hierarchy
+- **`services/tts/tts_worker.py`** - Main worker process (RabbitMQ consumer, orchestration)
+- **`services/common/circuit_breaker.py`** - Circuit breaker pattern for resilience (S3, TTS)
+- **`services/storage/s3_config.py`** - Registry-backed S3 client (`config/buckets.toml`)
+- **`services/storage/s3_registry.py`** - Unified S3 bucket registry (definitions & credential resolution)
+- **`services/storage/idempotent_upload.py`** - Idempotent upload with integrity verification
+- **`services/common/logging_config.py`** - Structured logging with visual hierarchy
 - **`indextts/`** - TTS engine (BigVGAN vocoder, FastSpeech2 acoustic model)
 
 ### S3 Configuration
@@ -407,7 +407,7 @@ Structured logging is configured in `services/logging_config.py`:
 Enable file logging:
 
 ```python
-from services.logging_config import configure_logging
+from services.common.logging_config import configure_logging
 configure_logging(use_file=True, file_path="logs/worker.log")
 ```
 
@@ -468,7 +468,7 @@ uv run ruff check --fix .
 Prevents cascading failures when S3 or TTS services are down:
 
 ```python
-from services.circuit_breaker import get_circuit_breaker, CircuitBreakerError
+from services.common.circuit_breaker import get_circuit_breaker, CircuitBreakerError
 
 breaker = get_circuit_breaker("S3Download", failure_threshold=5, reset_timeout=60)
 
@@ -482,7 +482,7 @@ except CircuitBreakerError:
 ### S3 Client Usage
 
 ```python
-from services.s3_config import S3Client
+from services.storage.s3_config import S3Client
 
 client = S3Client()
 
@@ -522,7 +522,7 @@ url = client.generate_presigned_url(
 Prevents duplicate uploads if job is retried:
 
 ```python
-from services.idempotent_upload import IdempotentUploader
+from services.storage.idempotent_upload import IdempotentUploader
 
 uploader = IdempotentUploader(s3_client)
 
@@ -539,7 +539,7 @@ s3_path = uploader.upload_with_retry(
 Use structured logging methods:
 
 ```python
-from services.logging_config import get_logger
+from services.common.logging_config import get_logger
 
 logger = get_logger(__name__)
 
@@ -664,10 +664,10 @@ channel.queue_declare(
 **Setup Command**:
 ```bash
 # Configure all queues (idempotent, can run multiple times)
-python -m services.rabbitmq_config
+python -m services.messaging.rabbitmq_config
 
 # Or programmatically:
-from services.rabbitmq_config import configure_queues
+from services.messaging.rabbitmq_config import configure_queues
 configure_queues(rabbitmq_url="amqp://user:pass@host:5672/vhost")
 ```
 
@@ -706,7 +706,7 @@ python scripts/fix_queue_dlx_migration.py
 
 # Or manually:
 # 1. Delete old queues via RabbitMQ management UI
-# 2. Run: python -m services.rabbitmq_config
+# 2. Run: python -m services.messaging.rabbitmq_config
 ```
 
 **See**: `docs/QUEUE_DLX_MIGRATION.md` for detailed migration guide

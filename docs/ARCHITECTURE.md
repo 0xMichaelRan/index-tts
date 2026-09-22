@@ -69,14 +69,37 @@ indextts/
 └── utils/                         Utilities
     └── audio_normalization.py     LUFS loudness normalization
 
-services/                          Worker services
-├── tts_worker.py                  Main RabbitMQ worker
-├── alignment.py                   Forced alignment (stable-whisper)
-├── circuit_breaker.py             Circuit breaker pattern
-├── s3_config.py                   Registry-backed S3 client
-├── s3_registry.py                 S3 bucket registry (config/buckets.toml)
-├── idempotent_upload.py           Idempotent S3 upload
-└── logging_config.py              Structured logging
+services/                          Worker services (domain subpackages)
+├── common/                        Shared infrastructure
+│   ├── circuit_breaker.py         Circuit breaker pattern
+│   ├── job_utils.py               Shared job helpers
+│   ├── logging_config.py          Structured logging
+│   └── worker_config.py           Worker environment config
+├── messaging/                     RabbitMQ lifecycle & DLX
+│   ├── dlq_monitor.py             Dead-letter queue monitor
+│   ├── rabbitmq_config.py         Queue declaration & DLX setup
+│   └── rabbitmq_manager.py        Connection & consumer lifecycle
+├── storage/                       S3 & local file I/O
+│   ├── idempotent_upload.py       Idempotent S3 upload
+│   ├── s3_config.py               Registry-backed S3 client
+│   ├── s3_registry.py             S3 bucket registry (config/buckets.toml)
+│   └── storage_manager.py         High-level storage operations
+├── tts/                           TTS audio synthesis domain
+│   ├── alignment.py               Forced alignment (stable-whisper)
+│   ├── audio_processor.py         Audio duration & time-stretching
+│   ├── cache_manager.py           Synthesis cache (DB-backed)
+│   ├── synthesis_pipeline.py      Synthesis orchestrator
+│   ├── text_metrics.py            Token / character metrics
+│   ├── text_sanitizer.py          Text pre-processing
+│   ├── tts_api.py                 FastAPI HTTP entrypoint
+│   ├── tts_job_service.py         Job-level TTS service
+│   └── tts_worker.py              Main RabbitMQ worker
+└── vox/                           Vox video rendering domain
+    ├── aligner.py                 ScriptGuidedAligner
+    ├── pipeline.py                VoxRenderPipeline orchestrator
+    ├── subtitles.py               ASS subtitle pipeline
+    ├── video_utils.py             FFmpeg helpers
+    └── vox_render_consumer.py     Vox RabbitMQ consumer
 
 app/                               Database & caching
 ├── cache_service.py               TTS synthesis cache
