@@ -23,6 +23,7 @@ uv pip install -e ".[dev]"     # Install development tools
 uv run python worker.py       # Start main 24/7 IndexTTS & Vox worker
 uv run python monitor.py      # Monitor queue lengths and circuit breakers
 uv run python webui.py        # Run Gradio Web UI on port 7860
+uv run python api.py          # Run unified FastAPI REST server on port 8848
 ```
 
 ### Testing
