@@ -109,6 +109,7 @@ def _build_karaoke_text(
     words: list[dict],
     win_start: float,
     win_end: float,
+    sentence_start_indices: set[int] | None = None,
 ) -> str:
     """
     Build an ASS karaoke text string with ``\\k`` timing tags.
@@ -117,6 +118,11 @@ def _build_karaoke_text(
     highlights are applied sequentially from the subtitle start time.
     The total centiseconds of all ``\\k`` spans equals
     ``(win_end - win_start) * 100`` so playback never drifts.
+
+    If ``sentence_start_indices`` is provided, an ASS hard-newline (``\\N``)
+    is inserted before each word whose index (within this beat's word list)
+    is a sentence boundary — producing sentence-by-sentence line separation
+    rather than a single continuous word stream.
     """
     win_start_cs = round(win_start * 100)
     win_end_cs = round(win_end * 100)
@@ -138,11 +144,17 @@ def _build_karaoke_text(
             # Empty-looking span — advances the karaoke timer without visible text
             parts.append(f"{{\\k{gap_cs}}} ")
 
+        # Sentence boundary: insert ASS hard-newline before the first word of
+        # every new sentence (skipping index 0 — start of the whole beat).
+        newline_prefix = ""
+        if sentence_start_indices and i in sentence_start_indices and i > 0:
+            newline_prefix = "\\N"
+
         # Word highlight duration (minimum 1 cs to avoid ASS parser issues)
         dur_cs = max(1, word_end_cs - word_start_cs)
         # Add space separator between words (omit after last word)
         space = " " if i < len(words) - 1 else ""
-        parts.append(f"{{\\k{dur_cs}}}{word_text}{space}")
+        parts.append(f"{newline_prefix}{{\\k{dur_cs}}}{word_text}{space}")
         current_cs = word_end_cs
 
     # Trailing silence — fills the remainder of the window
@@ -165,12 +177,22 @@ def _build_ass_subtitles(
     cjk_sc_font_name: str = "Noto Sans CJK SC",
     cjk_tc_font_name: str = "Noto Sans CJK TC",
     use_tc: bool = False,
+    segments: list[dict] | None = None,
 ) -> str:
     """
     Generate an ASS subtitle file with per-word karaoke timing.
 
-    One subtitle ``Dialogue`` line is written per beat window.  Each line
-    uses ``\\k`` tags so the spoken word is rendered in
+    When alignment ``segments`` are provided (the normal case), one or more
+    ``Dialogue`` lines are emitted **per sentence** (segment).  A long sentence
+    whose word count exceeds ``MAX_WORDS_PER_PAGE`` is split across consecutive
+    ``Dialogue`` lines (pages), but words from **different** sentences are never
+    combined into the same line.  Time bounds for each page come directly from
+    the word-level timestamps inside the segment.
+
+    When no segment data is available (fallback), one ``Dialogue`` line is
+    written per beat window, replicating the original behaviour.
+
+    Each ``Dialogue`` line uses ``\\k`` tags so the spoken word is rendered in
     ``PrimaryColour`` (white) while unspoken words use ``SecondaryColour``
     (grey), producing a karaoke-style highlight effect.
 
@@ -211,9 +233,6 @@ def _build_ass_subtitles(
     font_size = 68 if is_portrait else 52
     margin_v = 130 if is_portrait else 80
     margin_h = 40
-
-    # Assign words to beats (replicates ScriptGuidedAligner token slicing)
-    word_groups = _group_words_by_beats(words, beat_narrations)
 
     # --- ASS header ---
     header_lines: list[str] = [
@@ -256,21 +275,71 @@ def _build_ass_subtitles(
     ]
 
     dialogue_lines: list[str] = []
-    for k, (win_start, win_end) in enumerate(windows):
-        beat_words = word_groups[k] if k < len(word_groups) else []
-        narration = beat_narrations[k] if k < len(beat_narrations) else ""
 
-        if beat_words:
-            text = _build_karaoke_text(beat_words, win_start, win_end)
-        else:
-            # Fallback: display plain narration text (no per-word timing)
-            text = narration.strip()
+    if segments:
+        # -------------------------------------------------------------------
+        # Sentence-aware mode: emit one Dialogue block per alignment segment
+        # (sentence).  A long sentence is split into multiple consecutive
+        # pages, each bounded by its own word timestamps.  Words from
+        # different sentences are NEVER merged into the same Dialogue line.
+        # -------------------------------------------------------------------
 
-        start_str = _sec_to_ass_time(win_start)
-        end_str = _sec_to_ass_time(win_end)
-        dialogue_lines.append(
-            f"Dialogue: 0,{start_str},{end_str},Default,,0,0,0,,{text}"
-        )
+        # Maximum words shown on a single caption page.  Keeps each page
+        # readable; adjust as needed for your font size / aspect ratio.
+        MAX_WORDS_PER_PAGE = 8
+
+        for seg in segments:
+            seg_words: list[dict] = seg.get("words", [])
+            if not seg_words:
+                continue
+
+            # Split this sentence's words into pages of at most MAX_WORDS_PER_PAGE
+            pages: list[list[dict]] = [
+                seg_words[i : i + MAX_WORDS_PER_PAGE]
+                for i in range(0, len(seg_words), MAX_WORDS_PER_PAGE)
+            ]
+
+            for page_words in pages:
+                if not page_words:
+                    continue
+
+                # Time bounds come directly from word timestamps within the page.
+                page_start = float(page_words[0].get("start", 0.0))
+                page_end = float(page_words[-1].get("end", page_start))
+
+                # Guard: end must be strictly after start
+                if page_end <= page_start:
+                    page_end = page_start + 0.1
+
+                text = _build_karaoke_text(page_words, page_start, page_end)
+                start_str = _sec_to_ass_time(page_start)
+                end_str = _sec_to_ass_time(page_end)
+                dialogue_lines.append(
+                    f"Dialogue: 0,{start_str},{end_str},Default,,0,0,0,,{text}"
+                )
+
+    else:
+        # -------------------------------------------------------------------
+        # Fallback (no segment data): one Dialogue line per beat window,
+        # identical to the original behaviour.
+        # -------------------------------------------------------------------
+        word_groups = _group_words_by_beats(words, beat_narrations)
+
+        for k, (win_start, win_end) in enumerate(windows):
+            beat_words = word_groups[k] if k < len(word_groups) else []
+            narration = beat_narrations[k] if k < len(beat_narrations) else ""
+
+            if beat_words:
+                text = _build_karaoke_text(beat_words, win_start, win_end)
+            else:
+                # Fallback: display plain narration text (no per-word timing)
+                text = narration.strip()
+
+            start_str = _sec_to_ass_time(win_start)
+            end_str = _sec_to_ass_time(win_end)
+            dialogue_lines.append(
+                f"Dialogue: 0,{start_str},{end_str},Default,,0,0,0,,{text}"
+            )
 
     content = "\n".join(header_lines + dialogue_lines) + "\n"
     with open(output_path, "w", encoding="utf-8-sig") as fh:

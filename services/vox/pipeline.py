@@ -186,6 +186,9 @@ class VoxRenderPipeline:
                     f"[VOX {job_id}] Alignment JSON has no 'words' — "
                     "cannot perform script-guided alignment"
                 )
+            # Sentence-group data from stable-whisper; used by _build_ass_subtitles
+            # to insert \N newlines between sentences within each beat window.
+            alignment_segments: list[dict] = alignment_data.get("segments", [])
 
             try:
                 total_audio_duration = _get_video_duration(
@@ -228,6 +231,7 @@ class VoxRenderPipeline:
                     width=width,
                     height=height,
                     use_tc=use_tc,
+                    segments=alignment_segments,
                 )
                 logger.info(
                     f"[VOX {job_id}] ASS subtitles built: "

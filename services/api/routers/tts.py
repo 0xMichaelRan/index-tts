@@ -39,7 +39,9 @@ async def _execute_direct_tts(
     if sys_plat == "Darwin":
         output_filename = f"{timestamp}_macos_tts.wav"
         output_path = os.path.join(output_dir, output_filename)
-        logger.info(f"Direct macOS TTS: synthesizing to {output_path} (ratio: {effective_ratio})")
+        logger.info(
+            f"Direct macOS TTS: synthesizing to {output_path} (ratio: {effective_ratio})"
+        )
         tts_engine.infer(
             audio_prompt=None,
             text=text,
@@ -62,7 +64,9 @@ async def _execute_direct_tts(
             shutil.copyfileobj(audio_prompt.file, temp_prompt)
 
         try:
-            logger.info(f"Direct GPU TTS: synthesizing to {output_path} (ratio: {effective_ratio})")
+            logger.info(
+                f"Direct GPU TTS: synthesizing to {output_path} (ratio: {effective_ratio})"
+            )
             if hasattr(tts_engine, "infer_fast"):
                 tts_engine.infer_fast(
                     audio_prompt=temp_prompt_path,
@@ -127,7 +131,9 @@ async def synthesize(
 @router.post("/direct", summary="Direct TTS audio synthesis")
 async def direct(
     text: str = Form(..., description="Text to synthesize"),
-    audio_prompt: Optional[UploadFile] = File(None, description="Reference audio file for voice cloning"),
+    audio_prompt: Optional[UploadFile] = File(
+        None, description="Reference audio file for voice cloning"
+    ),
     speed_ratio: float = Form(1.0, description="Speech rate multiplier"),
     ratio: Optional[float] = Form(None, description="Legacy alias for speed_ratio"),
     tts_engine: Any = Depends(get_tts_engine),
@@ -144,7 +150,9 @@ async def direct(
 async def legacy_infer(
     response: Response,
     text: str = Form(..., description="Text to synthesize"),
-    audio_prompt: Optional[UploadFile] = File(None, description="Reference audio file for voice cloning"),
+    audio_prompt: Optional[UploadFile] = File(
+        None, description="Reference audio file for voice cloning"
+    ),
     ratio: float = Form(1.0, description="Speech rate multiplier"),
     tts_engine: Any = Depends(get_tts_engine),
 ):
@@ -156,7 +164,9 @@ async def legacy_infer(
     response.headers["Deprecation-Warning"] = (
         "/infer/ is deprecated; use /api/v1/tts/direct instead"
     )
-    file_response = await _execute_direct_tts(text, audio_prompt, 1.0, ratio, tts_engine)
+    file_response = await _execute_direct_tts(
+        text, audio_prompt, 1.0, ratio, tts_engine
+    )
     file_response.headers["Deprecation-Warning"] = (
         "/infer/ is deprecated; use /api/v1/tts/direct instead"
     )

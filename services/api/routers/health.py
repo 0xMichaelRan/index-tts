@@ -13,9 +13,7 @@ async def root():
     """Return API metadata and registered pipeline routes."""
     sys_plat = platform.system()
     engine_desc = (
-        "macOS AVFoundation TTS"
-        if sys_plat == "Darwin"
-        else "IndexTTS GPU Inference"
+        "macOS AVFoundation TTS" if sys_plat == "Darwin" else "IndexTTS GPU Inference"
     )
     return {
         "name": "IndexTTS Unified Media Worker API",
@@ -43,8 +41,6 @@ async def health(s3_connected: bool = Depends(get_s3_status)):
         "status": "healthy" if s3_connected else "degraded",
         "platform": sys_plat,
         "engine": engine_name,
-        "s3": {
-            "status": "connected" if s3_connected else "unavailable"
-        },
+        "s3": {"status": "connected" if s3_connected else "unavailable"},
         "pipelines": ["tts", "vox"],
     }

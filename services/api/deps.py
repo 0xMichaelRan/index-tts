@@ -107,7 +107,9 @@ def get_cache_manager() -> CacheManager:
             else:
                 _cache_manager = CacheManager(cache_dir=config.cache_dir)
         except Exception as e:
-            logger.warning(f"Error loading WorkerConfig for cache: {e}, using default CacheManager")
+            logger.warning(
+                f"Error loading WorkerConfig for cache: {e}, using default CacheManager"
+            )
             _cache_manager = CacheManager(cache_dir="outputs/cache")
     return _cache_manager
 
