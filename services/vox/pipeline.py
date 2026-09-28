@@ -219,16 +219,21 @@ class VoxRenderPipeline:
 
             # 3b. Build ASS subtitle file (word-level karaoke)
             burn_subtitles: bool = bool(job_data.get("burnSubtitles", True))
-            caption_style: dict = job_data.get("captionStyle") or {}
-            font_name: str | None = caption_style.get("fontName")
-            raw_font_size = caption_style.get("fontSize")
+            # Caption style: oracle-backend nests these under "captionStyle";
+            # direct HTTP API callers may also pass them as top-level keys.
+            # Nested captionStyle takes precedence; top-level keys are fallback.
+            _caption_style: dict = job_data.get("captionStyle") or {}
+            font_name: str | None = _caption_style.get("fontName") or job_data.get(
+                "fontName"
+            )
+            _raw_fs = _caption_style.get("fontSize") or job_data.get("fontSize")
             font_size: int | None = None
-            if raw_font_size is not None:
+            if _raw_fs is not None:
                 try:
-                    font_size = int(raw_font_size)
+                    font_size = int(_raw_fs)
                 except (ValueError, TypeError):
                     logger.warning(
-                        f"[VOX {job_id}] Invalid fontSize: {raw_font_size!r}, using default"
+                        f"[VOX {job_id}] Invalid fontSize: {_raw_fs!r}, using default"
                     )
 
             ass_path: str | None = None
