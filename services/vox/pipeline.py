@@ -102,6 +102,8 @@ class VoxRenderPipeline:
             clipS3Keys  (ordered list of clip S3 keys),
             beatNarrations (ordered list of narration strings),
             outputS3Key,
+            burnSubtitles (optional, bool),
+            captionStyle (optional, dict):  { fontName?: str, fontSize?: int }
             createdAt
 
         Returns:
@@ -217,6 +219,18 @@ class VoxRenderPipeline:
 
             # 3b. Build ASS subtitle file (word-level karaoke)
             burn_subtitles: bool = bool(job_data.get("burnSubtitles", True))
+            caption_style: dict = job_data.get("captionStyle") or {}
+            font_name: str | None = caption_style.get("fontName")
+            raw_font_size = caption_style.get("fontSize")
+            font_size: int | None = None
+            if raw_font_size is not None:
+                try:
+                    font_size = int(raw_font_size)
+                except (ValueError, TypeError):
+                    logger.warning(
+                        f"[VOX {job_id}] Invalid fontSize: {raw_font_size!r}, using default"
+                    )
+
             ass_path: str | None = None
             if burn_subtitles:
                 ass_path = os.path.join(work_dir, "subtitles.ass")
@@ -230,13 +244,16 @@ class VoxRenderPipeline:
                     aspect_ratio=aspect_ratio,
                     width=width,
                     height=height,
+                    font_name=font_name,
+                    font_size=font_size,
                     use_tc=use_tc,
                     segments=alignment_segments,
                 )
                 logger.info(
                     f"[VOX {job_id}] ASS subtitles built: "
-                    f"{len(windows)} lines, lang={language}, "
-                    f"font={'TC' if use_tc else 'SC' if _has_cjk_chars(' '.join(beat_narrations)) else 'Inter'}"
+                    f"lang={language}, "
+                    f"font={font_name or ('TC' if use_tc else 'SC' if _has_cjk_chars(' '.join(beat_narrations)) else 'Inter')}, "
+                    f"size={font_size or ('68 (portrait)' if aspect_ratio.lower().replace(':', 'x') in ('9x16',) else '52 (landscape)')}"
                 )
 
             # 4. Adapt each clip to its window

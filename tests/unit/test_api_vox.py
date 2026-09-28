@@ -42,6 +42,10 @@ class TestVoxRenderEndpoint:
             "projectId": "proj-abc",
             "language": "en",
             "burnSubtitles": True,
+            "captionStyle": {
+                "fontName": "CustomFont",
+                "fontSize": 48,
+            },
         }
         response = client.post("/api/v1/vox/render", json=payload)
         assert response.status_code == 200
@@ -61,6 +65,9 @@ class TestVoxRenderEndpoint:
         assert len(called_args["clipS3Keys"]) == 2
         assert len(called_args["beatNarrations"]) == 2
         assert called_args["outputS3Key"] == "outputs/videos/vox-job-123.mp4"
+        called_style = called_args["captionStyle"]
+        assert called_style["fontName"] == "CustomFont"
+        assert called_style["fontSize"] == 48
 
     def test_vox_render_pipeline_failure(self, client):
         mock_pipeline = MagicMock()

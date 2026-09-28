@@ -173,7 +173,8 @@ def _build_ass_subtitles(
     aspect_ratio: str,
     width: int,
     height: int,
-    font_name: str = "Inter",
+    font_name: str | None = None,
+    font_size: int | None = None,
     cjk_sc_font_name: str = "Noto Sans CJK SC",
     cjk_tc_font_name: str = "Noto Sans CJK TC",
     use_tc: bool = False,
@@ -196,10 +197,11 @@ def _build_ass_subtitles(
     ``PrimaryColour`` (white) while unspoken words use ``SecondaryColour``
     (grey), producing a karaoke-style highlight effect.
 
-    Font selection is automatic:
-    - CJK Traditional (``use_tc=True``) → ``cjk_tc_font_name`` (Noto Sans CJK TC)
-    - CJK Simplified                    → ``cjk_sc_font_name`` (Noto Sans CJK SC)
-    - Latin / other                     → ``font_name``           (Inter)
+    Font selection is automatic if font_name is not provided:
+    - Custom override (if ``font_name`` is given) → ``font_name``
+    - CJK Traditional (``use_tc=True``)           → ``cjk_tc_font_name`` (Noto Sans CJK TC)
+    - CJK Simplified                               → ``cjk_sc_font_name`` (Noto Sans CJK SC)
+    - Latin / other                                → ``"Inter"``
 
     The font names must match the ``Family`` field embedded in the TTF files
     supplied via the ``fontsdir`` option of the FFmpeg ``subtitles=`` filter.
@@ -210,27 +212,35 @@ def _build_ass_subtitles(
         windows: Per-beat ``(start_sec, end_sec)`` tuples from ScriptGuidedAligner.
         beat_narrations: Ordered narration strings, one per beat.
         output_path: Destination path for the ``.ass`` file.
-        aspect_ratio: ``"9x16"`` or ``"16x9"`` — controls font size and margin.
+        aspect_ratio: ``"9x16"`` or ``"16x9"`` — controls default font size and margin.
         width: Output video width in pixels.
         height: Output video height in pixels.
-        font_name: Latin font family name (embedded in Inter TTF).
+        font_name: Subtitle font family name. Overrides automatic font selection if provided.
+        font_size: Subtitle font size in points. Overrides aspect_ratio defaults if provided.
         cjk_sc_font_name: Simplified Chinese font family name.
         cjk_tc_font_name: Traditional Chinese font family name.
         use_tc: If True, select the TC font for CJK content.
+        segments: Optional segment list from alignment JSON for sentence separation.
 
     Returns:
         ``output_path`` (the written ASS file).
     """
     all_text = " ".join(beat_narrations)
     use_cjk = _has_cjk_chars(all_text)
-    if use_cjk:
+    if font_name:
+        selected_font = font_name
+    elif use_cjk:
         selected_font = cjk_tc_font_name if use_tc else cjk_sc_font_name
     else:
-        selected_font = font_name
+        selected_font = "Inter"
 
     # Portrait (9:16) uses larger text and a wider vertical margin
     is_portrait = aspect_ratio.lower().replace(":", "x") in ("9x16",)
-    font_size = 68 if is_portrait else 52
+    resolved_font_size = (
+        int(font_size)
+        if font_size is not None and font_size > 0
+        else (68 if is_portrait else 52)
+    )
     margin_v = 130 if is_portrait else 80
     margin_h = 40
 
@@ -259,7 +269,7 @@ def _build_ass_subtitles(
         #   BorderStyle 1 = outline + shadow
         #   Alignment 2   = bottom-center
         (
-            f"Style: Default,{selected_font},{font_size},"
+            f"Style: Default,{selected_font},{resolved_font_size},"
             "&H00FFFFFF,&H00888888,&H00000000,&HA0000000,"
             "-1,0,0,0,"
             f"100,100,0,0,"

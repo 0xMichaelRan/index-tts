@@ -168,3 +168,30 @@ class TestBuildAssSubtitles:
             assert "Style: Default,Noto Sans CJK SC" in content
             # Portrait font size is 68
             assert ",68," in content
+
+    def test_ass_custom_font_name_and_size(self):
+        words = [
+            {"word": "Custom", "start": 0.0, "end": 1.0},
+            {"word": "Font", "start": 1.0, "end": 2.0},
+        ]
+        windows = [(0.0, 2.0)]
+        beat_narrations = ["Custom Font"]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out_file = os.path.join(tmpdir, "test_custom_font.ass")
+            _build_ass_subtitles(
+                words=words,
+                windows=windows,
+                beat_narrations=beat_narrations,
+                output_path=out_file,
+                aspect_ratio="16x9",
+                width=1920,
+                height=1080,
+                font_name="Montserrat",
+                font_size=42,
+            )
+
+            with open(out_file, "r", encoding="utf-8-sig") as f:
+                content = f.read()
+
+            assert "Style: Default,Montserrat,42," in content

@@ -4,6 +4,24 @@ from typing import Any, Optional
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
+class CaptionStyleConfig(BaseModel):
+    """Optional caption styling overrides for ASS subtitle generation."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    font_name: Optional[str] = Field(
+        None,
+        alias="fontName",
+        description="Font family name (e.g. 'Inter', 'Noto Sans CJK SC'). Overrides auto-selection.",
+    )
+    font_size: Optional[int] = Field(
+        None,
+        alias="fontSize",
+        ge=1,
+        description="Font size in points (e.g. 52, 68). Overrides aspect-ratio defaults.",
+    )
+
+
 class VoxJobRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -41,6 +59,11 @@ class VoxJobRequest(BaseModel):
         True,
         alias="burnSubtitles",
         description="Whether to burn ASS subtitles into video",
+    )
+    caption_style: Optional[CaptionStyleConfig] = Field(
+        None,
+        alias="captionStyle",
+        description="Optional caption styling overrides (fontName, fontSize).",
     )
     created_at: Optional[str] = Field(None, alias="createdAt")
 
