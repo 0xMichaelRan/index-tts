@@ -192,12 +192,11 @@ python -m services.rabbitmq_config "amqp://guest:guest@localhost:5672/"
 from services.rabbitmq_config import configure_queues
 
 # Configure all queues
-configure_queues(
-    rabbitmq_url="amqp://guest:guest@localhost:5672/"
-)
+configure_queues(rabbitmq_url="amqp://guest:guest@localhost:5672/")
 
 # Or use environment variable
 import os
+
 os.environ["RABBITMQ_URL"] = "amqp://guest:guest@localhost:5672/"
 configure_queues()
 ```
@@ -417,10 +416,8 @@ QUEUE_CONFIGS = {
             "x-message-ttl": 86400000,  # 24 hours
             "x-max-length": 10000,
             "x-overflow": "reject-publish",
-            
             # Optional: Add priority support
             "x-max-priority": 10,
-            
             # Optional: Add lazy queues for disk storage
             "x-queue-mode": "lazy",
         },

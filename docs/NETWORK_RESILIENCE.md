@@ -95,8 +95,8 @@ No configuration changes required. The reconnection behavior is automatic.
 If you need to adjust reconnection behavior, modify these instance variables in `__init__`:
 
 ```python
-self._reconnect_delay = 5          # Initial delay (seconds)
-self._max_reconnect_delay = 300    # Maximum delay (seconds)
+self._reconnect_delay = 5  # Initial delay (seconds)
+self._max_reconnect_delay = 300  # Maximum delay (seconds)
 ```
 
 ## Benefits

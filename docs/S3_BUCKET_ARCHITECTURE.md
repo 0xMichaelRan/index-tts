@@ -204,14 +204,17 @@ S3_11LAB_SECRET_ACCESS_KEY=<secret_key>
 from app.s3.registry import get_bucket, get_bucket_by_type
 
 # 1. Retrieve bucket configuration
-misc_bucket = get_bucket("misc")          # By logical type or bucket_name
-tts_bucket = get_bucket_by_type("tts")     # Resolves klatu-tts
-lab_bucket = get_bucket_by_type("11lab")   # Resolves klatu-11lab
-audio_bucket = get_bucket_by_type("audio") # Resolves klatu-audio
+misc_bucket = get_bucket("misc")  # By logical type or bucket_name
+tts_bucket = get_bucket_by_type("tts")  # Resolves klatu-tts
+lab_bucket = get_bucket_by_type("11lab")  # Resolves klatu-11lab
+audio_bucket = get_bucket_by_type("audio")  # Resolves klatu-audio
 
 # 2. Generating presigned URL for TTS results (read-only from klatu-tts)
 from app.tts.service import generate_tts_audio_url
-url = await generate_tts_audio_url(audio_s3_path="studio/20260902/job123/en_r10_prod.mp3")
+
+url = await generate_tts_audio_url(
+    audio_s3_path="studio/20260902/job123/en_r10_prod.mp3"
+)
 
 # 3. Uploading user ElevenLabs track (writes to klatu-11lab)
 # app/project/router/assets.py handles this via ELEVENLABS_BUCKET_TYPE = "11lab"
@@ -227,22 +230,19 @@ storage = StorageManager()
 
 # 1. Download voice reference sample (reads from audio bucket: klatu-audio)
 local_prompt = storage.download_audio_prompt(
-    job_id=job_id,
-    audio_prompt_path="audio-prompts/voice_01.wav"
+    job_id=job_id, audio_prompt_path="audio-prompts/voice_01.wav"
 )
 
 # 2. Upload synthesized audio (writes to tts bucket: klatu-tts)
 s3_audio_path = storage.upload_audio(
     job_id=job_id,
     local_path="/tmp/output.mp3",
-    remote_path=f"studio/{date}/{job_id}/en_r10_prod.mp3"
+    remote_path=f"studio/{date}/{job_id}/en_r10_prod.mp3",
 )
 
 # 3. Upload alignment JSON sidecar (writes to tts bucket: klatu-tts)
 s3_alignment_path = storage.upload_alignment_json(
-    job_id=job_id,
-    local_parsed_json="/tmp/alignment.json",
-    output_s3_path=s3_audio_path
+    job_id=job_id, local_parsed_json="/tmp/alignment.json", output_s3_path=s3_audio_path
 )
 ```
 

@@ -114,20 +114,26 @@ app/                               Database & caching
 ### Factory Function: `create_tts_engine()`
 
 ```python
-def create_tts_engine(cfg_path="checkpoints/config.yaml", model_dir="checkpoints", is_fp16=True, device=None, **kwargs):
+def create_tts_engine(
+    cfg_path="checkpoints/config.yaml",
+    model_dir="checkpoints",
+    is_fp16=True,
+    device=None,
+    **kwargs,
+):
     """
     Create IndexTTS engine for GPU inference
-    
+
     Args:
         cfg_path: Path to model config YAML
         model_dir: Path to model checkpoints directory
         is_fp16: Use float16 precision (default: True)
         device: Device to use (default: auto-detect)
         **kwargs: Additional arguments
-    
+
     Returns:
         IndexTTS instance for GPU inference
-    
+
     Raises:
         RuntimeError: If dependencies missing or models not found
     """
@@ -305,6 +311,7 @@ import platform
 # GPU inference
 try:
     import torch
+
     PYTORCH_AVAILABLE = True
 except ImportError as e:
     PYTORCH_AVAILABLE = False

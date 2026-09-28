@@ -206,10 +206,7 @@ uv run python -c "from services.s3_config import S3Client; S3Client().test_conne
 The worker outputs structured logs to console. To enable file logging, edit `services/tts_worker.py`:
 
 ```python
-configure_logging(
-    use_file=True,
-    file_path="logs/worker.log"
-)
+configure_logging(use_file=True, file_path="logs/worker.log")
 ```
 
 ### Run Tests

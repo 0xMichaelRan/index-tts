@@ -96,8 +96,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = '20260903_add_alignment_field'
-down_revision = '002_create_tts_jobs'
+revision = "20260903_add_alignment_field"
+down_revision = "002_create_tts_jobs"
 branch_labels = None
 depends_on = None
 
@@ -105,14 +105,13 @@ depends_on = None
 def upgrade() -> None:
     """Upgrade schema."""
     op.add_column(
-        'tts_jobs',
-        sa.Column('alignment_status', sa.String(20), nullable=True)
+        "tts_jobs", sa.Column("alignment_status", sa.String(20), nullable=True)
     )
 
 
 def downgrade() -> None:
     """Downgrade schema."""
-    op.drop_column('tts_jobs', 'alignment_status')
+    op.drop_column("tts_jobs", "alignment_status")
 ```
 
 **Always include both `upgrade()` and `downgrade()`.**

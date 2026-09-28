@@ -270,9 +270,7 @@ Send a test job to RabbitMQ:
 import pika
 import json
 
-connection = pika.BlockingConnection(
-    pika.ConnectionParameters('localhost')
-)
+connection = pika.BlockingConnection(pika.ConnectionParameters("localhost"))
 channel = connection.channel()
 
 job = {
@@ -281,14 +279,10 @@ job = {
     "audio_prompt_path": "audio-prompts/test_voice.wav",
     "language": "en",
     "job_type": "studio",
-    "output_path_template": "tts-audio/studio/{job_id}.mp3"
+    "output_path_template": "tts-audio/studio/{job_id}.mp3",
 }
 
-channel.basic_publish(
-    exchange='',
-    routing_key='tts_jobs',
-    body=json.dumps(job)
-)
+channel.basic_publish(exchange="", routing_key="tts_jobs", body=json.dumps(job))
 
 print("✓ Test job sent")
 connection.close()
@@ -313,12 +307,10 @@ Results should appear in `tts_results` queue:
 ```python
 import pika
 
-connection = pika.BlockingConnection(
-    pika.ConnectionParameters('localhost')
-)
+connection = pika.BlockingConnection(pika.ConnectionParameters("localhost"))
 channel = connection.channel()
 
-method, properties, body = channel.basic_get('tts_results', auto_ack=True)
+method, properties, body = channel.basic_get("tts_results", auto_ack=True)
 if method:
     result = json.loads(body)
     print(f"✓ Result received: {result}")
@@ -470,15 +462,15 @@ Adjust in `services/tts_worker.py`:
 # S3 circuit breaker
 self.s3_breaker = get_circuit_breaker(
     name="S3Download",
-    failure_threshold=5,      # Open after 5 failures
-    reset_timeout=60,         # Try again after 60s
+    failure_threshold=5,  # Open after 5 failures
+    reset_timeout=60,  # Try again after 60s
 )
 
 # TTS circuit breaker
 self.tts_breaker = get_circuit_breaker(
     name="IndexTTS",
-    failure_threshold=3,      # Open after 3 failures
-    reset_timeout=30,         # Try again after 30s
+    failure_threshold=3,  # Open after 3 failures
+    reset_timeout=30,  # Try again after 30s
 )
 ```
 

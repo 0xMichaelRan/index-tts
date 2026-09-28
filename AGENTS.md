@@ -210,7 +210,7 @@ CIRCUIT_BREAKER_ALIGNMENT_RESET_TIMEOUT=60
 ```python
 {
     "alignment_path": "tts-audio/studio/{job_id}.json",  # S3 key of parsed JSON
-    "alignment_duration_seconds": 1.87                   # CPU alignment time
+    "alignment_duration_seconds": 1.87,  # CPU alignment time
 }
 ```
 
@@ -298,11 +298,11 @@ from indextts.utils.audio_normalization import normalize_loudness
 
 # Normalize audio to -16 LUFS
 normalized, metrics = normalize_loudness(
-    audio=wav_tensor,           # torch.Tensor or np.ndarray
+    audio=wav_tensor,  # torch.Tensor or np.ndarray
     sample_rate=24000,
     target_lufs=-16.0,
     enable_normalization=True,
-    verbose=False
+    verbose=False,
 )
 
 # Check metrics
@@ -408,6 +408,7 @@ Enable file logging:
 
 ```python
 from services.common.logging_config import configure_logging
+
 configure_logging(use_file=True, file_path="logs/worker.log")
 ```
 
@@ -505,7 +506,7 @@ client.download_file(
     remote_path="audio-prompts/voice_001.wav",
     local_path="/tmp/prompt.wav",
     bucket_type="audio",  # Specify bucket type or unique bucket name
-    max_retries=3
+    max_retries=3,
 )
 
 # Upload to tts bucket (synthesized TTS results + alignment JSON)
@@ -513,14 +514,12 @@ client.upload_file(
     local_path="/tmp/audio.wav",
     remote_path="tts-audio/studio/job_123.mp3",
     bucket_type="tts",
-    metadata={"job_id": "job_123"}
+    metadata={"job_id": "job_123"},
 )
 
 # Presigned URL (temporary access)
 url = client.generate_presigned_url(
-    remote_path="audio-prompts/voice_001.wav",
-    bucket_type="audio",
-    expiration=3600
+    remote_path="audio-prompts/voice_001.wav", bucket_type="audio", expiration=3600
 )
 ```
 
@@ -544,7 +543,7 @@ s3_path = uploader.upload_with_retry(
     job_id="job_123",
     local_path="/tmp/audio.wav",
     remote_path="tts-audio/studio/job_123.mp3",
-    verify_integrity=True
+    verify_integrity=True,
 )
 ```
 
@@ -646,32 +645,32 @@ All queues are configured using the `configure_queues()` function which follows 
 ```python
 # Step 1: Declare DLX exchanges (fanout)
 channel.exchange_declare(
-    exchange="tts_jobs.dlx",      # or "tts_results.dlx"
+    exchange="tts_jobs.dlx",  # or "tts_results.dlx"
     exchange_type="fanout",
-    durable=True
+    durable=True,
 )
 
 # Step 2: Declare DLQ queues
 channel.queue_declare(
-    queue="tts_jobs_failed",      # or "tts_results_failed"
-    durable=True
+    queue="tts_jobs_failed",  # or "tts_results_failed"
+    durable=True,
 )
 
 # Step 3: Bind DLQ to DLX
 channel.queue_bind(
-    queue="tts_jobs_failed",      # or "tts_results_failed"
-    exchange="tts_jobs.dlx",      # or "tts_results.dlx"
-    routing_key=""                # Empty for fanout
+    queue="tts_jobs_failed",  # or "tts_results_failed"
+    exchange="tts_jobs.dlx",  # or "tts_results.dlx"
+    routing_key="",  # Empty for fanout
 )
 
 # Step 4: Declare main queue with DLX routing
 channel.queue_declare(
-    queue="tts_jobs",             # or "tts_results"
+    queue="tts_jobs",  # or "tts_results"
     durable=True,
     arguments={
         "x-dead-letter-exchange": "tts_jobs.dlx",
         "x-dead-letter-routing-key": "tts_jobs_failed",
-    }
+    },
 )
 ```
 

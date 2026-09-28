@@ -51,13 +51,15 @@ device = os.getenv("DEVICE", "auto")
 ```python
 from pydantic_settings import BaseSettings
 
+
 class Settings(BaseSettings):
     MODEL_DIR: str = "checkpoints"
     DEVICE: str = "cuda:0"
     PORT: int = 8848
-    
+
     class Config:
         env_file = ".env"
+
 
 settings = Settings()
 ```
@@ -115,18 +117,17 @@ tts.infer(
     audio_prompt="reference.wav",
     text="Text to synthesize",
     output_path="output.wav",
-    
     # Optional parameters
     language="en",
-    temperature=1.0,              # Higher = more creative/variation; Lower = more stable (0.5-2.0)
-    top_p=0.8,                   # Nucleus sampling, Lower = more focused (0.0-1.0)
-    top_k=30,                    # Top-k sampling
-    repetition_penalty=10.0,     # Penalty for repeating tokens
+    temperature=1.0,  # Higher = more creative/variation; Lower = more stable (0.5-2.0)
+    top_p=0.8,  # Nucleus sampling, Lower = more focused (0.0-1.0)
+    top_k=30,  # Top-k sampling
+    repetition_penalty=10.0,  # Penalty for repeating tokens
     max_text_tokens_per_sentence=120,
     do_sample=True,
     num_beams=3,
     length_penalty=0.0,
-    verbose=False
+    verbose=False,
 )
 
 # Fast inference for long texts
@@ -134,7 +135,7 @@ tts.infer_fast(
     audio_prompt="reference.wav",
     text="Long text with many sentences...",
     output_path="output_fast.wav",
-    sentences_bucket_max_size=4  # Process multiple sentences in parallel
+    sentences_bucket_max_size=4,  # Process multiple sentences in parallel
 )
 ```
 
@@ -232,7 +233,7 @@ tts.infer(
     "reference.wav",
     "Text here",
     "output.wav",
-    language="zh"  # "zh" for Chinese, "en" for English
+    language="zh",  # "zh" for Chinese, "en" for English
 )
 ```
 
@@ -261,14 +262,14 @@ print(f"GPU memory: {torch.cuda.memory_allocated() / 1e9:.2f}GB")
 tts = IndexTTS(
     model_dir="checkpoints",
     device="cuda:0",
-    is_fp16=True  # Faster, uses less memory
+    is_fp16=True,  # Faster, uses less memory
 )
 
 # FP32 if you need more precision
 tts = IndexTTS(
     model_dir="checkpoints",
     device="cuda:0",
-    is_fp16=False  # Slower, uses more memory
+    is_fp16=False,  # Slower, uses more memory
 )
 
 # Clear cache after inference
@@ -290,7 +291,7 @@ tts.infer_fast(
     "reference.wav",
     "Long text...",
     "output_fast.wav",
-    sentences_bucket_max_size=4  # Process 4 sentences at once
+    sentences_bucket_max_size=4,  # Process 4 sentences at once
 )
 
 # Fine-tune batch size based on GPU memory
@@ -337,11 +338,11 @@ app = FastAPI()
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 
 logger = logging.getLogger(__name__)
+
 
 @app.get("/health")
 async def health():
@@ -379,7 +380,7 @@ tts = IndexTTS(
     model_dir="/path/to/checkpoints",
     cfg_path="/path/to/config.yaml",
     is_fp16=True,
-    device="cuda:0"
+    device="cuda:0",
 )
 ```
 
@@ -393,11 +394,7 @@ tts = IndexTTS(
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-app = FastAPI(
-    title="IndexTTS API",
-    description="Text-to-Speech API",
-    version="1.0.0"
-)
+app = FastAPI(title="IndexTTS API", description="Text-to-Speech API", version="1.0.0")
 
 # CORS Configuration
 app.add_middleware(
@@ -505,6 +502,7 @@ tts.infer_fast(..., sentences_bucket_max_size=2)
 
 # Solution 4: Clear cache
 import torch
+
 torch.cuda.empty_cache()
 ```
 
@@ -519,7 +517,8 @@ tts.infer_fast(..., sentences_bucket_max_size=4)
 
 # Profile to identify bottleneck
 import cProfile
-cProfile.run('tts.infer(...)')
+
+cProfile.run("tts.infer(...)")
 ```
 
 ---
