@@ -56,19 +56,7 @@ class IndexTTSWorker:
         self.config = config
         self.platform = platform.system()
         self._shutdown_requested = False
-        self._processed_jobs = set()
-
-        # Configure logging from config (must happen before any logger use)
-        configure_logging(
-            level=config.log_level,
-            use_file=config.log_file_enabled,
-            file_path=config.log_file_path,
-            use_color=True,
-        )
-
-        # Module-level logger is now bound after logging is configured
-        global logger
-        logger = get_logger(__name__)
+        self._processed_count: int = 0
 
         # Log startup info
         logger.section("STARTUP")
@@ -82,26 +70,17 @@ class IndexTTSWorker:
         logger.success("TTS engine initialized")
 
         # Initialize storage manager
-        try:
-            self.storage_manager = StorageManager()
-            logger.success("S3 client initialized")
-        except Exception as e:
-            logger.warning_icon(
-                f"S3 client initialization failed: {e}. Will retry on first use."
-            )
-            self.storage_manager = None
+        self.storage_manager = StorageManager()
+        logger.success("S3 client initialized")
 
         # Initialize cache manager
-        if config.cache_enabled:
-            self.cache_manager = CacheManager(
-                cache_dir=config.cache_dir,
-                max_entries=config.cache_max_entries,
-                eviction_threshold=config.cache_eviction_threshold,
-                max_size_mb=config.cache_max_size_mb,
-            )
-        else:
-            self.cache_manager = CacheManager(cache_dir=config.cache_dir)
-            logger.warning("TTS synthesis cache: DISABLED")
+        self.cache_manager = CacheManager(
+            cache_dir=config.cache_dir,
+            max_entries=config.cache_max_entries,
+            eviction_threshold=config.cache_eviction_threshold,
+            max_size_mb=config.cache_max_size_mb,
+            enabled=config.cache_enabled,
+        )
 
         # Initialize synthesis pipeline
         if self.platform != "Darwin":
@@ -139,7 +118,7 @@ class IndexTTSWorker:
             self.vox_render_consumer = VoxRenderConsumer(
                 rabbitmq_url=config.rabbitmq_url,
                 ffmpeg_path=config.vox_render_ffmpeg_path,
-                local_tts_output_dir="outputs/tts_output",
+                local_tts_output_dir=config.tts_output_dir,
             )
             logger.info(
                 f"Vox render consumer: ENABLED "
@@ -233,7 +212,7 @@ class IndexTTSWorker:
             logger.info(f"[JOB {job_id}] Acknowledged")
 
             # Track processed jobs
-            self._processed_jobs.add(job_id)
+            self._processed_count += 1
 
         except json.JSONDecodeError as e:
             logger.error(f"Invalid JSON in message: {e!s}")
@@ -241,10 +220,24 @@ class IndexTTSWorker:
 
         except Exception as e:
             logger.error(f"Error processing job: {e!s}")
-            if job_data:
-                job_id = extract_job_id(job_data)
-                logger.error(f"[JOB {job_id}] Processing failed, sending to DLQ")
-            self.rabbitmq_manager.reject_message(method.delivery_tag, requeue=False)
+            # Use AMQP x-delivery-count header to count redeliveries; fall back to
+            # retryCount in the job payload for workers that set it explicitly.
+            headers = getattr(properties, "headers", None) or {}
+            delivery_count = int(headers.get("x-delivery-count", 0))
+            if not delivery_count and job_data:
+                delivery_count = int(job_data.get("retryCount", 0))
+            job_id_str = extract_job_id(job_data) if job_data else "unknown"
+            if delivery_count < _MAX_JOB_RETRIES:
+                logger.warning(
+                    f"[JOB {job_id_str}] Transient failure "
+                    f"(delivery #{delivery_count + 1}/{_MAX_JOB_RETRIES}), requeueing"
+                )
+                self.rabbitmq_manager.reject_message(method.delivery_tag, requeue=True)
+            else:
+                logger.error(
+                    f"[JOB {job_id_str}] Exhausted {_MAX_JOB_RETRIES} retries, sending to DLQ"
+                )
+                self.rabbitmq_manager.reject_message(method.delivery_tag, requeue=False)
 
     def start(self):
         """
@@ -314,22 +307,33 @@ class IndexTTSWorker:
         cb_stats = get_all_circuit_breaker_stats()
         log_shutdown_summary(
             logger,
-            processed_count=len(self._processed_jobs),
+            processed_count=self._processed_count,
             stats_dict=cb_stats,
         )
 
         self.rabbitmq_manager.disconnect()
 
 
-# Module-level logger placeholder — real logger is set inside __init__
-# after configure_logging() runs.  This allows the module to be imported
-# without immediately emitting log output.
+# Module-level logger — configure_logging() is called in __main__ before
+# IndexTTSWorker is constructed, so this logger uses the configured handlers
+# for production runs.  In tests that construct IndexTTSWorker directly,
+# the default Python logging config applies (which is fine).
 logger = get_logger(__name__)
+
+
+_MAX_JOB_RETRIES = 3  # requeue this many times before sending a job to the DLQ
 
 
 if __name__ == "__main__":
     config = WorkerConfig.from_env()
     config.validate()
+
+    configure_logging(
+        level=config.log_level,
+        use_file=config.log_file_enabled,
+        file_path=config.log_file_path,
+        use_color=True,
+    )
 
     worker = IndexTTSWorker(config=config)
     worker.start()

@@ -35,6 +35,7 @@ class CacheManager:
         max_entries: int = 10000,
         eviction_threshold: int = 9000,
         max_size_mb: int = 0,
+        enabled: bool = True,
     ):
         """
         Initialize cache manager.
@@ -44,18 +45,24 @@ class CacheManager:
             max_entries: Maximum cache entries
             eviction_threshold: Threshold for LRU eviction
             max_size_mb: Maximum total cache size in MB (0 = unlimited)
+            enabled: Whether synthesis cache is enabled
         """
+        self.cache_dir = cache_dir
+        self.max_entries = max_entries
+        self.eviction_threshold = eviction_threshold
+        self.max_size_mb = max_size_mb
+
+        if not enabled:
+            self.enabled = False
+            logger.info("TTS synthesis cache: DISABLED (by configuration)")
+            return
+
         if not CACHE_AVAILABLE:
             self.enabled = False
             logger.warning("Cache disabled: dependencies not available")
             return
 
         self.enabled = True
-        self.cache_dir = cache_dir
-        self.max_entries = max_entries
-        self.eviction_threshold = eviction_threshold
-        self.max_size_mb = max_size_mb
-
         logger.info("TTS synthesis cache: ENABLED")
         logger.info(f"  Max entries: {max_entries}")
         logger.info(f"  Eviction threshold: {eviction_threshold}")

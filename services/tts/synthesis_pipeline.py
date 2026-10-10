@@ -42,7 +42,7 @@ class SynthesisPipeline:
         self,
         tts_engine: Any,
         storage_manager: StorageManager,
-        cache_manager: CacheManager,
+        cache_manager: Optional[CacheManager] = None,
         use_fast_inference: bool = True,
         normalization_enabled: bool = True,
         normalization_target_lufs: float = -16.0,
@@ -211,7 +211,7 @@ class SynthesisPipeline:
         while retry_count < max_retries:
             try:
                 # Stage 1: Cache lookup
-                if self.cache_manager.enabled:
+                if self.cache_manager and self.cache_manager.enabled:
                     cache_hit, cached_audio_path, cache_key = self.cache_manager.lookup(
                         job_id, text, audio_prompt_path, speed_ratio
                     )
@@ -381,8 +381,9 @@ class SynthesisPipeline:
                 # Cleanup temp files
                 if local_audio_prompt and os.path.exists(local_audio_prompt):
                     self.storage_manager.cleanup_local_files(local_audio_prompt)
-                if local_output and not local_output.startswith(
-                    str(Path(self.cache_manager.cache_dir))
+                if local_output and not (
+                    self.cache_manager
+                    and local_output.startswith(str(Path(self.cache_manager.cache_dir)))
                 ):
                     self.storage_manager.cleanup_local_files(local_output)
                 if local_alignment_json and os.path.exists(local_alignment_json):
@@ -450,7 +451,7 @@ class SynthesisPipeline:
 
         # Stage 2c: Store in cache (if enabled)
         cache_key = None
-        if self.cache_manager.enabled:
+        if self.cache_manager and self.cache_manager.enabled:
             audio_duration = self.audio_processor.get_audio_duration(base_audio_path)
             synthesis_duration = time.time() - synthesis_start
             cache_key = self.cache_manager.store(

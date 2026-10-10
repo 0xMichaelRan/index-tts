@@ -84,6 +84,7 @@ class WorkerConfig:
         normalization_target_lufs: Target loudness in LUFS (default: -16.0).
         vox_render_enabled: Enable the vox_jobs consumer (Linux/Windows only).
         vox_render_ffmpeg_path: Path to the ffmpeg binary used for video composition.
+        tts_output_dir: Local directory for raw TTS output files (used by VoxRenderConsumer).
     """
 
     rabbitmq_url: str
@@ -110,6 +111,7 @@ class WorkerConfig:
     # Vox render consumer (Linux/Windows only; disabled on macOS)
     vox_render_enabled: bool = True
     vox_render_ffmpeg_path: str = "ffmpeg"
+    tts_output_dir: str = "outputs/tts_output"
 
     # ---------------------------------------------------------------------------
     # Factories
@@ -137,6 +139,7 @@ class WorkerConfig:
             TTS_NORMALIZATION_TARGET_LUFS Target LUFS (default: -16.0).
             VOX_RENDER_ENABLED            Enable vox render consumer (default: true).
             VOX_RENDER_FFMPEG_PATH        Path to ffmpeg binary (default: ffmpeg).
+            TTS_OUTPUT_DIR                Local TTS output directory (default: outputs/tts_output).
         """
         rabbitmq_url = os.getenv("RABBITMQ_URL", "")
 
@@ -162,6 +165,7 @@ class WorkerConfig:
             # Vox render consumer
             vox_render_enabled=_env_bool("VOX_RENDER_ENABLED", True),
             vox_render_ffmpeg_path=os.getenv("VOX_RENDER_FFMPEG_PATH", "ffmpeg"),
+            tts_output_dir=os.getenv("TTS_OUTPUT_DIR", "outputs/tts_output"),
         )
         return config
 
