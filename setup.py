@@ -59,20 +59,12 @@ setup(
         "numpy",
         "wetext" if platform.system() == "Darwin" else "WeTextProcessing",
     ],
-    extras_require={
-        "webui": ["gradio"],
-    },
     ext_modules=[anti_alias_activation_cuda_ext]
     if anti_alias_activation_cuda_ext
     else [],
     cmdclass={"build_ext": cpp_extension.BuildExtension}
     if anti_alias_activation_cuda_ext
     else {},
-    entry_points={
-        "console_scripts": [
-            "indextts = indextts.cli:main",
-        ]
-    },
     license="Apache-2.0",
     python_requires="==3.10.*",
     classifiers=[

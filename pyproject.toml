@@ -51,14 +51,9 @@ dependencies = [
     
     # Utilities
     "tqdm",
-    
-    # REST API server - needed for run-indextts-1-5.py
-    "fastapi[standard]",
-    "uvicorn[standard]",
-    
+
     # RabbitMQ worker (for distributed task queue)
     "pika",
-    "python-multipart",
     "python-dotenv",
     
     # S3 storage (for audio file persistence)
@@ -110,11 +105,6 @@ mac = [
     "pyobjc-framework-Cocoa>=10.0",
 ]
 
-# Gradio web UI
-webui = [
-    "gradio",
-]
-
 # Development tools
 dev = [
     "pytest",
@@ -125,20 +115,17 @@ dev = [
 
 # Platform-specific all installations
 all-windows = [
-    "indextts-worker[cuda,webui,dev]",
+    "indextts-worker[cuda,dev]",
 ]
 
 all-mac = [
-    "indextts-worker[mac,webui,dev]",
+    "indextts-worker[mac,dev]",
 ]
 
 # Legacy all option (defaults to CUDA for backwards compatibility)
 all = [
-    "indextts-worker[cuda,webui,dev]",
+    "indextts-worker[cuda,dev]",
 ]
-
-[project.scripts]
-indextts = "indextts.cli:main"
 
 [tool.setuptools]
 include-package-data = true

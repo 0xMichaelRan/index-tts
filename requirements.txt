@@ -33,7 +33,6 @@ tensorboard==2.9.1
 omegaconf
 sentencepiece
 librosa
-gradio
 tqdm
 
 WeTextProcessing; platform_machine != "Darwin"
