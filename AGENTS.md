@@ -130,13 +130,13 @@ The worker implements **database-backed synthesis caching** to eliminate redunda
 **Commands**:
 ```bash
 # View cache statistics
-uv run python scripts/manage_cache.py stats
+uv run python cache.py stats
 
 # View top entries
-uv run python scripts/manage_cache.py top --limit 20
+uv run python cache.py top --limit 20
 
 # Evict old entries
-uv run python scripts/manage_cache.py evict --count 1000
+uv run python cache.py evict --count 1000
 
 # Test cache service
 uv run python scripts/test_cache_service.py

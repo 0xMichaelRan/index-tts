@@ -110,27 +110,27 @@ def _apply_ratio_to_cached_audio(base_audio_path, ratio, job_id) -> str
 
 ### 4. Cache Management CLI ✅
 
-**File:** `scripts/manage_cache.py`
+**File:** `cache.py`
 
 **Commands:**
 ```bash
 # Statistics
-uv run python scripts/manage_cache.py stats
+uv run python cache.py stats
 
 # Top entries
-uv run python scripts/manage_cache.py top --limit 20
+uv run python cache.py top --limit 20
 
 # Evict old entries
-uv run python scripts/manage_cache.py evict --count 1000
+uv run python cache.py evict --count 1000
 
 # Clear entire cache
-uv run python scripts/manage_cache.py clear --confirm
+uv run python cache.py clear --confirm
 
 # Invalidate voice
-uv run python scripts/manage_cache.py invalidate --voice "audio-prompts/voice_123.wav"
+uv run python cache.py invalidate --voice "audio-prompts/voice_123.wav"
 
 # Inspect entry
-uv run python scripts/manage_cache.py inspect --key abc123def456
+uv run python cache.py inspect --key abc123def456
 ```
 
 ### 5. Testing ✅
@@ -217,7 +217,7 @@ uv run alembic upgrade head
 
 # 5. Verify
 uv run python scripts/test_cache_service.py
-uv run python scripts/manage_cache.py stats
+uv run python cache.py stats
 ```
 
 ## Performance Metrics
