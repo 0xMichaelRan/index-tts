@@ -88,7 +88,7 @@ class TestHandleMessageSuccess:
         worker.synthesis_pipeline.process_job.assert_called_once()
         worker.rabbitmq_manager.publish_result.assert_called_once()
         worker.rabbitmq_manager.acknowledge_message.assert_called_once_with(42)
-        assert "j1" in worker._processed_jobs
+        assert worker._processed_count == 1
 
     def test_job_tracked_in_processed_set(self):
         worker = _make_worker()
@@ -97,7 +97,7 @@ class TestHandleMessageSuccess:
         ch, method, properties, body = _make_amqp_args({"jobId": "abc", "text": "x"})
         worker._handle_message(ch, method, properties, body)
 
-        assert "abc" in worker._processed_jobs
+        assert worker._processed_count == 1
 
     def test_integer_job_id_is_tracked_in_processed_jobs(self):
         """extract_job_id stringifies integer jobId from camelCase key."""
@@ -107,7 +107,7 @@ class TestHandleMessageSuccess:
         ch, method, properties, body = _make_amqp_args({"jobId": 123, "text": "Hello"})
         worker._handle_message(ch, method, properties, body)
 
-        assert "123" in worker._processed_jobs
+        assert worker._processed_count == 1
 
 
 # ---------------------------------------------------------------------------
@@ -189,7 +189,7 @@ class TestHandleMessageErrors:
         )
         worker.synthesis_pipeline.process_job.assert_not_called()
 
-    def test_pipeline_exception_rejects_without_requeue(self):
+    def test_pipeline_exception_requeues_when_retries_remain(self):
         worker = _make_worker()
         worker.synthesis_pipeline.process_job.side_effect = RuntimeError("GPU OOM")
 
@@ -197,18 +197,32 @@ class TestHandleMessageErrors:
         worker._handle_message(ch, method, properties, body)
 
         worker.rabbitmq_manager.reject_message.assert_called_once_with(
+            42, requeue=True
+        )
+        worker.rabbitmq_manager.acknowledge_message.assert_not_called()
+
+    def test_pipeline_exception_rejects_without_requeue_when_retries_exhausted(self):
+        worker = _make_worker()
+        worker.synthesis_pipeline.process_job.side_effect = RuntimeError("GPU OOM")
+
+        ch, method, properties, body = _make_amqp_args(
+            {"jobId": "fail1", "text": "x", "retryCount": 3}
+        )
+        worker._handle_message(ch, method, properties, body)
+
+        worker.rabbitmq_manager.reject_message.assert_called_once_with(
             42, requeue=False
         )
         worker.rabbitmq_manager.acknowledge_message.assert_not_called()
 
-    def test_pipeline_exception_does_not_track_job(self):
+    def test_pipeline_exception_does_not_increment_processed_count(self):
         worker = _make_worker()
         worker.synthesis_pipeline.process_job.side_effect = ValueError("bad data")
 
         ch, method, properties, body = _make_amqp_args({"jobId": "fail2", "text": "x"})
         worker._handle_message(ch, method, properties, body)
 
-        assert "fail2" not in worker._processed_jobs
+        assert worker._processed_count == 0
 
     def test_publish_failure_does_not_acknowledge(self):
         """If publish_result raises, the message must not be ack'd."""
@@ -223,5 +237,5 @@ class TestHandleMessageErrors:
 
         worker.rabbitmq_manager.acknowledge_message.assert_not_called()
         worker.rabbitmq_manager.reject_message.assert_called_once_with(
-            42, requeue=False
+            42, requeue=True
         )
