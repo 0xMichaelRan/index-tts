@@ -160,14 +160,11 @@ class SynthesisPipeline:
         job_type = job_data.get("jobType", "studio")
 
         # Validate job_type
-        if job_type not in ("studio", "playground", "rem", "flow"):
+        if job_type not in ("studio", "playground", "rem"):
             logger.error(
                 f"[JOB {job_id}] Invalid job_type: {job_type}, defaulting to 'studio'"
             )
             job_type = "studio"
-
-        # For flow jobs, locale must be echoed back in the result
-        locale = job_data.get("locale")  # e.g. "en", "zh-CN", "zh-TW"
 
         speed_ratio = job_data.get("speedRatio", 1.0)
         environment = job_data.get("environment", "prod")
@@ -314,7 +311,6 @@ class SynthesisPipeline:
                     retry_count,
                     job_data,
                     synthesis_duration_seconds=total_duration,
-                    locale=locale,
                 )
 
                 cache_status = "cache HIT" if cache_hit else "full synthesis"
@@ -353,7 +349,6 @@ class SynthesisPipeline:
                         retry_count,
                         job_started_at,
                         job_data,
-                        locale=locale,
                     )
 
             except Exception as e:
@@ -374,7 +369,6 @@ class SynthesisPipeline:
                     retry_count,
                     job_started_at,
                     job_data,
-                    locale=locale,
                 )
 
             finally:
@@ -405,7 +399,6 @@ class SynthesisPipeline:
             retry_count,
             job_started_at,
             job_data,
-            locale=locale,
         )
 
     def _run_synthesis(
@@ -653,7 +646,6 @@ class SynthesisPipeline:
         retry_count: int,
         job_data: dict[str, Any],
         synthesis_duration_seconds: float = 0.0,
-        locale: Optional[str] = None,
     ) -> dict[str, Any]:
         """Build success result dictionary."""
         result = {
@@ -685,10 +677,6 @@ class SynthesisPipeline:
                 if key in job_data:
                     result[key] = job_data[key]
 
-        # Echo locale for flow jobs (needed by FlowOrchestrator to route per-locale result)
-        if job_type == "flow" and locale:
-            result["locale"] = locale
-
         return result
 
     @staticmethod
@@ -700,7 +688,6 @@ class SynthesisPipeline:
         retry_count: int,
         job_started_at: datetime,
         job_data: dict[str, Any],
-        locale: Optional[str] = None,
     ) -> dict[str, Any]:
         """Build failure result dictionary."""
         result = {
@@ -724,9 +711,5 @@ class SynthesisPipeline:
             for key in ["remotionStyle", "resolution", "aspectRatio", "spokenLang"]:
                 if key in job_data:
                     result[key] = job_data[key]
-
-        # Echo locale for flow jobs even on failure (FlowOrchestrator needs it)
-        if job_type == "flow" and locale:
-            result["locale"] = locale
 
         return result

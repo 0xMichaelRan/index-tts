@@ -196,9 +196,7 @@ class TestHandleMessageErrors:
         ch, method, properties, body = _make_amqp_args({"jobId": "fail1", "text": "x"})
         worker._handle_message(ch, method, properties, body)
 
-        worker.rabbitmq_manager.reject_message.assert_called_once_with(
-            42, requeue=True
-        )
+        worker.rabbitmq_manager.reject_message.assert_called_once_with(42, requeue=True)
         worker.rabbitmq_manager.acknowledge_message.assert_not_called()
 
     def test_pipeline_exception_rejects_without_requeue_when_retries_exhausted(self):
@@ -236,6 +234,4 @@ class TestHandleMessageErrors:
         worker._handle_message(ch, method, properties, body)
 
         worker.rabbitmq_manager.acknowledge_message.assert_not_called()
-        worker.rabbitmq_manager.reject_message.assert_called_once_with(
-            42, requeue=True
-        )
+        worker.rabbitmq_manager.reject_message.assert_called_once_with(42, requeue=True)

@@ -61,7 +61,7 @@ The storage layer was refactored into a **5-bucket unified registry architecture
 * **Typical S3 Keys**:
   - Beat animation clips: `projects/{project_id}/clips/beat_{index:02d}.mp4`
   - Rendered final documentary: `projects/{project_id}/renders/final.mp4`
-  - Multi-locale Flow outputs: `flow/{YYYYMMDD}/{job_id}/{locale}.mp4`
+  - Multi-locale Vox outputs: `projects/{project_id}/video/{locale}_p{project_id}_v{version}.mp4`
 * **Env Prefix**: `S3_VIDEO_*`
 
 ---

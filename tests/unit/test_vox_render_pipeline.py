@@ -20,10 +20,6 @@ class ClipAlignmentStrategy(str, Enum):
     SPEED_LONG_SLOW_SHORT = "speed_long_slow_short"
 
 
-# Backwards-compatibility aliases for flow -> vox migration
-FlowRenderPipeline = VoxRenderPipeline
-
-
 def _process_clip_segment(
     clip_path: str,
     output_path: str,
@@ -127,7 +123,7 @@ class TestSkipFirstFrameProcessing:
         assert frames == 30
 
 
-class TestFlowRenderPipelineJobParsing:
+class TestVoxRenderPipelineJobParsing:
     """Test argument passing for skip_first_frame in VoxRenderPipeline._adapt_clips."""
 
     def test_default_skip_first_frame_is_true(self, monkeypatch):

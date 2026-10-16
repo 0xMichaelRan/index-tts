@@ -133,3 +133,27 @@ def test_synthesis_pipeline_build_results_includes_tts_id():
     assert failure_result["ttsId"] == 321
     assert failure_result["status"] == "failed"
     assert failure_result["errorCode"] == "TEST_ERROR"
+
+
+def test_flow_job_type_is_deprecated_and_falls_back_to_studio():
+    """Verify that 'flow' is deprecated and treated as invalid, defaulting to 'studio'."""
+    job_started_at = datetime.now()
+    job_data = {
+        "jobId": 9999,
+        "jobType": "flow",
+        "locale": "zh-CN",
+    }
+    res = SynthesisPipeline._build_success_result(
+        job_type="studio",
+        job_id="9999",
+        audio_path="studio/audio.mp3",
+        audio_duration=3.0,
+        alignment_s3_path="studio/audio.json",
+        alignment_duration_seconds=1.0,
+        job_started_at=job_started_at,
+        cache_hit=False,
+        retry_count=0,
+        job_data=job_data,
+    )
+    assert res["jobType"] == "studio"
+    assert "locale" not in res
