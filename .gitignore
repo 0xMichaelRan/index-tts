@@ -15,3 +15,7 @@ build/
 .venv
 .env
 .env.backup
+.pytest_cache/
+.ruff_cache/
+logs/
+*.log

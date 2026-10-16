@@ -71,13 +71,13 @@ conda install pytorch torchvision torchaudio pytorch-cuda=12.1 -c pytorch -c nvi
 
 ```bash
 # Install remaining dependencies (Note: NOT using [cuda] extra since PyTorch is already installed)
-pip install -e ".[worker]"
+pip install -e .
 ```
 
-**Important:** We use `[worker]` instead of `[cuda,worker]` because:
+**Important:** We use `pip install -e .` instead of `[cuda]` because:
 - PyTorch with CUDA was installed via conda (step 5)
-- `[cuda]` extra would try to reinstall CPU-only PyTorch
-- `[worker]` installs only RabbitMQ, S3, and TTS dependencies
+- `[cuda]` extra would try to reinstall PyTorch via pip
+- Base dependencies install RabbitMQ, S3, and TTS dependencies
 
 #### 7. Handle Windows-Specific Dependency (if on Windows)
 
@@ -354,7 +354,7 @@ python -c "import torch; print(torch.__version__)"
 ```
 
 **Cause:**
-You ran `pip install -e ".[cuda,worker]"` before installing PyTorch via conda.
+You ran `pip install -e ".[cuda]"` before installing PyTorch via conda.
 
 **Solution:**
 ```bash
