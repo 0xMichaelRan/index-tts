@@ -19,6 +19,9 @@ from services.messaging.dlq_monitor import (
     DLQMonitor,
     DLQStats,
     DLQMessage,
+    WorkerMonitor,
+    main_monitor,
+    main,
 )
 
 
@@ -546,6 +549,175 @@ class TestDLQMonitorStatsHistory:
 
         # Should only return recent entry
         assert len(history) == 1
+
+
+class TestWorkerMonitor:
+    """Test WorkerMonitor functionality consolidated from monitor.py."""
+
+    def test_worker_monitor_init(self):
+        """WorkerMonitor should initialize with default and custom settings."""
+        monitor_default = WorkerMonitor()
+        assert monitor_default.rabbitmq_url is not None
+        assert "tts_jobs_pending" in monitor_default.stats
+
+        custom_url = "amqp://user:pass@host:5672/test"
+        monitor_custom = WorkerMonitor(rabbitmq_url=custom_url)
+        assert monitor_custom.rabbitmq_url == custom_url
+
+    @patch("services.messaging.dlq_monitor.pika.BlockingConnection")
+    def test_worker_monitor_connect_success(self, mock_conn_cls):
+        """WorkerMonitor should connect and passively check queues."""
+        mock_conn = Mock()
+        mock_chan = Mock()
+        mock_conn.channel.return_value = mock_chan
+        mock_conn_cls.return_value = mock_conn
+
+        monitor = WorkerMonitor()
+        monitor.connect_rabbitmq()
+
+        assert monitor.connection is mock_conn
+        assert monitor.channel is mock_chan
+        mock_chan.queue_declare.assert_any_call(queue="tts_jobs", passive=True)
+        mock_chan.queue_declare.assert_any_call(queue="tts_results", passive=True)
+        mock_chan.queue_declare.assert_any_call(queue="tts_jobs_failed", passive=True)
+
+    @patch("services.messaging.dlq_monitor.pika.BlockingConnection")
+    def test_worker_monitor_connect_declares_missing_queues(self, mock_conn_cls):
+        """WorkerMonitor should declare queues and DLX if missing."""
+        from services.messaging.dlq_monitor import ChannelClosedByBroker
+
+        mock_conn = Mock()
+        mock_chan1 = Mock()
+        mock_chan2 = Mock()
+        mock_chan1.queue_declare.side_effect = ChannelClosedByBroker(404, "NOT_FOUND")
+        mock_conn.channel.side_effect = [mock_chan1, mock_chan2]
+        mock_conn_cls.return_value = mock_conn
+
+        monitor = WorkerMonitor()
+        monitor.connect_rabbitmq()
+
+        # Channel 2 should have declared DLX and queues
+        mock_chan2.exchange_declare.assert_called_with(
+            exchange="tts_jobs.dlx", exchange_type="fanout", durable=True
+        )
+        mock_chan2.queue_declare.assert_any_call(queue="tts_jobs_failed", durable=True)
+        mock_chan2.queue_bind.assert_called_with(
+            queue="tts_jobs_failed", exchange="tts_jobs.dlx", routing_key=""
+        )
+
+    @patch("services.messaging.dlq_monitor.pika.BlockingConnection")
+    def test_worker_monitor_get_queue_status(self, mock_conn_cls):
+        """WorkerMonitor should return queue depths and health metrics."""
+        mock_conn = Mock()
+        mock_conn.is_closed = False
+        mock_chan = Mock()
+        mock_chan.is_closed = False
+
+        def queue_declare_side_effect(queue, passive=True):
+            res = Mock()
+            method = Mock()
+            if queue == "tts_jobs":
+                method.message_count = 3
+            elif queue == "tts_results":
+                method.message_count = 1
+            elif queue == "tts_jobs_failed":
+                method.message_count = 0
+            else:
+                method.message_count = 0
+            res.method = method
+            return res
+
+        mock_chan.queue_declare.side_effect = queue_declare_side_effect
+        mock_conn.channel.return_value = mock_chan
+        mock_conn_cls.return_value = mock_conn
+
+        monitor = WorkerMonitor()
+        status = monitor.get_queue_status()
+
+        assert status["tts_jobs_pending"] == 3
+        assert status["tts_results_pending"] == 1
+        assert status["tts_jobs_failed"] == 0
+        assert "timestamp" in status
+
+    def test_worker_monitor_print_status(self, capsys):
+        """WorkerMonitor should print formatted queue status without crashing."""
+        monitor = WorkerMonitor()
+        status = {
+            "tts_jobs_pending": 2,
+            "tts_results_pending": 1,
+            "tts_jobs_failed": 0,
+            "timestamp": "2026-10-17T04:00:00",
+        }
+        monitor.print_status(status)
+        captured = capsys.readouterr()
+        assert "WORKER STATUS MONITOR" in captured.out
+        assert "TTS Jobs (pending):       2" in captured.out
+
+        # Test error branch
+        monitor.print_status({"error": "Connection refused"})
+        captured_err = capsys.readouterr()
+        assert "Error: Connection refused" in captured_err.out
+
+    @patch.object(WorkerMonitor, "connect_rabbitmq")
+    @patch.object(WorkerMonitor, "get_queue_status")
+    @patch.object(WorkerMonitor, "print_status")
+    @patch.object(WorkerMonitor, "disconnect")
+    def test_worker_monitor_run_once(
+        self, mock_disconnect, mock_print, mock_get_status, mock_connect
+    ):
+        """WorkerMonitor.run_once should connect, fetch, print and disconnect."""
+        mock_get_status.return_value = {"tts_jobs_pending": 0}
+        monitor = WorkerMonitor()
+        result = monitor.run_once()
+
+        mock_connect.assert_called_once()
+        mock_get_status.assert_called_once()
+        mock_print.assert_called_once_with({"tts_jobs_pending": 0})
+        mock_disconnect.assert_called_once()
+        assert result == {"tts_jobs_pending": 0}
+
+
+class TestDLQMonitorWorkerIntegration:
+    """Test DLQMonitor integration with worker status."""
+
+    @patch.object(WorkerMonitor, "connect_rabbitmq")
+    @patch.object(WorkerMonitor, "get_queue_status")
+    @patch.object(WorkerMonitor, "disconnect")
+    def test_dlq_monitor_get_worker_status(
+        self, mock_disconnect, mock_get_status, mock_connect
+    ):
+        """DLQMonitor.get_worker_status should retrieve worker status via WorkerMonitor."""
+        mock_get_status.return_value = {"tts_jobs_pending": 5}
+        monitor = DLQMonitor(rabbitmq_url="amqp://guest:guest@localhost/")
+        status = monitor.get_worker_status()
+
+        mock_connect.assert_called_once()
+        mock_disconnect.assert_called_once()
+        assert status == {"tts_jobs_pending": 5}
+
+
+class TestMonitorCLI:
+    """Test CLI dispatching."""
+
+    @patch.object(WorkerMonitor, "run_once")
+    def test_main_monitor_once(self, mock_run_once):
+        """main_monitor should respect --once flag."""
+        main_monitor(["--once"])
+        mock_run_once.assert_called_once()
+
+    @patch.object(WorkerMonitor, "run_once")
+    def test_main_cli_status_delegation(self, mock_run_once):
+        """main should route status/--once calls to worker monitor."""
+        main(["status", "--once"])
+        mock_run_once.assert_called_once()
+
+    def test_monitor_py_wrapper_exports(self):
+        """Legacy monitor.py entrypoint should export WorkerMonitor and main_monitor."""
+        import monitor
+
+        assert hasattr(monitor, "WorkerMonitor")
+        assert hasattr(monitor, "main_monitor")
+        assert monitor.WorkerMonitor is WorkerMonitor
 
 
 if __name__ == "__main__":

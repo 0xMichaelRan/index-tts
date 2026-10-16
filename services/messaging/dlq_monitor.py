@@ -1,13 +1,14 @@
 """
-Dead-Letter Queue (DLQ) Monitoring and Alerting
+Dead-Letter Queue (DLQ) and Worker Status Monitoring
 
-Monitors dead-letter queues for failed TTS jobs and results processing.
+Monitors dead-letter queues for failed TTS jobs and results processing,
+as well as real-time worker queue depth and status.
 Provides alerting when DLQ depths exceed thresholds and enables
 manual intervention for problematic messages.
 
 DLQ Architecture:
-    - tts_jobs_dlq: Failed job messages after 3 retries
-    - tts_results_dlq: Failed result processing messages
+    - tts_jobs_dlq / tts_jobs_failed: Failed job messages after 3 retries
+    - tts_results_dlq / tts_results_failed: Failed result processing messages
 
 Alert Thresholds:
     - tts_jobs_dlq: Alert when >100 messages
@@ -15,22 +16,18 @@ Alert Thresholds:
     - Any message in DLQ >24 hours: Critical alert
 
 Usage:
-    from services.messaging.dlq_monitor import DLQMonitor
+    from services.messaging.dlq_monitor import DLQMonitor, WorkerMonitor
 
-    # Initialize monitor
+    # DLQ Monitoring
     monitor = DLQMonitor(
         rabbitmq_url="amqp://guest:guest@localhost:5672/",
         check_interval=300,  # Check every 5 minutes
     )
-
-    # Start monitoring
     monitor.start()
 
-    # Get DLQ statistics
-    stats = monitor.get_stats()
-
-    # Manually process DLQ messages
-    monitor.process_dlq_messages("tts_jobs_dlq", limit=10)
+    # Worker queue status check
+    worker_mon = WorkerMonitor()
+    status = worker_mon.run_once()
 """
 
 import os
@@ -42,6 +39,15 @@ from typing import Optional, Dict, Any, List, Callable
 from datetime import datetime, timedelta
 from urllib.parse import urlparse
 from dataclasses import dataclass, field
+from pathlib import Path
+from dotenv import load_dotenv
+
+# Load environment variables
+env_file = Path(__file__).resolve().parents[2] / ".env"
+if env_file.exists():
+    load_dotenv(str(env_file))
+else:
+    load_dotenv()
 
 try:
     import pika
@@ -562,13 +568,300 @@ class DLQMonitor:
                 if entry["timestamp"] > cutoff
             ]
 
+    def get_worker_status(self) -> Dict[str, Any]:
+        """Convenience method to retrieve general worker and queue status."""
+        worker_monitor = WorkerMonitor(rabbitmq_url=self.rabbitmq_url)
+        try:
+            worker_monitor.connect_rabbitmq()
+            return worker_monitor.get_queue_status()
+        finally:
+            worker_monitor.disconnect()
 
-def main():
-    """CLI entry point for DLQ monitoring."""
+
+class WorkerMonitor:
+    """Monitor TTS worker and RabbitMQ queue status."""
+
+    def __init__(self, rabbitmq_url: Optional[str] = None):
+        """Initialize the monitor."""
+        if not PIKA_AVAILABLE:
+            raise ImportError("pika is required. Install with: pip install pika")
+
+        self.rabbitmq_url = rabbitmq_url or os.getenv(
+            "RABBITMQ_URL", "amqp://guest:guest@localhost:5672/"
+        )
+        self.connection = None
+        self.channel = None
+        self.stats = {
+            "tts_jobs_pending": 0,
+            "tts_jobs_total": 0,
+            "tts_results_pending": 0,
+            "last_check": None,
+            "queue_depth_history": [],
+        }
+
+    def connect_rabbitmq(self):
+        """Connect to RabbitMQ and verify queues."""
+        try:
+            logger.info("Connecting to RabbitMQ...")
+
+            parsed = urlparse(self.rabbitmq_url)
+
+            credentials = pika.PlainCredentials(
+                username=parsed.username or "guest",
+                password=parsed.password or "guest",
+            )
+
+            connection_params = pika.ConnectionParameters(
+                host=parsed.hostname or "localhost",
+                port=parsed.port or 5672,
+                virtual_host=parsed.path.lstrip("/") or "/",
+                credentials=credentials,
+                connection_attempts=3,
+                retry_delay=2,
+                heartbeat=600,
+                blocked_connection_timeout=300,
+            )
+
+            self.connection = pika.BlockingConnection([connection_params])
+            self.channel = self.connection.channel()
+
+            # Declare queues (passive mode - don't create if they don't exist)
+            try:
+                self.channel.queue_declare(queue="tts_jobs", passive=True)
+                self.channel.queue_declare(queue="tts_results", passive=True)
+                self.channel.queue_declare(queue="tts_jobs_failed", passive=True)
+                logger.info("✓ Connected to RabbitMQ")
+            except pika.exceptions.ChannelClosedByBroker:
+                logger.warning("Queues don't exist yet. Declaring them...")
+                self.channel = self.connection.channel()
+
+                # Declare DLX infrastructure
+                self.channel.exchange_declare(
+                    exchange="tts_jobs.dlx",
+                    exchange_type="fanout",
+                    durable=True,
+                )
+                self.channel.queue_declare(queue="tts_jobs_failed", durable=True)
+                self.channel.queue_bind(
+                    queue="tts_jobs_failed",
+                    exchange="tts_jobs.dlx",
+                    routing_key="",
+                )
+
+                # Declare main queues with DLX
+                self.channel.queue_declare(
+                    queue="tts_jobs",
+                    durable=True,
+                    arguments={
+                        "x-dead-letter-exchange": "tts_jobs.dlx",
+                        "x-dead-letter-routing-key": "tts_jobs_failed",
+                    },
+                )
+                self.channel.queue_declare(queue="tts_results", durable=True)
+                logger.info("✓ Connected and queues declared (with DLX)")
+
+        except Exception as e:
+            logger.error(f"✗ Failed to connect to RabbitMQ: {str(e)}")
+            raise
+
+    def get_queue_status(self) -> Dict[str, Any]:
+        """Get current queue status from RabbitMQ."""
+        try:
+            if (
+                not self.connection
+                or self.connection.is_closed
+                or not self.channel
+                or self.channel.is_closed
+            ):
+                self.connect_rabbitmq()
+
+            # Declare passive to get stats without modifying
+            tts_jobs_method = self.channel.queue_declare(queue="tts_jobs", passive=True)
+            tts_results_method = self.channel.queue_declare(
+                queue="tts_results", passive=True
+            )
+
+            # Get DLQ stats (may not exist yet)
+            try:
+                tts_failed_method = self.channel.queue_declare(
+                    queue="tts_jobs_failed", passive=True
+                )
+                dlq_count = tts_failed_method.method.message_count
+            except pika.exceptions.ChannelClosedByBroker:
+                # DLQ doesn't exist yet, reset channel
+                self.channel = self.connection.channel()
+                dlq_count = 0
+
+            status = {
+                "tts_jobs_pending": tts_jobs_method.method.message_count,
+                "tts_results_pending": tts_results_method.method.message_count,
+                "tts_jobs_failed": dlq_count,
+                "timestamp": datetime.now().isoformat(),
+            }
+
+            # Optional Vox queues & results DLQ check
+            for q_name in [
+                "tts_results_failed",
+                "vox_jobs",
+                "vox_results",
+                "vox_jobs_failed",
+            ]:
+                try:
+                    q_method = self.channel.queue_declare(queue=q_name, passive=True)
+                    status[q_name] = q_method.method.message_count
+                except pika.exceptions.ChannelClosedByBroker:
+                    self.channel = self.connection.channel()
+
+            return status
+
+        except Exception as e:
+            logger.error(f"Error getting queue status: {e}")
+            return {
+                "error": str(e),
+                "timestamp": datetime.now().isoformat(),
+            }
+
+    def print_status(self, status: Dict[str, Any]):
+        """Pretty print the status."""
+        print("\n" + "=" * 70)
+        print(
+            f"📊 WORKER STATUS MONITOR - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        )
+        print("=" * 70)
+
+        if "error" in status:
+            print(f"❌ Error: {status['error']}")
+        else:
+            tts_jobs = status.get("tts_jobs_pending", 0)
+            tts_results = status.get("tts_results_pending", 0)
+            tts_failed = status.get("tts_jobs_failed", 0)
+
+            # Queue status
+            print("\n📋 Queue Status:")
+            print(f"   TTS Jobs (pending):   {tts_jobs:>5}")
+            print(f"   TTS Results (pending):{tts_results:>5}")
+            print(f"   Failed Jobs (DLQ):    {tts_failed:>5}")
+
+            if "vox_jobs" in status:
+                print(f"   Vox Jobs (pending):   {status['vox_jobs']:>5}")
+            if "vox_results" in status:
+                print(f"   Vox Results (pending):{status['vox_results']:>5}")
+            if "vox_jobs_failed" in status:
+                print(f"   Failed Vox (DLQ):     {status['vox_jobs_failed']:>5}")
+
+            # Visual indicators
+            print("\n📈 Queue Health:")
+            if tts_jobs == 0:
+                print("   ✓ TTS Jobs queue is empty (worker is idle)")
+            elif tts_jobs < 5:
+                print(f"   ⚠️  {tts_jobs} jobs queued (light load)")
+            elif tts_jobs < 20:
+                print(f"   ⚡ {tts_jobs} jobs queued (moderate load)")
+            else:
+                print(f"   🔥 {tts_jobs} jobs queued (HIGH LOAD)")
+
+            if tts_results > 0:
+                print(f"   ℹ️  {tts_results} results pending delivery")
+
+            if tts_failed > 0:
+                print(f"   ⚠️  {tts_failed} failed jobs in DLQ (needs investigation)")
+
+            # Metrics
+            print("\n⏱️  Metrics:")
+            print(f"   Last check: {status.get('timestamp', 'N/A')}")
+
+    def disconnect(self):
+        """Close RabbitMQ connection."""
+        try:
+            if self.connection and not self.connection.is_closed:
+                self.connection.close()
+                logger.info("✓ Disconnected from RabbitMQ")
+        except Exception as e:
+            logger.error(f"Error disconnecting: {e}")
+        finally:
+            self.connection = None
+            self.channel = None
+
+    def run_continuous(self, interval: int = 5):
+        """Run monitor continuously with specified interval."""
+        logger.info(f"Starting continuous monitoring (interval: {interval}s)")
+        logger.info("Press CTRL+C to stop\n")
+
+        try:
+            self.connect_rabbitmq()
+
+            while True:
+                status = self.get_queue_status()
+                self.print_status(status)
+                time.sleep(interval)
+
+        except KeyboardInterrupt:
+            print("\n\nShutting down monitor...")
+            self.disconnect()
+
+    def run_once(self) -> Dict[str, Any]:
+        """Run monitor once and exit."""
+        try:
+            self.connect_rabbitmq()
+            status = self.get_queue_status()
+            self.print_status(status)
+            self.disconnect()
+            return status
+        except Exception as e:
+            logger.error(f"Monitor error: {e}")
+            raise
+
+
+def main_monitor(args: Optional[List[str]] = None) -> int:
+    """CLI entry point for worker status monitoring (equivalent to legacy monitor.py)."""
+    import argparse
     import sys
 
-    # Parse command line arguments
-    command = sys.argv[1] if len(sys.argv) > 1 else "monitor"
+    parser = argparse.ArgumentParser(description="Worker Status Monitor")
+    parser.add_argument(
+        "--interval",
+        type=int,
+        default=5,
+        help="Polling interval in seconds (default: 5)",
+    )
+    parser.add_argument(
+        "--once",
+        action="store_true",
+        help="Run once and exit (default: continuous)",
+    )
+    parser.add_argument(
+        "--url",
+        type=str,
+        default=None,
+        help="RabbitMQ connection URL",
+    )
+
+    parsed_args = parser.parse_args(args=args if args is not None else sys.argv[1:])
+
+    monitor = WorkerMonitor(rabbitmq_url=parsed_args.url)
+
+    if parsed_args.once:
+        monitor.run_once()
+    else:
+        monitor.run_continuous(interval=parsed_args.interval)
+
+    return 0
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    """CLI entry point for DLQ and worker monitoring."""
+    import sys
+
+    raw_args = argv if argv is not None else sys.argv[1:]
+
+    # Handle worker status monitoring flags/commands
+    if any(arg in raw_args for arg in ("--once", "--interval")) or (
+        raw_args and raw_args[0] in ("status", "worker")
+    ):
+        filtered_args = [a for a in raw_args if a not in ("status", "worker")]
+        return main_monitor(filtered_args)
+
+    command = raw_args[0] if raw_args else "monitor"
 
     try:
         monitor = DLQMonitor()
@@ -598,8 +891,8 @@ def main():
 
         elif command == "peek":
             # Peek at DLQ messages
-            queue_name = sys.argv[2] if len(sys.argv) > 2 else "tts_jobs_dlq"
-            limit = int(sys.argv[3]) if len(sys.argv) > 3 else 5
+            queue_name = raw_args[1] if len(raw_args) > 1 else "tts_jobs_dlq"
+            limit = int(raw_args[2]) if len(raw_args) > 2 else 5
 
             messages = monitor.get_dlq_messages(queue_name, limit=limit, consume=False)
             print(f"\nPeeking at {len(messages)} messages from '{queue_name}':")
@@ -608,10 +901,22 @@ def main():
                 print(f"\nMessage {i}:")
                 print(json.dumps(msg.to_dict(), indent=2))
 
+        elif command == "purge":
+            if len(raw_args) < 2:
+                print("Error: queue_name is required for purge")
+                print(
+                    "Usage: python -m services.messaging.dlq_monitor purge <queue_name>"
+                )
+                return 1
+            queue_name = raw_args[1]
+            purged = monitor.purge_dlq(queue_name)
+            print(f"\nPurged {purged} messages from '{queue_name}'")
+
         else:
             print(f"Unknown command: {command}")
             print(
-                "Usage: python -m services.messaging.dlq_monitor [monitor|check|peek [queue_name] [limit]]"
+                "Usage: python -m services.messaging.dlq_monitor "
+                "[monitor|status|check|peek [queue_name] [limit]|purge [queue_name]|--once|--interval N]"
             )
             return 1
 
@@ -620,6 +925,17 @@ def main():
     except Exception as e:
         logger.error(f"DLQ monitoring failed: {e}")
         return 1
+
+
+__all__ = [
+    "DLQStats",
+    "DLQMessage",
+    "DLQMonitorError",
+    "DLQMonitor",
+    "WorkerMonitor",
+    "main",
+    "main_monitor",
+]
 
 
 if __name__ == "__main__":
