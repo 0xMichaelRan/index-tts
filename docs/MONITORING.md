@@ -118,8 +118,10 @@ monitor.disconnect()
 ```python
 from services.messaging.dlq_monitor import DLQMonitor, DLQStats
 
+
 def on_alert(queue_name: str, stats: DLQStats):
     print(f"ALERT on {queue_name}: {stats.message_count} messages!")
+
 
 monitor = DLQMonitor(
     check_interval=300,  # 5 minutes

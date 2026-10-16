@@ -2,358 +2,169 @@
 
 ## Project Overview
 
-IndexTTS Worker is a 24/7 background service that processes TTS synthesis jobs from a RabbitMQ queue, generates audio using the IndexTTS engine, and uploads results to S3-compatible storage.
+IndexTTS Worker is a 24/7 background service that processes TTS synthesis jobs and Vox video rendering jobs from RabbitMQ, generates audio using the IndexTTS engine (or macOS native speech synthesis), performs forced alignment for subtitle synchronization, and uploads results to S3-compatible storage.
 
-### Windows Setup
+### Environment & Package Manager
 
-Before running any Python commands, activate the conda environment:
-
-```powershell
-conda activate index-tts
-```
-
-Then you can run Python commands normally:
-
-```bash
-python -m services.tts.tts_worker
-python -m pytest tests/unit/test_tts_worker_core.py
-```
-
-**Note**: Do NOT use `uv` on Windows. The project uses conda for environment management on Windows.
-
-### Package manager
-
-- **Package manager**: `uv` on macOS/Linux, `conda` on Windows (see https://docs.astral.sh/uv/getting-started/installation/)
-- **Python version**: 3.10+ (specified in `.python-version`)
-- **Lock file**: `uv.lock` (auto-generated, don't edit manually)
+- **macOS / Linux**: `uv` (Python 3.10 pinned in `.python-version` and `pyproject.toml`). Never run bare `python` or `pip`.
+- **Windows**: `conda` (activate `index-tts` environment). **Do NOT use `uv` on Windows**.
+- **Lock file**: `uv.lock` (auto-generated, do not edit manually).
 
 ### Common Commands
 
 ```bash
-uv sync              # Install/sync dependencies from pyproject.toml
-uv run python file.py     # Run Python scripts
-uv run pytest        # Run tests
-uv run ruff format .      # Format code
-uv run ruff check .       # Lint code
+# Dependencies
+uv sync                       # Sync dependencies from pyproject.toml / uv.lock
+uv pip install -e ".[mac]"     # Install macOS native TTS extras (AVFoundation/Cocoa)
+uv pip install -e ".[dev]"     # Install development tools
+uv pip install -e .           # Install package in editable mode
+
+# Running Services
+uv run python worker.py       # Start main 24/7 IndexTTS & Vox worker
+uv run python monitor.py      # Monitor queue lengths, DLQ, and worker health
+uv run python cache.py stats  # Inspect synthesis cache (stats, top, evict, clear)
+uv run python webui.py        # Run Gradio Web UI (port 7860)
+uv run python api.py          # Run unified FastAPI REST server (port 8848)
+
+# Testing
+uv run pytest tests/unit                              # Run fast unit tests (mocked, ~3s)
+uv run pytest tests/unit/test_circuit_breaker.py -v   # Run a single test file
+uv run pytest tests/integration                       # Run integration tests (requires live PG/RabbitMQ/S3)
+uv run pytest --cov=services                          # Run with code coverage
+
+# Code Quality
+uv run ruff check .           # Lint check
+uv run ruff check --fix .     # Lint auto-fix
+uv run ruff format .          # Format code
+uv run ruff format --check .  # Check formatting
+
+# RabbitMQ Topology Setup
+uv run python -m services.messaging.rabbitmq_config   # Idempotently declare DLX exchanges, DLQs, and queues
 ```
 
-Never use:
-- `python -m pytest` → use `uv run pytest` instead (on non-Windows)
-- `python script.py` → use `uv run python script.py` instead (on non-Windows)
-- `pip install ...` → use `uv add ...` instead
-- `python -m py_compile` → use `uv run python -m py_compile` instead (on non-Windows)
-
-## Architecture
-
-### Key Components
-
-- **`services/tts/tts_worker.py`** - Main worker process (RabbitMQ consumer, orchestration)
-- **`services/common/circuit_breaker.py`** - Circuit breaker pattern for resilience (S3, TTS)
-- **`services/storage/s3_config.py`** - Registry-backed S3 client (`config/buckets.toml`)
-- **`services/storage/s3_registry.py`** - Unified S3 bucket registry (definitions & credential resolution)
-- **`services/storage/idempotent_upload.py`** - Idempotent upload with integrity verification
-- **`services/common/logging_config.py`** - Structured logging with visual hierarchy
-- **`services/messaging/dlq_monitor.py`** - Dead-letter queue & worker queue monitor (`monitor.py` CLI)
-- **`indextts/`** - TTS engine (BigVGAN vocoder, FastSpeech2 acoustic model)
-
-### S3 Configuration
-
-The worker uses the **unified S3 registry architecture** (`config/buckets.toml` + `S3_<TYPE>_*` env vars):
-- **Misc Bucket** (`misc`): General miscellaneous assets and temporary uploads
-- **Video Bucket** (`video`): Video clips and rendered MP4 outputs
-- **Audio Bucket** (`audio`): User voice recordings and audio prompts for TTS voice cloning (read-only for worker)
-- **TTS Bucket** (`tts`): IndexTTS synthesised audio output and forced alignment JSON (worker is SOLE writer)
-- **11Lab Bucket** (`11lab`): User-uploaded ElevenLabs audio exports (frontend uploads via oracle-backend)
-
-**Key Points**:
-- Bucket names and regions are declared in `config/buckets.toml`
-- Credentials and endpoints are configured via environment variables (`S3_MISC_*`, `S3_VIDEO_*`, `S3_AUDIO_*`, `S3_TTS_*`, `S3_11LAB_*`)
-- Output paths follow: `{job_type}/{YYYYMMDD}/{job_id}/{filename}.{ext}`
-
-### Voice Caching
-
-The worker implements **S3-path-based voice caching** to avoid regenerating mel-spectrograms for the same voice:
-
-- **Cache Key**: S3 path (e.g., `voice-recordings/user/123/english.wav`) instead of local temp path
-- **Benefits**: Eliminates redundant `cond_mel` generation (saves ~2-5s per job with same voice)
-- **Scope**: Worker instance (cleared on restart)
-- **Behavior**:
-  - First job with a voice: Generates and caches `cond_mel`
-  - Subsequent jobs with same S3 path: Reuses cached `cond_mel`
-  - Different voice: Clears cache and generates new `cond_mel`
-
-See `docs/VOICE_CACHING_FIX.md` for implementation details.
-
-### TTS Inference Methods
-
-The worker supports two inference methods for Windows/Linux systems:
-
-- **`infer_fast()`** (default): Optimized for long text with sentence batching
-  - 2-10x faster for multi-sentence text
-  - Higher GPU memory usage
-  - Bucket-based batching with configurable parameters
-  - Best for production with adequate GPU resources
-  
-- **`infer()`**: Sequential processing, sentence by sentence
-  - Slower but more stable
-  - Lower GPU memory usage
-  - More predictable behavior
-  - Best for debugging or memory-constrained environments
-
-**Configuration**: Set `TTS_USE_FAST_INFERENCE=false` in `.env` to use `infer()` instead of `infer_fast()`.
-
-**Note**: macOS always uses `infer()` with native TTS, this setting only affects Windows/Linux GPU inference.
-
-### Synthesis Caching (Database-Backed) ✅ IMPLEMENTED
-
-**Status**: Fully implemented and tested
-
-The worker implements **database-backed synthesis caching** to eliminate redundant synthesis when the same (text, voice) is requested with different speed ratios:
-
-- **Cache Key**: SHA256 hash of `text + audio_prompt_path`
-- **Storage**: PostgreSQL + local file system
-- **Benefits**: 65-80% faster for cache hits (5s synthesis → 1s cache + time-stretch)
-- **Capacity**: 10,000 cached entries with LRU eviction
-- **Persistence**: Survives worker restarts
-
-**Documentation**:
-- **Implementation guide**: `docs/CACHE_IMPLEMENTATION_SUMMARY.md` - Architecture, setup, CLI, and troubleshooting
-
-**Key Features**:
-- ✅ Automatic cache lookup before synthesis
-- ✅ Separate time-stretching step for ratio variations
-- ✅ Automatic eviction of least-recently-used entries
-- ✅ Cache management CLI tools
-- ✅ Performance metrics and analytics
-- ✅ Unit and integration tests
-
-**Commands**:
-```bash
-# View cache statistics
-uv run python cache.py stats
-
-# View top entries
-uv run python cache.py top --limit 20
-
-# Evict old entries
-uv run python cache.py evict --count 1000
-
-# Test cache service
-uv run python scripts/test_cache_service.py
-
-# Run unit tests
-uv run pytest tests/test_cache_service.py -v
-```
-
-### Forced Alignment ✅ IMPLEMENTED
-
-**Status**: Fully implemented and tested
-
-The worker implements **mandatory forced alignment** using stable-whisper to generate word-level timestamps for every TTS synthesis job:
-
-- **Engine**: stable-whisper (stable-ts >= 2.19.1)
-- **Model**: Whisper `small` (CPU-only)
-- **Library**: openai-whisper (via stable-ts)
-- **Performance**: ~0.5-5s per minute of audio (CPU)
-- **Language Strategy**: Majority-script detection for mixed ZH/EN text
-
-**Why Forced Alignment?**
-- Enables subtitle/karaoke rendering in video applications (Remotion)
-- Provides word-level timestamps matching the final delivered audio
-- Mandatory for all jobs (alignment failure fails the job)
-- Runs on CPU to avoid GPU contention with IndexTTS synthesis
-
-**Configuration** (`.env`):
-```bash
-# Whisper model size (default: small)
-TTS_ALIGNMENT_MODEL=small
-
-# Device (must be cpu; never use mps on macOS)
-TTS_ALIGNMENT_DEVICE=cpu
-
-# Model cache directory (optional, for persistent storage)
-TTS_ALIGNMENT_MODEL_DIR=/opt/models/whisper
-
-# Retry and circuit breaker
-TTS_ALIGNMENT_MAX_RETRIES=2
-CIRCUIT_BREAKER_ALIGNMENT_FAILURE_THRESHOLD=3
-CIRCUIT_BREAKER_ALIGNMENT_RESET_TIMEOUT=60
-```
-
-**Output Files** (per job):
-- `{job_id}_raw_alignment.json` — Native stable-whisper output (kept on disk, NOT uploaded)
-- `{job_id}_alignment.srt` — SRT subtitle format (kept on disk, NOT uploaded)
-- `{job_id}_alignment.json` — Parsed JSON (uploaded to S3, then deleted locally)
-
-**JSON Schema** (v1):
-```json
-{
-  "version": "1.0",
-  "job_id": "abc123",
-  "engine": "stable-whisper",
-  "engine_version": "2.19.1",
-  "model": "small",
-  "device": "cpu",
-  "audio_duration_seconds": 12.34,
-  "language_strategy": "monolingual_zh",
-  "alignment_quality": "monolingual_zh",
-  "source_text": "你好，世界。",
-  "segments": [...],
-  "words": [
-    {"word": "你", "start": 0.12, "end": 0.28, "probability": 0.98}
-  ],
-  "alignment_duration_seconds": 1.87,
-  "aligned_at": "2026-09-02T02:30:00+00:00"
-}
-```
-
-**RabbitMQ Result Extension**:
-```python
-{
-    "alignment_path": "tts-audio/studio/{job_id}.json",  # S3 key of parsed JSON
-    "alignment_duration_seconds": 1.87,  # CPU alignment time
-}
-```
-
-**Features**:
-- ✅ Automatic alignment after synthesis and time-stretching
-- ✅ Majority-script language detection (monolingual ZH/EN + mixed fallback)
-- ✅ Three output formats (raw JSON, SRT, parsed JSON)
-- ✅ S3 upload of parsed JSON only
-- ✅ Circuit breaker for transient failures
-- ✅ Normalization mismatch detection (digits/currency warnings)
-- ✅ Comprehensive error handling
-- ✅ Unit tests (32 tests, all passing)
-
-**Module Location**: `services/alignment.py`
-
-**Documentation**: See [`docs/FORCED_ALIGNMENT.md`](./docs/FORCED_ALIGNMENT.md) for complete reference
-
-**Testing**:
-```bash
-# Run alignment unit tests
-uv run pytest tests/test_alignment.py -v
-
-# Run worker integration tests (Windows/Linux with GPU only)
-python -m pytest tests/unit/test_tts_worker_alignment.py -v
+*Windows alternative:*
+```powershell
+conda activate index-tts
+python worker.py
+python -m pytest tests/unit/test_tts_worker_core.py
 ```
 
 ---
 
-### Audio Loudness Normalization ✅ IMPLEMENTED
+## High-Level Architecture
 
-**Status**: Fully implemented and tested
+### 1. Dual-Consumer Process Model
 
-The worker implements **LUFS loudness normalization** using the ITU-R BS.1770-4 standard to ensure consistent perceived loudness across all generated TTS audio:
+- **TTS Worker (`services/tts/tts_worker.py`)**: Primary consumer on main thread. Consumes `tts_jobs` (`prefetch_count=1`, priority 0–10) and publishes results to `tts_results`.
+- **Vox Render Consumer (`services/vox/vox_render_consumer.py`)**: Daemon thread spawned on Linux/Windows. Consumes `vox_jobs` and renders multi-clip MP4 videos matched to TTS narration timings using FFmpeg, publishing to `vox_results`. (Skipped on macOS).
 
-- **Standard**: ITU-R BS.1770-4 (industry-standard LUFS measurement)
-- **Library**: `pyloudnorm` (BS.1770 compliant)
-- **Default Target**: -16.0 LUFS (optimized for TTS/voice content)
-- **Performance**: ~50ms overhead per audio file
-- **Fallback**: Peak normalization if pyloudnorm unavailable
+### 2. TTS Job Processing Pipeline (`services/tts/synthesis_pipeline.py`)
 
-**Why LUFS?**
-- LUFS (Loudness Units relative to Full Scale) measures **perceived loudness**, not just peak amplitude
-- Used by all major streaming platforms (Spotify, YouTube, Apple Music)
-- Prevents "loudness war" issues where different audio has inconsistent volume
-- Ensures comfortable listening experience without manual volume adjustment
-
-**Target LUFS Guidelines**:
-- **-14.0 LUFS**: Streaming platforms (Spotify, YouTube, Apple Music)
-- **-16.0 LUFS**: TTS/Voice content (default, good balance for speech clarity)
-- **-18.0 to -20.0 LUFS**: Quiet content (podcasts, audiobooks)
-- **-23.0 LUFS**: Broadcasting (EBU R128 standard)
-
-**Configuration** (`.env`):
-```bash
-# Enable/disable loudness normalization
-TTS_NORMALIZATION_ENABLED=true
-
-# Target loudness in LUFS
-TTS_NORMALIZATION_TARGET_LUFS=-16.0
-```
-
-**Features**:
-- ✅ Automatic normalization on all TTS output
-- ✅ True peak limiting to prevent clipping
-- ✅ Silent audio detection (skips normalization for very quiet audio)
-- ✅ Supports both torch tensors and numpy arrays
-- ✅ Fallback to peak normalization if pyloudnorm unavailable
-- ✅ Comprehensive error handling
-- ✅ Detailed logging of normalization metrics
-
-**Normalization Metrics** (logged for each job):
-```
->> Loudness normalization applied (lufs_bs1770)
-   Original LUFS: -22.35 dB
-   Target LUFS: -16.00 dB
-   Gain applied: +6.35 dB
->> Normalization time: 0.05 seconds
-```
-
-**Module Location**: `indextts/utils/audio_normalization.py`
-
-**API Usage**:
-```python
-from indextts.utils.audio_normalization import normalize_loudness
-
-# Normalize audio to -16 LUFS
-normalized, metrics = normalize_loudness(
-    audio=wav_tensor,  # torch.Tensor or np.ndarray
-    sample_rate=24000,
-    target_lufs=-16.0,
-    enable_normalization=True,
-    verbose=False,
-)
-
-# Check metrics
-print(f"Gain applied: {metrics['gain_db']:.2f} dB")
-print(f"Method: {metrics['method']}")  # 'lufs_bs1770', 'peak_fallback', or 'disabled'
-```
-
-**Testing**:
-```bash
-# Run normalization unit tests
-uv run pytest tests/test_audio_normalization.py -v
-
-# Test with various audio types
-uv run pytest tests/test_audio_normalization.py::TestNormalizeLoudness -v
-```
-
-### Flow Video Render Pipeline ✅ IMPLEMENTED
-
-**Status**: Fully implemented and tested
-
-The worker implements the **flow multi-locale video render pipeline** using FFmpeg to compose multi-clip videos matched to TTS narration:
-
-- **Input Queue**: `flow_render_jobs` (consumed in daemon thread on Linux/Windows)
-- **Output Queue**: `flow_render_results` (with DLX and DLQ)
-- **Local Cache First**: Reuses locally synthesized audio and alignment JSON files from `outputs/tts_output` before downloading from S3
-- **Audio Window Segmentation**: Character-count proportional window division matching 10 input video clips
-- **Speed Adjustment**: FFmpeg `setpts=PTS/speed_factor` + chained `atempo` filters (clamped to `[0.25, 4.0]`)
-- **Output**: 3 final MP4 videos (`en`, `zh-CN`, `zh-TW`) uploaded to `flow/YYYYMMDD/{job_id}/{locale}.mp4`
-
-**Module Location**: `services/flow_render_pipeline.py`, `services/flow_render_consumer.py`
-
-**Documentation**: See [`docs/FLOW_RENDER_PIPELINE.md`](./docs/FLOW_RENDER_PIPELINE.md) for complete reference
+Every TTS job moves through the following stages:
+1. **Text Sanitization (`services/tts/text_sanitizer.py`)**: Normalizes characters and expands numbers/dates.
+2. **Synthesis Cache Lookup (`services/tts/cache_manager.py`, `app/cache_service.py`)**:
+   - Cache key: `SHA256(text + audio_prompt_path)`.
+   - On hit: Skips synthesis, applies time-stretching (`soundfile` / `sox`) if `speedRatio != 1.0`.
+   - On miss: Synthesizes base audio at `speedRatio=1.0`, saves to disk/PostgreSQL, then applies time-stretching.
+3. **Voice Mel Caching (`services/tts/audio_processor.py`)**: In-memory caching of `cond_mel` keyed by audio prompt S3 path (saves ~2-5s when reusing voices).
+4. **Loudness Normalization (`indextts/utils/audio_normalization.py`)**: Normalizes audio using ITU-R BS.1770-4 LUFS (default `-16.0 LUFS`) with true peak limiting.
+5. **Mandatory Forced Alignment (`services/tts/alignment.py`)**:
+   - Uses `stable-whisper` on CPU (`TTS_ALIGNMENT_DEVICE=cpu`) to produce word-level timestamps (`{job_id}_alignment.json`).
+   - Alignment is mandatory; failure marks the job as failed.
+6. **Idempotent S3 Upload (`services/storage/idempotent_upload.py`)**:
+   - Uploads audio (`.wav`/`.mp3`) and parsed alignment JSON (`.json`) to the `tts` bucket.
+   - Computes SHA256 integrity hashes to prevent duplicate uploads on retried jobs.
 
 ---
 
-## Configuration
+## S3 Bucket Registry Architecture
 
-Set **all** of these variables:
+Bucket declarations are defined in `config/buckets.toml`, and credentials/endpoints are resolved per-type via environment variables (`services/storage/s3_registry.py` and `services/storage/s3_config.py`):
+
+| Bucket Key | Bucket Name | Type | Access Pattern | Purpose | Env Var Prefix |
+|---|---|---|---|---|---|
+| `misc` | `klatu-misc` | `misc` | Read / Write | Temporary uploads and general assets | `S3_MISC_*` |
+| `video` | `klatu-video` | `video` | Read / Write | Video clips and rendered MP4 outputs | `S3_VIDEO_*` |
+| `audio` | `klatu-audio` | `audio` | Read-only | User voice prompts for TTS cloning | `S3_AUDIO_*` |
+| `tts` | `klatu-tts` | `tts` | Write-only | Synthesized audio & alignment JSON (worker is sole writer) | `S3_TTS_*` |
+| `11lab` | `klatu-11lab` | `11lab` | Read-only | User ElevenLabs audio exports | `S3_11LAB_*` |
+
+Output S3 key structure: `{jobType}/{YYYYMMDD}/{jobId}/{filename}.{ext}`
+
+---
+
+## Messaging & Wire Protocol Rules
+
+### Naming Domains
+1. **RabbitMQ Wire Protocol (JSON Payloads)**: Strictly **`camelCase`**.
+   - Inbound (`tts_jobs`, `vox_jobs`): `jobId`, `jobType`, `audioPromptPath`, `speedRatio`, `spokenLang`, `resolution`, `aspectRatio`, `clipS3Keys`, `beatNarrations`, etc.
+   - Outbound (`tts_results`, `vox_results`): `jobId`, `jobType`, `audioPath`, `alignmentPath`, `audioDurationSeconds`, `synthesisDurationSeconds`, `alignmentDurationSeconds`, `cacheHit`, `retryCount`, `errorCode`, `errorMessage`, `startedAt`, `completedAt`.
+   - **Crucial**: **NO snake_case fallbacks** in payload handling code (e.g. do NOT use `data.get("jobId") or data.get("job_id")`).
+2. **Internal Python Code**: Strictly standard **`snake_case`** (PEP 8) for variables, DB columns, alignment JSON file contents, and internal methods.
+
+### Dead-Letter Exchanges (DLX) & Queues
+- **TTS Input**: `tts_jobs` → DLX: `tts_jobs.dlx` → DLQ: `tts_jobs_failed`
+- **TTS Output**: `tts_results` → DLX: `tts_results.dlx` → DLQ: `tts_results_failed`
+- **Vox Input**: `vox_jobs` → DLX: `vox_jobs.dlx` → DLQ: `vox_jobs_failed`
+- **Vox Output**: `vox_results` → DLX: `vox_results.dlx` → DLQ: `vox_results_failed`
+
+Declarations and bindings are managed via `uv run python -m services.messaging.rabbitmq_config`.
+
+---
+
+## Core Subsystems & Patterns
+
+### 1. TTS Inference Methods (Windows/Linux)
+- **`infer_fast()`** (default): Optimized sentence batching, 2-10x faster for long text. Best for production GPU.
+- **`infer()`**: Sequential sentence-by-sentence. Set `TTS_USE_FAST_INFERENCE=false` in `.env` for constrained environments or debugging.
+- *Note:* macOS always uses native AVFoundation speech synthesis.
+
+### 2. Circuit Breaker (`services/common/circuit_breaker.py`)
+Protects against downstream cascades:
+- **S3 Download / Upload**: `failure_threshold=5`, `reset_timeout=60s`.
+- **TTS Engine**: `failure_threshold=3`, `reset_timeout=30s`.
+- **Alignment**: `failure_threshold=3`, `reset_timeout=60s`.
+
+### 3. Synthesis Caching (Database-Backed)
+- **Cache Key**: `SHA256(text + audio_prompt_path)`
+- **Storage**: PostgreSQL metadata + local filesystem audio
+- **CLI**: `uv run python cache.py stats|top|evict|clear`
+- See [`docs/CACHE_IMPLEMENTATION_SUMMARY.md`](docs/CACHE_IMPLEMENTATION_SUMMARY.md) for full details.
+
+### 4. Mandatory Forced Alignment
+- **Model**: Whisper `small` (CPU-only: `TTS_ALIGNMENT_DEVICE=cpu`)
+- Produces word-level timestamps in parsed `{job_id}_alignment.json` which is uploaded to S3. Local files (`.srt`, raw JSON) are kept locally and not uploaded.
+- See [`docs/FORCED_ALIGNMENT.md`](docs/FORCED_ALIGNMENT.md) for schema and language detection strategy.
+
+### 5. Audio Loudness Normalization
+- Conforms to ITU-R BS.1770-4 standard LUFS (target `-16.0 LUFS`) with true peak limiting.
+- Configured via `TTS_NORMALIZATION_ENABLED=true` and `TTS_NORMALIZATION_TARGET_LUFS=-16.0`.
+- See [`docs/LOUDNESS_NORMALIZATION_FIX.md`](docs/LOUDNESS_NORMALIZATION_FIX.md) for implementation notes.
+
+### 6. Idempotent S3 Upload (`services/storage/idempotent_upload.py`)
+Computes SHA256 hashes to prevent re-uploading the same output if a job is retried or re-delivered.
+
+### 7. Structured Logging (`services/common/logging_config.py`)
+- Visual status hierarchy (`logger.success()`, `logger.failure()`, `logger.section()`, `logger.warning_icon()`).
+- All job logs prefixed with `[JOB <id>]` for streamlined log filtering.
+
+---
+
+## Configuration Reference
+
+Set these variables in `.env` (see `.env.example`):
 
 ```bash
-# Database (PostgreSQL - REQUIRED for ttsId generation and synthesis cache)
+# Database (PostgreSQL - Required for synthesis cache)
 DATABASE_URL=postgresql+asyncpg://user:pass@host:5432/indextts_worker
 
 # RabbitMQ
 RABBITMQ_URL=amqp://user:pass@host:5672/
 
-# S3 Credentials (endpoints and keys defined per bucket type; names/regions in config/buckets.toml)
+# S3 Credentials (endpoints and keys defined per bucket type)
 S3_MISC_ENDPOINT_URL=https://storage-provider.com/s3
-S3_MISC_ACCESS_KEY_ID=storage-key
-S3_MISC_SECRET_ACCESS_KEY=storage-secret
+S3_MISC_ACCESS_KEY_ID=misc-key
+S3_MISC_SECRET_ACCESS_KEY=misc-secret
 
 S3_VIDEO_ENDPOINT_URL=https://storage-provider.com/s3
 S3_VIDEO_ACCESS_KEY_ID=video-key
@@ -370,364 +181,33 @@ S3_TTS_SECRET_ACCESS_KEY=tts-secret
 S3_11LAB_ENDPOINT_URL=https://storage-provider.com/s3
 S3_11LAB_ACCESS_KEY_ID=11lab-key
 S3_11LAB_SECRET_ACCESS_KEY=11lab-secret
-```
 
-**Benefits**: Different providers, regions, credentials, and costs per bucket.
-
-#### Optional Configuration
-
-**TTS Inference Method** (Windows/Linux only):
-```bash
-# Use fast inference mode (default: true)
-TTS_USE_FAST_INFERENCE=true  # infer_fast() - 2-10x faster, higher memory
-# TTS_USE_FAST_INFERENCE=false  # infer() - slower, lower memory, more stable
-```
-
-**TTS Synthesis Cache**:
-```bash
+# Optional Feature Flags
+TTS_USE_FAST_INFERENCE=true
 TTS_CACHE_ENABLED=true
-TTS_CACHE_MAX_ENTRIES=10000
-TTS_CACHE_EVICTION_THRESHOLD=9000
-TTS_CACHE_MAX_SIZE_MB=5000
-TTS_CACHE_LOCAL_DIR=outputs/tts_cache
-```
-
-**Audio Normalization**:
-```bash
 TTS_NORMALIZATION_ENABLED=true
 TTS_NORMALIZATION_TARGET_LUFS=-16.0
+TTS_ALIGNMENT_MODEL=small
+TTS_ALIGNMENT_DEVICE=cpu
 ```
 
-### Logging
+---
 
-Structured logging is configured in `services/logging_config.py`:
+## Development & Git Workflow
 
-- **Console**: Compact format (HH:MM:SS timestamp, no module paths)
-- **File** (optional): Full format with timestamps, module names, all metadata
+- Always run `uv run ruff check .` and `uv run ruff format .` before committing.
+- Run `uv run pytest tests/unit` to verify changes without requiring external services.
+- Keep commits focused on single concerns.
+- Use `uv run python worker.py` as the standard local runtime entry point.
 
-Enable file logging:
+---
 
-```python
-from services.common.logging_config import configure_logging
+## Documentation Index
 
-configure_logging(use_file=True, file_path="logs/worker.log")
-```
-
-## Development Workflow
-
-### Running the Worker
-
-```bash
-uv run python services/tts_worker.py
-```
-
-Expected startup output:
-```
-18:30:45 [INFO    ] 
-═══════════════════════════════════════════════════════════════════════════
-                              STARTUP
-═══════════════════════════════════════════════════════════════════════════
-...
-```
-
-### Testing
-
-```bash
-# All tests
-uv run pytest
-
-# Specific test file
-uv run pytest tests/test_circuit_breaker.py
-
-# With coverage
-uv run pytest --cov=services
-```
-
-### Code Quality
-
-```bash
-# Format code (fixes automatically)
-uv run ruff format .
-
-# Check for lint issues
-uv run ruff check .
-
-# Auto-fix common issues
-uv run ruff check --fix .
-```
-
-## Code Style
-
-- **Formatter**: Ruff (see `pyproject.toml` for config)
-- **Linter**: Ruff
-- **Type hints**: Required for function signatures
-- **Docstrings**: Google-style for public methods
-
-### Message Schema & Naming Conventions
-
-The codebase strictly enforces two naming domains:
-
-1. **RabbitMQ Wire Protocol (JSON Payloads)**: **camelCase**
-   - Inbound job payloads (`tts_jobs`, `vox_jobs`): `jobId`, `jobType`, `audioPromptPath`, `speedRatio`, `spokenLang`, `resolution`, `aspectRatio`, `clipS3Keys`, `beatNarrations`, etc.
-   - Outbound result payloads (`tts_results`, `vox_results`): `jobId`, `jobType`, `audioPath`, `alignmentPath`, `audioDurationSeconds`, `synthesisDurationSeconds`, `alignmentDurationSeconds`, `cacheHit`, `retryCount`, `errorCode`, `errorMessage`, `startedAt`, `completedAt`.
-   - **No snake_case fallbacks** in message handling code (e.g. do NOT use `job_data.get("jobId") or job_data.get("job_id")`).
-
-2. **Internal Python Code**: **snake_case** (PEP 8)
-   - Variables, function/method names, class attributes, and SQLAlchemy DB model columns (`job_id`, `cache_key`, `created_at`, etc.).
-   - S3 object metadata keys (`job_id`, `upload_timestamp`, etc.).
-   - Alignment JSON file format (`*_alignment.json` file artefacts on disk/S3 use `job_id`, `audio_duration_seconds`, `aligned_at`).
-
-## Key Patterns
-
-### Circuit Breaker Usage
-
-Prevents cascading failures when S3 or TTS services are down:
-
-```python
-from services.common.circuit_breaker import get_circuit_breaker, CircuitBreakerError
-
-breaker = get_circuit_breaker("S3Download", failure_threshold=5, reset_timeout=60)
-
-try:
-    with breaker:
-        result = download_from_s3()
-except CircuitBreakerError:
-    logger.error("S3 service is unavailable (circuit open)")
-```
-
-### S3 Client Usage
-
-```python
-from services.storage.s3_config import S3Client
-
-client = S3Client()
-
-# Download from audio bucket (voice recordings / audio prompts)
-client.download_file(
-    remote_path="audio-prompts/voice_001.wav",
-    local_path="/tmp/prompt.wav",
-    bucket_type="audio",  # Specify bucket type or unique bucket name
-    max_retries=3,
-)
-
-# Upload to tts bucket (synthesized TTS results + alignment JSON)
-client.upload_file(
-    local_path="/tmp/audio.wav",
-    remote_path="tts-audio/studio/job_123.mp3",
-    bucket_type="tts",
-    metadata={"job_id": "job_123"},
-)
-
-# Presigned URL (temporary access)
-url = client.generate_presigned_url(
-    remote_path="audio-prompts/voice_001.wav", bucket_type="audio", expiration=3600
-)
-```
-
-**bucket_type values:**
-- `"misc"` - Misc bucket (general assets, temporary uploads)
-- `"video"` - Video bucket (clips, rendered videos)
-- `"audio"` - Audio bucket (user voice recordings and audio prompts for voice cloning)
-- `"tts"` - TTS bucket (synthesized audio output, forced alignment JSON)
-- `"11lab"` - 11Lab bucket (user-uploaded ElevenLabs audio exports)
-
-### Idempotent Upload
-
-Prevents duplicate uploads if job is retried:
-
-```python
-from services.storage.idempotent_upload import IdempotentUploader
-
-uploader = IdempotentUploader(s3_client)
-
-s3_path = uploader.upload_with_retry(
-    job_id="job_123",
-    local_path="/tmp/audio.wav",
-    remote_path="tts-audio/studio/job_123.mp3",
-    verify_integrity=True,
-)
-```
-
-### Logging
-
-Use structured logging methods:
-
-```python
-from services.common.logging_config import get_logger
-
-logger = get_logger(__name__)
-
-# Successful operations
-logger.success("S3 client initialized")
-
-# Failures
-logger.failure("Failed to connect to RabbitMQ")
-
-# Warnings
-logger.warning_icon("S3 client initialization failed, will retry on first use")
-
-# Section headers
-logger.section("STARTUP")
-logger.subsection("Connecting to RabbitMQ")
-
-# Standard logging
-logger.info("Processing job: job_123")
-logger.warning("Circuit breaker opened")
-logger.error("Job processing failed")
-```
-
-## Gotchas
-
-1. **Signal handlers**: Only call `_setup_signal_handlers()` once in `__init__` (it was duplicated, now fixed)
-2. **S3 buckets**: Unified registry architecture configured via `config/buckets.toml` (`misc`, `video`, `audio`, `tts`, `11lab`)
-3. **RabbitMQ prefetch**: Set `prefetch_count=1` to process one job at a time (prevents overload)
-4. **Graceful shutdown**: Always stop consuming before closing connection
-5. **File cleanup**: Temporary files are cleaned up in the `finally` block after job processing
-
-## Documentation
-
-- `config/buckets.toml` - S3 bucket registry configuration
-- `docs/S3_BUCKET_ARCHITECTURE.md` - Master specification for 5-bucket architecture
-- `docs/WORKER_SETUP.md` - Complete worker setup and installation guide
-- `docs/FORCED_ALIGNMENT.md` - Forced alignment reference documentation
-- `docs/CACHE_IMPLEMENTATION_SUMMARY.md` - Synthesis cache implementation guide
-- `docs/LOUDNESS_NORMALIZATION_FIX.md` - Audio normalization implementation
-- `docs/FLOW_RENDER_PIPELINE.md` - Flow video render pipeline documentation
-- `docs/MONITORING.md` - Worker queue depth and dead-letter queue (DLQ) monitoring guide
-- `docs/` - Complete documentation directory
-
-## Performance Considerations
-
-- **Circuit breaker thresholds**:
-  - S3: `failure_threshold=5`, `reset_timeout=60s`
-  - TTS: `failure_threshold=3`, `reset_timeout=30s`
-- **Exponential backoff**: 2, 4, 8 seconds for retries
-- **Idempotent checks**: Prevent re-uploading same audio for same job
-- **One-at-a-time processing**: RabbitMQ `prefetch_count=1` ensures stability
-- **Automatic reconnection**: RabbitMQ connection automatically reconnects with exponential backoff (5s → 300s)
-  - Initial delay: 5 seconds
-  - Maximum delay: 300 seconds (5 minutes)
-  - Infinite retries with graceful shutdown support
-
-## Debugging Tips
-
-1. **Check RabbitMQ queue**: Use RabbitMQ management UI (default: http://localhost:15672)
-2. **Monitor circuit breakers**: Startup/shutdown logs show state of all breakers
-3. **Check S3 connectivity**: S3 client init log confirms access
-4. **Verify job IDs**: All job logs prefixed with `[JOB <id>]` for easy filtering
-5. **File logging**: Enable to get full timestamps and module paths for investigation
-
-## Git Workflow
-
-- Create feature branches for changes
-- Run `uv run ruff format . && uv run ruff check .` before committing
-- Keep commits focused on single issues
-- Include issue reference in commit messages if applicable
-
-
-## RabbitMQ Configuration (Updated)
-
-### Dead Letter Exchange (DLX) Setup
-
-The worker follows a standardized DLX pattern (consistent with studio-backend and remotion worker):
-
-**Pattern**:
-- **Input Queue**: `tts_jobs` (worker consumes from here)
-  - DLX Exchange: `tts_jobs.dlx` (fanout, durable)
-  - DLQ Queue: `tts_jobs_failed` (durable)
-
-- **Output Queue**: `tts_results` (worker publishes to here)
-  - DLX Exchange: `tts_results.dlx` (fanout, durable)
-  - DLQ Queue: `tts_results_failed` (durable)
-
-**Queue Setup** (in `services/rabbitmq_config.py`):
-
-All queues are configured using the `configure_queues()` function which follows this 4-step process:
-
-```python
-# Step 1: Declare DLX exchanges (fanout)
-channel.exchange_declare(
-    exchange="tts_jobs.dlx",  # or "tts_results.dlx"
-    exchange_type="fanout",
-    durable=True,
-)
-
-# Step 2: Declare DLQ queues
-channel.queue_declare(
-    queue="tts_jobs_failed",  # or "tts_results_failed"
-    durable=True,
-)
-
-# Step 3: Bind DLQ to DLX
-channel.queue_bind(
-    queue="tts_jobs_failed",  # or "tts_results_failed"
-    exchange="tts_jobs.dlx",  # or "tts_results.dlx"
-    routing_key="",  # Empty for fanout
-)
-
-# Step 4: Declare main queue with DLX routing
-channel.queue_declare(
-    queue="tts_jobs",  # or "tts_results"
-    durable=True,
-    arguments={
-        "x-dead-letter-exchange": "tts_jobs.dlx",
-        "x-dead-letter-routing-key": "tts_jobs_failed",
-    },
-)
-```
-
-**Setup Command**:
-```bash
-# Configure all queues (idempotent, can run multiple times)
-python -m services.messaging.rabbitmq_config
-
-# Or programmatically:
-from services.messaging.rabbitmq_config import configure_queues
-configure_queues(rabbitmq_url="amqp://user:pass@host:5672/vhost")
-```
-
-### Message Flow
-
-**Input Queue (`tts_jobs`)**:
-1. **Normal Processing**: Producer → `tts_jobs` → Worker → Ack → Message Removed
-2. **Transient Failure**: Producer → `tts_jobs` → Worker → Nack (requeue=True) → Back to `tts_jobs`
-3. **Permanent Failure**: Producer → `tts_jobs` → Worker → Nack (requeue=False) → `tts_jobs.dlx` → `tts_jobs_failed`
-
-**Output Queue (`tts_results`)**:
-1. **Normal Publishing**: Worker → `tts_results` → studio-backend consumes → Ack
-2. **studio-backend Failure**: Worker → `tts_results` → studio-backend → Nack (requeue=False) → `tts_results.dlx` → `tts_results_failed`
-
-### Retry Strategy
-
-**Transient errors** (retry with circuit breaker):
-- S3 download failures
-- Temporary TTS engine errors
-- Network timeouts
-
-**Data errors** (fail immediately, no requeue):
-- Invalid text
-- Corrupt audio prompts
-- Schema validation failures
-
-**Max retries**: `MAX_RETRY_COUNT` env var (default: 3) → routes to DLQ after exhaustion
-
-### Queue Migration
-
-If you're upgrading from an older version that used the default exchange pattern (`x-dead-letter-exchange: ""`), you need to migrate:
-
-```bash
-# Run migration script (deletes old queues and recreates with new pattern)
-python scripts/fix_queue_dlx_migration.py
-
-# Or manually:
-# 1. Delete old queues via RabbitMQ management UI
-# 2. Run: python -m services.messaging.rabbitmq_config
-```
-
-**See**: `docs/QUEUE_DLX_MIGRATION.md` for detailed migration guide
-
-### Documentation
-
-- **Full Standard**: `docs/RABBITMQ_DLX_STANDARD.md` (in studio-backend repo)
-- **Migration Guide**: `docs/QUEUE_DLX_MIGRATION.md` (in this repo)
-- **Queue Setup**: `services/rabbitmq_config.py`
+- [`docs/WORKER_SETUP.md`](docs/WORKER_SETUP.md) — Windows / Linux GPU production setup
+- [`docs/MACOS_SETUP.md`](docs/MACOS_SETUP.md) — macOS development setup (native TTS)
+- [`docs/S3_BUCKET_ARCHITECTURE.md`](docs/S3_BUCKET_ARCHITECTURE.md) — 5-bucket architecture spec
+- [`docs/FORCED_ALIGNMENT.md`](docs/FORCED_ALIGNMENT.md) — Forced alignment engine & schema
+- [`docs/CACHE_IMPLEMENTATION_SUMMARY.md`](docs/CACHE_IMPLEMENTATION_SUMMARY.md) — DB-backed synthesis cache
+- [`docs/MONITORING.md`](docs/MONITORING.md) — Queue depth and DLQ monitoring guide
+- [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) — Comprehensive environment variables
