@@ -316,7 +316,7 @@ uv run python -c "import PyObjC; print('PyObjC available')"
 
 ## Next Steps
 
-1. **Set up monitoring**: Use `monitor.py` to track worker health
+1. **Set up monitoring**: Use `monitor.py` to track worker and queue health (see [`docs/MONITORING.md`](./MONITORING.md))
 2. **Configure autoscaling**: Run multiple workers for higher throughput
 3. **Enable caching**: Set up PostgreSQL for significant speedup on repeated content
 4. **Integrate with backend**: Submit jobs via RabbitMQ queue from your application

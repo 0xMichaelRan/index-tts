@@ -53,6 +53,7 @@ Never use:
 - **`services/storage/s3_registry.py`** - Unified S3 bucket registry (definitions & credential resolution)
 - **`services/storage/idempotent_upload.py`** - Idempotent upload with integrity verification
 - **`services/common/logging_config.py`** - Structured logging with visual hierarchy
+- **`services/messaging/dlq_monitor.py`** - Dead-letter queue & worker queue monitor (`monitor.py` CLI)
 - **`indextts/`** - TTS engine (BigVGAN vocoder, FastSpeech2 acoustic model)
 
 ### S3 Configuration
@@ -592,6 +593,7 @@ logger.error("Job processing failed")
 - `docs/CACHE_IMPLEMENTATION_SUMMARY.md` - Synthesis cache implementation guide
 - `docs/LOUDNESS_NORMALIZATION_FIX.md` - Audio normalization implementation
 - `docs/FLOW_RENDER_PIPELINE.md` - Flow video render pipeline documentation
+- `docs/MONITORING.md` - Worker queue depth and dead-letter queue (DLQ) monitoring guide
 - `docs/` - Complete documentation directory
 
 ## Performance Considerations

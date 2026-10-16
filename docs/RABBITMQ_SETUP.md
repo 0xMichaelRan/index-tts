@@ -275,25 +275,49 @@ rabbitmqctl list_queues name messages consumers \
   memory message_bytes_persistent
 ```
 
-### 3. Python Monitoring
+### 3. Worker & DLQ Monitoring (CLI & Python)
 
-```python
-from services.rabbitmq_config import get_queue_info
+The worker includes consolidated monitoring via [`monitor.py`](file:///Users/aa/git/github_uncgra/indexTTS-worker/monitor.py) and [`services/messaging/dlq_monitor.py`](file:///Users/aa/git/github_uncgra/indexTTS-worker/services/messaging/dlq_monitor.py). See [`docs/MONITORING.md`](file:///Users/aa/git/github_uncgra/indexTTS-worker/docs/MONITORING.md) for full documentation.
 
-# Get queue statistics
-info = get_queue_info()
+#### Real-Time Worker Status Dashboard:
+```bash
+# Continuous monitoring (refreshes every 5s)
+uv run python monitor.py
 
-for queue_name, stats in info.items():
-    print(f"{queue_name}:")
-    print(f"  Messages: {stats.get('message_count', 'N/A')}")
-    print(f"  Consumers: {stats.get('consumer_count', 'N/A')}")
+# Check once and exit
+uv run python monitor.py --once
 ```
 
-### 4. Alerting
+#### Dead-Letter Queue (DLQ) Management:
+```bash
+# Check DLQ status and threshold alerts
+uv run python -m services.messaging.dlq_monitor check
+
+# Peek at messages in DLQ without consuming
+uv run python -m services.messaging.dlq_monitor peek tts_jobs_failed 5
+
+# Purge DLQ
+uv run python -m services.messaging.dlq_monitor purge tts_jobs_failed
+```
+
+#### Programmatic Python API:
+```python
+from services.messaging.dlq_monitor import WorkerMonitor, DLQMonitor
+
+# Check real-time worker queue depth
+worker_mon = WorkerMonitor()
+status = worker_mon.run_once()
+
+# Inspect DLQs
+dlq_mon = DLQMonitor()
+dlq_stats = dlq_mon.get_all_stats()
+```
+
+### 4. Alerting Thresholds
 
 Set up alerts when:
-- `tts_jobs_dlq` exceeds 100 messages (job failures)
-- `tts_results_dlq` exceeds 50 messages (result processing failures)
+- `tts_jobs_failed` exceeds 100 messages (job failures)
+- `tts_results_failed` exceeds 50 messages (result processing failures)
 - Any message remains in DLQ for >24 hours
 - Main queues reach 80% capacity (8,000 messages)
 

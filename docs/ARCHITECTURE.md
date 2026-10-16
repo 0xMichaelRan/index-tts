@@ -76,7 +76,7 @@ services/                          Worker services (domain subpackages)
 │   ├── logging_config.py          Structured logging
 │   └── worker_config.py           Worker environment config
 ├── messaging/                     RabbitMQ lifecycle & DLX
-│   ├── dlq_monitor.py             Dead-letter queue monitor
+│   ├── dlq_monitor.py             Dead-letter queue & worker status monitor
 │   ├── rabbitmq_config.py         Queue declaration & DLX setup
 │   └── rabbitmq_manager.py        Connection & consumer lifecycle
 ├── storage/                       S3 & local file I/O
