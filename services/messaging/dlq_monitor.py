@@ -898,8 +898,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(f"\nPeeking at {len(messages)} messages from '{queue_name}':")
             print("=" * 70)
             for i, msg in enumerate(messages, 1):
-                print(f"\nMessage {i}:")
-                print(json.dumps(msg.to_dict(), indent=2))
+                print(json.dumps(msg.to_dict(), indent=2, default=str))
 
         elif command == "purge":
             if len(raw_args) < 2:
