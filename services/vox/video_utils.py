@@ -31,14 +31,25 @@ _CLIP_NATURAL_DURATION = 4.0
 
 # Maps (resolution_label, aspect_ratio) → (width, height)
 _RESOLUTION_MAP: dict[tuple[str, str], tuple[int, int]] = {
+    ("640p", "16x9"): (1138, 640),
+    ("640p", "9x16"): (640, 1138),
+    ("640p", "1x1"): (640, 640),
     ("720p", "16x9"): (1280, 720),
     ("720p", "9x16"): (720, 1280),
+    ("720p", "1x1"): (720, 720),
     ("1080p", "16x9"): (1920, 1080),
     ("1080p", "9x16"): (1080, 1920),
-    ("480p", "16x9"): (854, 480),
-    ("480p", "9x16"): (480, 854),
-    ("4k", "16x9"): (3840, 2160),
-    ("4k", "9x16"): (2160, 3840),
+    ("1080p", "1x1"): (1080, 1080),
+    ("2k", "16x9"): (2560, 1440),
+    ("2k", "9x16"): (1440, 2560),
+    ("2k", "1x1"): (1440, 1440),
+}
+
+_BASE_RESOLUTIONS: dict[str, int] = {
+    "640p": 640,
+    "720p": 720,
+    "1080p": 1080,
+    "2k": 1440,
 }
 
 
@@ -46,16 +57,40 @@ def _resolve_dimensions(resolution: str, aspect_ratio: str) -> tuple[int, int]:
     """
     Return (width, height) for the given resolution label and aspect ratio.
 
+    Supported resolutions: '640p', '720p', '1080p', '2k'.
+    Supported aspect ratios: '16x9', '9x16', '1x1' (and arbitrary WxH ratios).
+
     Raises ValueError if the combination is not recognised.
     """
-    key = (resolution.lower(), aspect_ratio.lower())
-    if key not in _RESOLUTION_MAP:
-        known = ", ".join(f"{r}/{a}" for r, a in _RESOLUTION_MAP)
-        raise ValueError(
-            f"Unknown resolution/aspectRatio combination '{resolution}/{aspect_ratio}'. "
-            f"Known combinations: {known}"
-        )
-    return _RESOLUTION_MAP[key]
+    res_lower = resolution.lower()
+    norm_aspect = aspect_ratio.lower().replace(":", "x")
+    key = (res_lower, norm_aspect)
+    if key in _RESOLUTION_MAP:
+        return _RESOLUTION_MAP[key]
+
+    if res_lower in _BASE_RESOLUTIONS and "x" in norm_aspect:
+        try:
+            parts = norm_aspect.split("x")
+            rw, rh = int(parts[0]), int(parts[1])
+            if rw > 0 and rh > 0:
+                base = _BASE_RESOLUTIONS[res_lower]
+                if rw >= rh:
+                    h = base
+                    w = int(round(h * rw / rh))
+                else:
+                    w = base
+                    h = int(round(w * rh / rw))
+                w = w + (w % 2)
+                h = h + (h % 2)
+                return (w, h)
+        except (ValueError, IndexError):
+            pass
+
+    known = ", ".join(f"{r}/{a}" for r, a in _RESOLUTION_MAP)
+    raise ValueError(
+        f"Unknown resolution/aspectRatio combination '{resolution}/{aspect_ratio}'. "
+        f"Known combinations: {known}"
+    )
 
 
 # ---------------------------------------------------------------------------

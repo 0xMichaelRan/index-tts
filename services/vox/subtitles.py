@@ -212,7 +212,7 @@ def _build_ass_subtitles(
         windows: Per-beat ``(start_sec, end_sec)`` tuples from ScriptGuidedAligner.
         beat_narrations: Ordered narration strings, one per beat.
         output_path: Destination path for the ``.ass`` file.
-        aspect_ratio: ``"9x16"`` or ``"16x9"`` — controls default font size and margin.
+        aspect_ratio: ``"9x16"``, ``"16x9"``, or ``"1x1"`` — controls default font size and margin.
         width: Output video width in pixels.
         height: Output video height in pixels.
         font_name: Subtitle font family name. Overrides automatic font selection if provided.

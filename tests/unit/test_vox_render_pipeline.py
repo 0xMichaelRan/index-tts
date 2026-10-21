@@ -13,7 +13,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from services.vox.pipeline import VoxRenderPipeline
-from services.vox.video_utils import _adapt_clip_speed_up
+from services.vox.video_utils import _adapt_clip_speed_up, _resolve_dimensions
 
 
 class ClipAlignmentStrategy(str, Enum):
@@ -206,3 +206,38 @@ class TestVoxRenderPipelineClipsDownload:
 
         for call in mock_s3.download_file.call_args_list:
             assert call.kwargs["bucket_type"] == "video"
+
+
+class TestResolveDimensions:
+    """Test resolution and aspect ratio dimension mapping."""
+
+    @pytest.mark.parametrize(
+        "res, aspect, expected",
+        [
+            ("640p", "16x9", (1138, 640)),
+            ("640p", "9x16", (640, 1138)),
+            ("640p", "1x1", (640, 640)),
+            ("720p", "16x9", (1280, 720)),
+            ("720p", "9x16", (720, 1280)),
+            ("720p", "1x1", (720, 720)),
+            ("1080p", "16x9", (1920, 1080)),
+            ("1080p", "9x16", (1080, 1920)),
+            ("1080p", "1x1", (1080, 1080)),
+            ("1080p", "1:1", (1080, 1080)),
+            ("2k", "16x9", (2560, 1440)),
+            ("2k", "9x16", (1440, 2560)),
+            ("2k", "1x1", (1440, 1440)),
+            ("2k", "1:1", (1440, 1440)),
+            # Dynamic calculation for arbitrary aspect ratios
+            ("1080p", "4x3", (1440, 1080)),
+        ],
+    )
+    def test_valid_combinations(self, res, aspect, expected):
+        assert _resolve_dimensions(res, aspect) == expected
+
+    @pytest.mark.parametrize("deprecated_or_unknown", ["480p", "4k", "invalid"])
+    def test_deprecated_or_unknown_resolution_raises(self, deprecated_or_unknown):
+        with pytest.raises(
+            ValueError, match="Unknown resolution/aspectRatio combination"
+        ):
+            _resolve_dimensions(deprecated_or_unknown, "16x9")
