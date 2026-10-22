@@ -57,3 +57,37 @@ def test_setup_dlx_queues_declares_vox_results():
     ]
     assert ("vox_results_failed", "vox_results.dlx") in bound_queues
     assert ("vox_jobs_failed", "vox_jobs.dlx") in bound_queues
+
+
+def test_vox_render_consumer_declares_matching_queues():
+    """Verify that VoxRenderConsumer declares queues matching QUEUE_CONFIGS exactly."""
+    from unittest.mock import patch
+    from services.messaging.rabbitmq_config import QUEUE_CONFIGS
+    from services.vox.vox_render_consumer import VoxRenderConsumer
+
+    with patch("services.vox.vox_render_consumer.pika.BlockingConnection") as mock_conn_cls:
+        mock_conn = MagicMock()
+        mock_channel = MagicMock()
+        mock_conn_cls.return_value = mock_conn
+        mock_conn.channel.return_value = mock_channel
+
+        consumer = VoxRenderConsumer(rabbitmq_url="amqp://guest:guest@localhost:5672/")
+        consumer._connect()
+
+        # Collect declared queues and their arguments
+        declared_queues = {}
+        for call in mock_channel.queue_declare.call_args_list:
+            q_name = call.kwargs.get("queue")
+            if not q_name and call.args:
+                q_name = call.args[0]
+            declared_queues[q_name] = {
+                "durable": call.kwargs.get("durable"),
+                "arguments": call.kwargs.get("arguments", {}),
+            }
+
+        # Assert vox_jobs and vox_results match QUEUE_CONFIGS
+        for q in ["vox_jobs", "vox_jobs_failed", "vox_results", "vox_results_failed"]:
+            assert q in declared_queues, f"Missing queue {q}"
+            assert declared_queues[q]["durable"] == QUEUE_CONFIGS[q]["durable"]
+            assert declared_queues[q]["arguments"] == QUEUE_CONFIGS[q]["arguments"]
+

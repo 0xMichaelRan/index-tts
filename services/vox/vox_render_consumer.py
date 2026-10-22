@@ -29,7 +29,11 @@ from urllib.parse import urlparse
 import pika
 
 from services.common.logging_config import get_logger
-from services.messaging.rabbitmq_config import MQ_PRIORITY_DEFAULT, MQ_PRIORITY_MAX
+from services.messaging.rabbitmq_config import (
+    MQ_PRIORITY_DEFAULT,
+    MQ_PRIORITY_MAX,
+    QUEUE_CONFIGS,
+)
 from services.storage.s3_config import S3Client
 from services.vox.pipeline import VoxRenderPipeline
 
@@ -180,11 +184,8 @@ class VoxRenderConsumer:
         )
         self._channel.queue_declare(
             queue=f"{_INPUT_QUEUE}_failed",
-            durable=True,
-            arguments={
-                "x-message-ttl": 604800000,  # 7 days
-                "x-max-length": 5000,
-            },
+            durable=QUEUE_CONFIGS[f"{_INPUT_QUEUE}_failed"]["durable"],
+            arguments=QUEUE_CONFIGS[f"{_INPUT_QUEUE}_failed"]["arguments"],
         )
         self._channel.queue_bind(
             queue=f"{_INPUT_QUEUE}_failed",
@@ -193,13 +194,8 @@ class VoxRenderConsumer:
         )
         self._channel.queue_declare(
             queue=_INPUT_QUEUE,
-            durable=True,
-            arguments={
-                "x-dead-letter-exchange": f"{_INPUT_QUEUE}.dlx",
-                "x-dead-letter-routing-key": f"{_INPUT_QUEUE}_failed",
-                "x-message-ttl": 604800000,  # 7 days
-                "x-max-length": 10000,
-            },
+            durable=QUEUE_CONFIGS[_INPUT_QUEUE]["durable"],
+            arguments=QUEUE_CONFIGS[_INPUT_QUEUE]["arguments"],
         )
 
         # --- vox_results (output queue, owned by this worker) ---
@@ -210,11 +206,8 @@ class VoxRenderConsumer:
         )
         self._channel.queue_declare(
             queue=f"{_OUTPUT_QUEUE}_failed",
-            durable=True,
-            arguments={
-                "x-message-ttl": 604800000,
-                "x-max-length": 5000,
-            },
+            durable=QUEUE_CONFIGS[f"{_OUTPUT_QUEUE}_failed"]["durable"],
+            arguments=QUEUE_CONFIGS[f"{_OUTPUT_QUEUE}_failed"]["arguments"],
         )
         self._channel.queue_bind(
             queue=f"{_OUTPUT_QUEUE}_failed",
@@ -223,13 +216,8 @@ class VoxRenderConsumer:
         )
         self._channel.queue_declare(
             queue=_OUTPUT_QUEUE,
-            durable=True,
-            arguments={
-                "x-dead-letter-exchange": f"{_OUTPUT_QUEUE}.dlx",
-                "x-dead-letter-routing-key": f"{_OUTPUT_QUEUE}_failed",
-                "x-message-ttl": 604800000,
-                "x-max-length": 10000,
-            },
+            durable=QUEUE_CONFIGS[_OUTPUT_QUEUE]["durable"],
+            arguments=QUEUE_CONFIGS[_OUTPUT_QUEUE]["arguments"],
         )
 
         # Reset reconnect delay after successful connect
