@@ -29,6 +29,7 @@ from urllib.parse import urlparse
 import pika
 
 from services.common.logging_config import get_logger
+from services.messaging.rabbitmq_config import MQ_PRIORITY_DEFAULT, MQ_PRIORITY_MAX
 from services.storage.s3_config import S3Client
 from services.vox.pipeline import VoxRenderPipeline
 
@@ -287,11 +288,19 @@ class VoxRenderConsumer:
 
             result = self._pipeline.process_job(job_data)
 
+            # Resolve priority: AMQP header takes precedence over JSON field
+            amqp_priority = getattr(properties, "priority", None)
+            if amqp_priority is not None:
+                priority = int(amqp_priority)
+            else:
+                priority = int(job_data.get("priority", MQ_PRIORITY_DEFAULT))
+            priority = max(0, min(priority, MQ_PRIORITY_MAX))
+
             # Publish result to vox_results
-            self._publish_result(result)
+            self._publish_result(result, priority=priority)
 
             ch.basic_ack(delivery_tag=method.delivery_tag)
-            logger.info(f"[VOX {job_id}] Acknowledged")
+            logger.info(f"[VOX {job_id}] Acknowledged (priority={priority})")
 
         except json.JSONDecodeError as exc:
             logger.error(f"VoxRenderConsumer: invalid JSON — {exc}")
@@ -301,7 +310,11 @@ class VoxRenderConsumer:
             logger.error(f"[VOX {job_id}] Unexpected error — sending to DLQ: {exc!s}")
             ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
 
-    def _publish_result(self, result: dict[str, Any]) -> None:
+    def _publish_result(
+        self,
+        result: dict[str, Any],
+        priority: int = MQ_PRIORITY_DEFAULT,
+    ) -> None:
         """Publish result dict to vox_results queue (with retry)."""
         job_id = result.get("jobId", "unknown")
         max_retries = 3
@@ -318,6 +331,7 @@ class VoxRenderConsumer:
                     properties=pika.BasicProperties(
                         delivery_mode=pika.DeliveryMode.Persistent,
                         content_type="application/json",
+                        priority=priority,
                     ),
                 )
                 logger.info(

@@ -213,6 +213,8 @@ class RabbitMQManager:
                 "x-dead-letter-routing-key": "vox_jobs_failed",
                 "x-message-ttl": 604800000,  # 7 days TTL
                 "x-max-length": 10000,
+                "x-overflow": "reject-publish",
+                "x-max-priority": MQ_PRIORITY_MAX,  # Enable priority ordering (0-10)
             },
         )
 
@@ -248,6 +250,7 @@ class RabbitMQManager:
                 "x-dead-letter-routing-key": "vox_results_failed",
                 "x-message-ttl": 604800000,  # 7 days TTL
                 "x-max-length": 10000,
+                "x-max-priority": MQ_PRIORITY_MAX,  # Enable priority ordering (0-10)
             },
         )
 

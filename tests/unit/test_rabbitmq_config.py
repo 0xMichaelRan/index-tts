@@ -84,7 +84,12 @@ class TestQueueConfiguration:
 
     def test_main_queues_have_dlq_routing(self):
         """Test main queues are configured with dead-letter routing."""
-        main_queues = ["tts_jobs", "tts_results", "vox_jobs", "vox_results"]
+        main_queues = [
+            "tts_jobs",
+            "tts_results",
+            "vox_jobs",
+            "vox_results",
+        ]
 
         for queue_name in main_queues:
             config = QUEUE_CONFIGS[queue_name]
@@ -93,6 +98,22 @@ class TestQueueConfiguration:
             assert "x-dead-letter-exchange" in args
             assert args["x-dead-letter-exchange"] == f"{queue_name}.dlx"
             assert "x-dead-letter-routing-key" in args
+            assert args["x-dead-letter-routing-key"] == f"{queue_name}_failed"
+
+    def test_all_main_queues_have_priority(self):
+        """Test that all 4 main queues support priority ordering."""
+        main_queues = [
+            "tts_jobs",
+            "tts_results",
+            "vox_jobs",
+            "vox_results",
+        ]
+
+        for queue_name in main_queues:
+            config = QUEUE_CONFIGS[queue_name]
+            args = config["arguments"]
+            assert "x-max-priority" in args, f"{queue_name} missing x-max-priority"
+            assert args["x-max-priority"] == 10, f"{queue_name} priority != 10"
 
     def test_tts_jobs_queue_configuration(self):
         """Test tts_jobs queue has correct configuration."""
@@ -131,6 +152,9 @@ class TestQueueConfiguration:
             assert config["durable"] is True
             assert args["x-message-ttl"] == 604800000  # 7 days
             assert args["x-max-length"] == 5000
+            assert "x-max-priority" not in args, (
+                f"DLQ {queue_name} should not have priority"
+            )
 
 
 class TestConnectionRetry:
@@ -371,5 +395,9 @@ class TestIntegration:
 
         assert "tts_jobs" in info
         assert "tts_results" in info
+        assert "vox_jobs" in info
+        assert "vox_results" in info
         assert "tts_jobs_failed" in info
         assert "tts_results_failed" in info
+        assert "vox_jobs_failed" in info
+        assert "vox_results_failed" in info

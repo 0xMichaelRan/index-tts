@@ -8,8 +8,8 @@ Queue Architecture (Standardized DLX Pattern):
     Main Queues (Durable, Priority-enabled x-max-priority=10):
     ├── tts_jobs (TTL: 24h, priority 0-10) → DLX: tts_jobs.dlx → DLQ: tts_jobs_failed
     ├── tts_results (TTL: 7d, priority 0-10) → DLX: tts_results.dlx → DLQ: tts_results_failed
-    ├── vox_jobs (TTL: 7d) → DLX: vox_jobs.dlx → DLQ: vox_jobs_failed
-    └── vox_results (TTL: 7d) → DLX: vox_results.dlx → DLQ: vox_results_failed
+    ├── vox_jobs (TTL: 7d, priority 0-10) → DLX: vox_jobs.dlx → DLQ: vox_jobs_failed
+    └── vox_results (TTL: 7d, priority 0-10) → DLX: vox_results.dlx → DLQ: vox_results_failed
 
     Dead-Letter Exchanges (Fanout):
     ├── tts_jobs.dlx → routes to tts_jobs_failed
@@ -92,6 +92,8 @@ QUEUE_CONFIGS = {
             "x-dead-letter-routing-key": "vox_jobs_failed",
             "x-message-ttl": 604800000,  # 7 days in milliseconds
             "x-max-length": 10000,
+            "x-overflow": "reject-publish",
+            "x-max-priority": MQ_PRIORITY_MAX,  # Enable priority ordering (0-10)
         },
     },
     "vox_results": {
@@ -101,6 +103,7 @@ QUEUE_CONFIGS = {
             "x-dead-letter-routing-key": "vox_results_failed",
             "x-message-ttl": 604800000,  # 7 days in milliseconds
             "x-max-length": 10000,
+            "x-max-priority": MQ_PRIORITY_MAX,  # Enable priority ordering (0-10)
         },
     },
     "tts_jobs_failed": {
@@ -217,16 +220,25 @@ def configure_queue(
     channel: pika.channel.Channel,
     queue_name: str,
     config: Dict[str, Any],
-) -> None:
+    connection: Optional[pika.BlockingConnection] = None,
+    recreate_on_conflict: bool = False,
+) -> pika.channel.Channel:
     """
     Configure a single queue with the specified parameters.
 
     This function is idempotent - it can be safely called multiple times.
+    If the queue on the broker was created with conflicting arguments and
+    recreate_on_conflict is True, it re-creates the queue with the desired arguments.
 
     Args:
         channel: RabbitMQ channel
         queue_name: Name of the queue to configure
         config: Queue configuration dictionary with 'durable' and 'arguments'
+        connection: Optional RabbitMQ connection (used to reopen channel if closed)
+        recreate_on_conflict: If True, delete and recreate queue on PRECONDITION_FAILED (406)
+
+    Returns:
+        The active channel (either original or reopened)
     """
     try:
         channel.queue_declare(
@@ -240,7 +252,31 @@ def configure_queue(
         if config.get("arguments"):
             for key, value in config["arguments"].items():
                 logger.debug(f"  {key}: {value}")
+        return channel
 
+    except pika.exceptions.ChannelClosedByBroker as e:
+        if (
+            recreate_on_conflict
+            and connection is not None
+            and ("406" in str(e) or "PRECONDITION_FAILED" in str(e))
+        ):
+            logger.warning(
+                f"Queue '{queue_name}' declared with conflicting arguments on broker ({e}). "
+                f"Deleting and recreating with updated arguments..."
+            )
+            ch = connection.channel()
+            ch.queue_delete(queue=queue_name)
+            ch.queue_declare(
+                queue=queue_name,
+                durable=config["durable"],
+                arguments=config.get("arguments", {}),
+            )
+            logger.info(
+                f"✓ Queue '{queue_name}' recreated successfully with updated configuration"
+            )
+            return ch
+        logger.error(f"✗ Failed to configure queue '{queue_name}': {str(e)}")
+        raise
     except Exception as e:
         logger.error(f"✗ Failed to configure queue '{queue_name}': {str(e)}")
         raise
@@ -320,39 +356,20 @@ def configure_queues(
     rabbitmq_url: Optional[str] = None,
     max_retries: int = 3,
     retry_delay: int = 2,
+    recreate_on_conflict: bool = True,
 ) -> None:
     """
-    Configure all RabbitMQ queues for the TTS service.
+    Configure all RabbitMQ queues for the TTS and media services.
 
     This function is idempotent and can be safely run multiple times.
-    It will create or update the following:
-
-    1. DLX Exchanges (fanout):
-       - tts_jobs.dlx
-       - tts_results.dlx
-
-    2. Dead-Letter Queues:
-       - tts_jobs_failed
-       - tts_results_failed
-
-    3. Main Queues (with DLX routing):
-       - tts_jobs → routes failed messages to tts_jobs.dlx → tts_jobs_failed
-       - tts_results → routes failed messages to tts_results.dlx → tts_results_failed
+    It will create or update DLX exchanges, DLQs, and main queues with
+    priority and dead-letter routing enabled.
 
     Args:
         rabbitmq_url: RabbitMQ connection URL (default: from RABBITMQ_URL env var)
         max_retries: Maximum connection retry attempts
         retry_delay: Initial retry delay in seconds
-
-    Raises:
-        ImportError: If pika is not installed
-        RabbitMQConnectionError: If connection fails after retries
-
-    Example:
-        >>> configure_queues("amqp://guest:guest@localhost:5672/")
-        >>> # Or use environment variable
-        >>> os.environ["RABBITMQ_URL"] = "amqp://guest:guest@localhost:5672/"
-        >>> configure_queues()
+        recreate_on_conflict: If True, delete and recreate queues when broker arguments conflict
     """
     if not PIKA_AVAILABLE:
         raise ImportError(
@@ -402,7 +419,13 @@ def configure_queues(
             "vox_jobs_failed",
             "vox_results_failed",
         ]:
-            configure_queue(channel, queue_name, QUEUE_CONFIGS[queue_name])
+            channel = configure_queue(
+                channel,
+                queue_name,
+                QUEUE_CONFIGS[queue_name],
+                connection=connection,
+                recreate_on_conflict=recreate_on_conflict,
+            )
 
         # Step 3: Bind DLQs to DLX exchanges
         logger.info("\nStep 3: Binding DLQs to DLX exchanges...")
@@ -416,7 +439,13 @@ def configure_queues(
             "vox_jobs",
             "vox_results",
         ]:
-            configure_queue(channel, queue_name, QUEUE_CONFIGS[queue_name])
+            channel = configure_queue(
+                channel,
+                queue_name,
+                QUEUE_CONFIGS[queue_name],
+                connection=connection,
+                recreate_on_conflict=recreate_on_conflict,
+            )
 
         logger.info("-" * 70)
         logger.info("✓ All queues configured successfully")
