@@ -151,7 +151,7 @@ See [RABBITMQ_SETUP.md](./RABBITMQ_SETUP.md) for detailed RabbitMQ installation 
 conda activate tts_worker
 
 # Start worker
-python -m services.tts_worker
+python ./worker.py
 ```
 
 ### Linux (with conda)
