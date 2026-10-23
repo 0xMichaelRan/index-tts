@@ -85,6 +85,7 @@ class WorkerConfig:
         vox_render_enabled: Enable the vox_jobs consumer (Linux/Windows only).
         vox_render_ffmpeg_path: Path to the ffmpeg binary used for video composition.
         tts_output_dir: Local directory for raw TTS output files (used by VoxRenderConsumer).
+        alignment_retention_days: Days to retain raw_alignment.json and .srt debug files (default: 16).
     """
 
     rabbitmq_url: str
@@ -113,6 +114,9 @@ class WorkerConfig:
     vox_render_ffmpeg_path: str = "ffmpeg"
     tts_output_dir: str = "outputs/tts_output"
 
+    # Alignment retention
+    alignment_retention_days: int = 16
+
     # ---------------------------------------------------------------------------
     # Factories
     # ---------------------------------------------------------------------------
@@ -140,6 +144,7 @@ class WorkerConfig:
             VOX_RENDER_ENABLED            Enable vox render consumer (default: true).
             VOX_RENDER_FFMPEG_PATH        Path to ffmpeg binary (default: ffmpeg).
             TTS_OUTPUT_DIR                Local TTS output directory (default: outputs/tts_output).
+            TTS_ALIGNMENT_RETENTION_DAYS  Days to retain raw/SRT alignment debug files (default: 16).
         """
         rabbitmq_url = os.getenv("RABBITMQ_URL", "")
 
@@ -166,6 +171,8 @@ class WorkerConfig:
             vox_render_enabled=_env_bool("VOX_RENDER_ENABLED", True),
             vox_render_ffmpeg_path=os.getenv("VOX_RENDER_FFMPEG_PATH", "ffmpeg"),
             tts_output_dir=os.getenv("TTS_OUTPUT_DIR", "outputs/tts_output"),
+            # Alignment retention
+            alignment_retention_days=_env_int("TTS_ALIGNMENT_RETENTION_DAYS", 16),
         )
         return config
 

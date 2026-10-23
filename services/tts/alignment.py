@@ -256,11 +256,17 @@ class AlignmentService:
         model_name: str | None = None,
         device: str | None = None,
         download_root: str | None = None,
+        retention_days: int | None = None,
     ) -> None:
         self._model_name: str = model_name or os.getenv("TTS_ALIGNMENT_MODEL", "small")
         self._device: str = device or os.getenv("TTS_ALIGNMENT_DEVICE", "cpu")
         self._download_root: str | None = download_root or os.getenv(
             "TTS_ALIGNMENT_MODEL_DIR"
+        )
+        self._retention_days: int = (
+            retention_days
+            if retention_days is not None
+            else int(os.getenv("TTS_ALIGNMENT_RETENTION_DAYS", "16"))
         )
 
         # Validate device — never allow mps (Apple Silicon float64 crash, plan §4 / §15)
@@ -498,7 +504,106 @@ class AlignmentService:
         with open(parsed_json_path, "w", encoding="utf-8") as fh:
             json.dump(result.to_dict(), fh, ensure_ascii=False, indent=2)
 
+        # Age-based cleanup for retained alignment debug artefacts (older than 16 days)
+        self.maybe_evict(output_dir=output_dir, job_id=job_id)
+
         return raw_json_path, srt_path, parsed_json_path
+
+    def maybe_evict(
+        self,
+        output_dir: str,
+        max_age_days: int | None = None,
+        job_id: str = "",
+    ) -> int:
+        """Fire-and-forget age-based cleanup for retained alignment debug artefacts.
+
+        Purges retained debug artefacts (``{job_id}_raw_alignment.json`` and
+        ``{job_id}_alignment.srt``) that are older than ``max_age_days``
+        (default: 16 days or ``TTS_ALIGNMENT_RETENTION_DAYS``) in ``output_dir``
+        or its parent hierarchy.
+
+        Args:
+            output_dir: Directory containing alignment outputs.
+            max_age_days: Maximum age in days before files are purged. Defaults
+                to ``self._retention_days`` (16 days).
+            job_id: Optional job identifier for logging context.
+
+        Returns:
+            Number of purged files.
+        """
+        if max_age_days is None:
+            max_age_days = self._retention_days
+
+        if not output_dir or not os.path.exists(output_dir):
+            return 0
+
+        purged_count = 0
+        try:
+            now = time.time()
+            max_age_seconds = max_age_days * 86400
+
+            scan_dir = output_dir
+            abs_out = os.path.abspath(output_dir)
+            parent = os.path.dirname(abs_out)
+            if job_id and os.path.basename(abs_out) == job_id:
+                if parent and parent != os.path.abspath(os.sep) and os.path.isdir(parent):
+                    scan_dir = parent
+
+            retained_suffixes = (
+                "_raw_alignment.json",
+                "_alignment.srt",
+                "raw_alignment.json",
+                "alignment.srt",
+            )
+
+            for root, _, files in os.walk(scan_dir):
+                for filename in files:
+                    if any(filename.endswith(suffix) for suffix in retained_suffixes):
+                        filepath = os.path.join(root, filename)
+                        try:
+                            mtime = os.path.getmtime(filepath)
+                            if (now - mtime) > max_age_seconds:
+                                os.remove(filepath)
+                                purged_count += 1
+                                logger.debug(
+                                    f"[JOB {job_id}] Purged old alignment file: {filepath}"
+                                )
+                        except OSError as e:
+                            logger.warning(
+                                f"[JOB {job_id}] Failed to remove {filepath}: {e}"
+                            )
+
+                # Attempt cleanup of empty subdirectories if we purged files
+                if root != scan_dir:
+                    try:
+                        if not os.listdir(root):
+                            os.rmdir(root)
+                            logger.debug(
+                                f"[JOB {job_id}] Removed empty directory: {root}"
+                            )
+                    except OSError:
+                        pass
+
+            if purged_count > 0:
+                logger.info(
+                    f"[JOB {job_id}] Alignment purge complete: removed {purged_count} "
+                    f"files older than {max_age_days} days in {scan_dir}"
+                )
+        except Exception as exc:
+            logger.warning(f"[JOB {job_id}] Alignment files auto-eviction failed: {exc}")
+
+        return purged_count
+
+    def purge_old_alignment_files(
+        self,
+        output_dir: str,
+        max_age_days: int | None = None,
+        job_id: str = "",
+    ) -> int:
+        """Alias for :meth:`maybe_evict`."""
+        return self.maybe_evict(
+            output_dir=output_dir, max_age_days=max_age_days, job_id=job_id
+        )
 
     # ------------------------------------------------------------------
     # Parsing helpers

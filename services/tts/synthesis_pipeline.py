@@ -75,11 +75,13 @@ class SynthesisPipeline:
         # Initialize alignment service (mandatory)
         alignment_model = os.getenv("TTS_ALIGNMENT_MODEL", "small")
         alignment_device = os.getenv("TTS_ALIGNMENT_DEVICE", "cpu")
+        alignment_retention_days = int(os.getenv("TTS_ALIGNMENT_RETENTION_DAYS", "16"))
 
         if ALIGNMENT_AVAILABLE and AlignmentService is not None:
             self.alignment_service = AlignmentService(
                 model_name=alignment_model,
                 device=alignment_device,
+                retention_days=alignment_retention_days,
             )
             try:
                 t_align_load = time.time()
@@ -186,6 +188,22 @@ class SynthesisPipeline:
         cache_hit = False
         cache_key = None
 
+        # Early S3 output path construction.
+        # language and speed_ratio are known from the dispatch payload, and TTS
+        # synthesis always produces a .wav file, so the path can be computed
+        # before synthesis starts.  After alignment the Whisper-detected language
+        # is compared; if it differs the path is rebuilt to stay correct.
+        output_s3_path = self.storage_manager.build_s3_output_path(
+            job_type=job_type,
+            job_id=job_id,
+            language=language,
+            ratio=speed_ratio,
+            environment=environment,
+            voice_id=voice_id,
+            file_extension="wav",
+        )
+        logger.info(f"[JOB {job_id}] Pre-computed S3 output path: {output_s3_path}")
+
         # Create tts_jobs database record and generate ttsId
         tts_id = None
         try:
@@ -247,22 +265,28 @@ class SynthesisPipeline:
                     job_id, local_output, text, language, output_dir
                 )
 
-                # Extract detected language
+                # Reconcile detected language with the pre-computed S3 path.
+                # Whisper may detect a different ISO-639-1 code (e.g. "zh" from
+                # a hint of "zh-CN").  Rebuild only when necessary to avoid an
+                # unnecessary alloc on the happy path.
                 detected_language = self._extract_detected_language(
                     local_alignment_json, language
                 )
-
-                # Stage 4: Build S3 paths
-                file_extension = Path(local_output).suffix.lstrip(".")
-                output_s3_path = self.storage_manager.build_s3_output_path(
-                    job_type=job_type,
-                    job_id=job_id,
-                    language=detected_language,
-                    ratio=speed_ratio,
-                    environment=environment,
-                    voice_id=voice_id,
-                    file_extension=file_extension,
-                )
+                if detected_language != language:
+                    file_extension = Path(local_output).suffix.lstrip(".")
+                    output_s3_path = self.storage_manager.build_s3_output_path(
+                        job_type=job_type,
+                        job_id=job_id,
+                        language=detected_language,
+                        ratio=speed_ratio,
+                        environment=environment,
+                        voice_id=voice_id,
+                        file_extension=file_extension,
+                    )
+                    logger.info(
+                        f"[JOB {job_id}] S3 path updated after alignment "
+                        f"(detected={detected_language}): {output_s3_path}"
+                    )
 
                 # Stage 5: Upload audio
                 audio_path = self._run_audio_upload(
