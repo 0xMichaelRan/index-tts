@@ -570,14 +570,26 @@ class SynthesisPipeline:
     def _extract_detected_language(
         self, local_alignment_json: str, fallback_language: str
     ) -> str:
-        """Extract language_strategy from alignment JSON."""
+        """Extract the Whisper language code from the alignment JSON.
+
+        Reads the ``whisper_language`` field written by
+        :meth:`AlignmentResult.to_dict` (e.g. ``"zh"``, ``"en"``).  Falls back
+        to ``fallback_language`` (the job's original ``spokenLang``) if the
+        file is missing, unreadable, or the field is absent.
+
+        .. note::
+            The older ``language_strategy`` field contains an alignment
+            *quality tag* (e.g. ``"locale_zh"``, ``"mixed_fallback"``), **not**
+            a language code, and must not be used for S3 path construction.
+        """
         if not local_alignment_json or not os.path.exists(local_alignment_json):
             return fallback_language
 
         try:
             with open(local_alignment_json, encoding="utf-8") as fh:
                 alignment_data = json.load(fh)
-            return alignment_data.get("language_strategy", fallback_language)
+            # whisper_language is the 2-letter ISO-639-1 code ("zh", "en", …)
+            return alignment_data.get("whisper_language", fallback_language)
         except Exception as e:
             logger.warning(f"Could not extract language from alignment: {e}")
             return fallback_language

@@ -19,6 +19,7 @@ from services.tts.alignment import (
     AlignmentService,
     detect_language_strategy,
     has_normalization_risk,
+    normalize_whisper_lang,
 )
 
 
@@ -28,15 +29,61 @@ from services.tts.alignment import (
 
 
 class TestDetectLanguageStrategy:
-    """Tests for the v1 language strategy detection (plan §5 strategy table)."""
+    """Tests for the v2 language strategy detection (hint-priority)."""
+
+    # ------------------------------------------------------------------
+    # v2: hint-provided cases (always follow the TTS locale)
+    # ------------------------------------------------------------------
+
+    def test_zh_hint_returns_locale_zh(self):
+        lang, quality = detect_language_strategy("你好世界", "zh")
+        assert lang == "zh"
+        assert quality == "locale_zh"
+
+    def test_zh_cn_hint_returns_locale_zh(self):
+        lang, quality = detect_language_strategy("你好世界", "zh-CN")
+        assert lang == "zh"
+        assert quality == "locale_zh"
+
+    def test_zh_tw_hint_returns_locale_zh(self):
+        lang, quality = detect_language_strategy("你好世界", "zh-TW")
+        assert lang == "zh"
+        assert quality == "locale_zh"
+
+    def test_en_hint_returns_locale_en(self):
+        lang, quality = detect_language_strategy("Hello world", "en")
+        assert lang == "en"
+        assert quality == "locale_en"
+
+    def test_en_us_hint_returns_locale_en(self):
+        lang, quality = detect_language_strategy("Hello world", "en-US")
+        assert lang == "en"
+        assert quality == "locale_en"
+
+    def test_zh_hint_with_mixed_text_still_locale_zh(self):
+        """Even mixed text respects the hint — locale priority wins."""
+        lang, quality = detect_language_strategy("AI力量无穷", "zh-CN")
+        assert lang == "zh"
+        assert quality == "locale_zh"
+
+    def test_en_hint_with_chinese_text_respects_hint(self):
+        """TTS job said en; alignment must follow the job, not the text glyphs."""
+        lang, quality = detect_language_strategy("你好", "en")
+        assert lang == "en"
+        assert quality == "locale_en"
+
+    def test_zh_hint_with_numbers_locale_zh(self):
+        """Digits in Chinese narration must not override the hint."""
+        lang, quality = detect_language_strategy("1949年到2024年", "zh-CN")
+        assert lang == "zh"
+        assert quality == "locale_zh"
+
+    # ------------------------------------------------------------------
+    # v2: no-hint heuristic cases
+    # ------------------------------------------------------------------
 
     def test_pure_chinese_no_hint(self):
         lang, quality = detect_language_strategy("你好世界", None)
-        assert lang == "zh"
-        assert quality == "monolingual_zh"
-
-    def test_pure_chinese_with_zh_hint(self):
-        lang, quality = detect_language_strategy("你好世界", "zh")
         assert lang == "zh"
         assert quality == "monolingual_zh"
 
@@ -45,51 +92,98 @@ class TestDetectLanguageStrategy:
         assert lang == "en"
         assert quality == "monolingual_en"
 
-    def test_pure_english_with_en_hint(self):
-        lang, quality = detect_language_strategy("Hello world", "en")
-        assert lang == "en"
-        assert quality == "monolingual_en"
+    def test_chinese_with_numbers_no_hint_is_monolingual_zh(self):
+        """Digits must NOT be counted as Latin letters (v2 digit-fix)."""
+        lang, quality = detect_language_strategy("1949年到2024年", None)
+        assert lang == "zh"
+        assert quality == "monolingual_zh"
 
-    def test_mixed_latin_majority(self):
-        # "hello world" = 10 latin, "好" = 1 CJK → 90 % Latin → en
+    def test_mixed_latin_majority_no_hint(self):
+        # "hello world" = 10 Latin letters, "好" = 1 CJK → 91 % Latin → en
         lang, quality = detect_language_strategy("hello world 好", None)
         assert lang == "en"
         assert quality == "mixed_fallback"
 
-    def test_mixed_cjk_majority(self):
-        # "你好世界hi" = 4 CJK, 2 latin → 33 % Latin → zh
+    def test_mixed_cjk_majority_no_hint(self):
+        # "你好世界hi" = 4 CJK, 2 Latin letters → 33 % Latin → zh
         lang, quality = detect_language_strategy("你好世界hi", None)
         assert lang == "zh"
         assert quality == "mixed_fallback"
 
     def test_mixed_exactly_40_percent_latin_uses_zh(self):
-        # 4 CJK, 2 Latin + 1 more Latin → 3/(4+3) ≈ 43 % → en
-        # exactly 40 % boundary: 2 latin / 5 total alnum → 40 % → still zh (> 0.40)
+        # "abcd你好世界xy" → 6 Latin letters, 4 CJK → 60 % Latin → en
         lang, quality = detect_language_strategy("abcd你好世界xy", None)
-        # 6 latin, 4 CJK → 60 % latin → en
         assert lang == "en"
         assert quality == "mixed_fallback"
-
-    def test_no_alphanumeric_uses_hint(self):
-        lang, quality = detect_language_strategy("，。！", "zh")
-        assert lang == "zh"
-        assert quality == "monolingual_zh"
 
     def test_no_alphanumeric_no_hint_defaults_zh(self):
         lang, quality = detect_language_strategy("，。！", None)
         assert lang == "zh"
         assert quality == "monolingual_zh"
 
+    def test_digits_only_no_hint_defaults_zh(self):
+        """Pure digit text has no letters; should default to zh."""
+        lang, quality = detect_language_strategy("1234567890", None)
+        assert lang == "zh"
+        assert quality == "monolingual_zh"
+
+    def test_unknown_hint_falls_through_to_heuristic(self):
+        """Unrecognized locale tags trigger heuristic detection."""
+        lang, quality = detect_language_strategy("你好世界", "xx-YY")
+        assert lang == "zh"
+        assert quality == "monolingual_zh"
+
     def test_english_with_punctuation_only(self):
-        lang, quality = detect_language_strategy("Hello, world!", "en")
+        lang, quality = detect_language_strategy("Hello, world!", None)
         assert lang == "en"
         assert quality == "monolingual_en"
 
-    def test_chinese_with_english_hint_but_no_latin(self):
-        # No Latin chars, so hint is ignored; returns zh / monolingual_zh
-        lang, quality = detect_language_strategy("你好", "en")
-        assert lang == "zh"
-        assert quality == "monolingual_zh"
+
+# ---------------------------------------------------------------------------
+# normalize_whisper_lang
+# ---------------------------------------------------------------------------
+
+
+class TestNormalizeWhisperLang:
+    """Tests for BCP-47 locale tag → Whisper 2-letter code normalization."""
+
+    def test_zh_returns_zh(self):
+        assert normalize_whisper_lang("zh") == "zh"
+
+    def test_zh_cn_returns_zh(self):
+        assert normalize_whisper_lang("zh-CN") == "zh"
+
+    def test_zh_tw_returns_zh(self):
+        assert normalize_whisper_lang("zh-TW") == "zh"
+
+    def test_zh_hk_returns_zh(self):
+        assert normalize_whisper_lang("zh-HK") == "zh"
+
+    def test_en_returns_en(self):
+        assert normalize_whisper_lang("en") == "en"
+
+    def test_en_us_returns_en(self):
+        assert normalize_whisper_lang("en-US") == "en"
+
+    def test_en_gb_returns_en(self):
+        assert normalize_whisper_lang("en-GB") == "en"
+
+    def test_none_returns_none(self):
+        assert normalize_whisper_lang(None) is None
+
+    def test_empty_string_returns_none(self):
+        assert normalize_whisper_lang("") is None
+
+    def test_unknown_locale_returns_none(self):
+        assert normalize_whisper_lang("xx-YY") is None
+
+    def test_base_subtag_fallback(self):
+        """zh-Hant-HK → base subtag 'zh' → 'zh'."""
+        assert normalize_whisper_lang("zh-Hant-HK") == "zh"
+
+    def test_case_insensitive(self):
+        assert normalize_whisper_lang("ZH-CN") == "zh"
+        assert normalize_whisper_lang("EN-US") == "en"
 
 
 # ---------------------------------------------------------------------------
@@ -167,6 +261,7 @@ class TestAlignmentResultSchema:
             "model",
             "device",
             "audio_duration_seconds",
+            "whisper_language",
             "language_strategy",
             "alignment_quality",
             "source_text",
@@ -206,11 +301,21 @@ class TestAlignmentResultSchema:
         assert d["audio_duration_seconds"] == round(12.3456789, 4)
 
     def test_alignment_quality_values(self):
-        for quality in ("monolingual_zh", "monolingual_en", "mixed_fallback"):
+        for quality in (
+            "monolingual_zh",
+            "monolingual_en",
+            "mixed_fallback",
+            "locale_zh",
+            "locale_en",
+        ):
             r = self._make_result(alignment_quality=quality)
             d = r.to_dict()
             assert d["alignment_quality"] == quality
             assert d["language_strategy"] == quality  # both must match
+
+    def test_whisper_language_in_dict(self):
+        r = self._make_result(whisper_language="zh")
+        assert r.to_dict()["whisper_language"] == "zh"
 
 
 # ---------------------------------------------------------------------------

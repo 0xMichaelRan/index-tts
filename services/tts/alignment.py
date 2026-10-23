@@ -28,50 +28,126 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _CJK_RE = re.compile(r"[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]+")
-_LATIN_ALNUM_RE = re.compile(r"[A-Za-z0-9]+")
+# Latin *letters* only — digits are intentionally excluded so that numerals in
+# Chinese text (e.g. "1949年") are not counted as Latin script characters.
+_LATIN_LETTERS_RE = re.compile(r"[A-Za-z]+")
 
 # Characters that suggest normalization mismatch risk (digits, currency, etc.)
 _NORMALIZATION_RISK_RE = re.compile(r"[$\u20ac\xa3\xa5%]|\d")
 
+# Mapping of TTS locale tags (lowercased) → Whisper 2-letter ISO-639-1 codes.
+# Add entries here when new locales are needed; unknown hints fall through to
+# heuristic script detection.
+_WHISPER_LANG_MAP: dict[str, str] = {
+    # Chinese variants
+    "zh": "zh",
+    "zh-cn": "zh",
+    "zh-tw": "zh",
+    "zh-hk": "zh",
+    "zh-sg": "zh",
+    # English variants
+    "en": "en",
+    "en-us": "en",
+    "en-gb": "en",
+    "en-au": "en",
+    # Other languages supported by Whisper small
+    "ja": "ja",
+    "ko": "ko",
+    "fr": "fr",
+    "de": "de",
+    "es": "es",
+    "pt": "pt",
+    "ru": "ru",
+    "it": "it",
+}
+
 
 # ---------------------------------------------------------------------------
-# Language-strategy helpers (v1: monolingual-first)
+# Language-strategy helpers (v2: hint-priority)
 # ---------------------------------------------------------------------------
+
+
+def normalize_whisper_lang(hint: str | None) -> str | None:
+    """
+    Normalize a TTS locale tag to a Whisper-compatible 2-letter ISO-639-1 code.
+
+    Examples::
+
+        normalize_whisper_lang("zh-CN")  # → "zh"
+        normalize_whisper_lang("zh-TW")  # → "zh"
+        normalize_whisper_lang("en-US")  # → "en"
+        normalize_whisper_lang("en")     # → "en"
+        normalize_whisper_lang(None)     # → None
+        normalize_whisper_lang("xx-YY") # → None (unknown; triggers heuristic)
+
+    Returns ``None`` when the hint is absent or unrecognized so callers can
+    fall back to heuristic script detection.
+    """
+    if not hint:
+        return None
+    normalized = _WHISPER_LANG_MAP.get(hint.lower())
+    if normalized:
+        return normalized
+    # Try base subtag only (e.g. "zh" from "zh-Hant-HK")
+    base = hint.split("-")[0].split("_")[0].lower()
+    return _WHISPER_LANG_MAP.get(base)
 
 
 def detect_language_strategy(text: str, language_hint: str | None) -> tuple[str, str]:
     """
-    Determine the v1 alignment language and quality tag.
+    Determine the alignment language and quality tag for stable-whisper.
 
-    v1 strategy table (plan §5):
-      - No CJK in text → use ``language_hint`` or ``"en"``; quality ``"monolingual_en"``
-      - No Latin letters in text → ``"zh"``; quality ``"monolingual_zh"``
-      - Mixed → majority script wins (Latin > 40 % of alnum → ``"en"``);
-        quality ``"mixed_fallback"``
+    v2 strategy (hint-priority):
+
+    1. **Hint provided and recognized** → always use the TTS job's original
+       locale as the Whisper language; quality tag is ``locale_<lang>``
+       (e.g. ``locale_zh``, ``locale_en``).
+       This is the common case: the synthesiser already knows the language.
+
+    2. **No recognized hint** → heuristic script analysis:
+
+       - No CJK characters → ``"en"``; quality ``"monolingual_en"``
+       - No Latin *letters* (digits excluded) → ``"zh"``; quality ``"monolingual_zh"``
+       - Mixed → majority-letter rule (Latin letters > 40 % of letter+CJK
+         count → ``"en"``); quality ``"mixed_fallback"``
+
+    .. note::
+        Digits (0–9) are intentionally **not** treated as Latin script.
+        Text like ``"1949年到2024年"`` is pure Chinese narration and should
+        produce ``"monolingual_zh"``, not ``"mixed_fallback"``.
+
+    Args:
+        text:           The TTS source text (after sanitization).
+        language_hint:  BCP-47 locale tag from the RabbitMQ job payload
+                        (``spokenLang``), e.g. ``"zh-CN"``, ``"zh-TW"``,
+                        ``"en"``. May be ``None``.
 
     Returns:
-        (whisper_language, alignment_quality)
+        ``(whisper_language, alignment_quality)``
     """
+    # --- v2 path: honour the TTS job locale ---
+    whisper_lang = normalize_whisper_lang(language_hint)
+    if whisper_lang is not None:
+        return whisper_lang, f"locale_{whisper_lang}"
+
+    # --- Heuristic fallback: no usable hint ---
+    # Count CJK characters and Latin *letters* (digits excluded).
     cjk_chars = sum(len(m.group()) for m in _CJK_RE.finditer(text))
-    latin_chars = sum(len(m.group()) for m in _LATIN_ALNUM_RE.finditer(text))
-    total_alnum = cjk_chars + latin_chars
+    latin_letter_chars = sum(len(m.group()) for m in _LATIN_LETTERS_RE.finditer(text))
+    total_script = cjk_chars + latin_letter_chars
 
-    if total_alnum == 0:
-        # No alphanumeric content; respect hint or fall back to zh
-        lang = language_hint or "zh"
-        return lang, f"monolingual_{lang}"
-
-    if cjk_chars == 0:
-        # Pure Latin/English
-        lang = language_hint if language_hint in ("en", "zh") else "en"
-        return lang, "monolingual_en"
-
-    if latin_chars == 0:
-        # Pure Chinese
+    if total_script == 0:
+        # No letters at all (punctuation / digits only) — assume Chinese
         return "zh", "monolingual_zh"
 
-    # Mixed — majority-script rule
-    latin_ratio = latin_chars / total_alnum
+    if cjk_chars == 0:
+        return "en", "monolingual_en"
+
+    if latin_letter_chars == 0:
+        return "zh", "monolingual_zh"
+
+    # Mixed script — majority-letter rule
+    latin_ratio = latin_letter_chars / total_script
     lang = "en" if latin_ratio > 0.40 else "zh"
     return lang, "mixed_fallback"
 
@@ -128,7 +204,7 @@ class AlignmentResult:
         self.engine_version = engine_version
 
     def to_dict(self) -> dict[str, Any]:
-        """Serialise to the v1 parsed JSON schema (plan §7.3)."""
+        """Serialise to the v2 parsed JSON schema."""
         return {
             "version": "1.0",
             "job_id": self.job_id,
@@ -137,6 +213,9 @@ class AlignmentResult:
             "model": "small",
             "device": "cpu",
             "audio_duration_seconds": round(self.audio_duration_seconds, 4),
+            # whisper_language: the 2-letter ISO-639-1 code passed to Whisper
+            # (e.g. "zh", "en"). Consumers use this for language-aware rendering.
+            "whisper_language": self.whisper_language,
             "language_strategy": self.alignment_quality,
             "alignment_quality": self.alignment_quality,
             "source_text": self.source_text,
