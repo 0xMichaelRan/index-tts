@@ -5,13 +5,13 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "indextts-worker"
 version = "1.0.0"
-description = "Personal TTS Worker: FastAPI + RabbitMQ integration for IndexTTS-1.5 zero-shot text-to-speech"
+description = "IndexTTS Worker: 24/7 RabbitMQ worker for IndexTTS-1.5 zero-shot text-to-speech & Vox video rendering"
 requires-python = "==3.10.*"
 license = {text = "Apache-2.0"}
 authors = [
     {name = "0xmichaelran", email = "michaelran16@gmail.com"}
 ]
-keywords = ["TTS", "text-to-speech", "zero-shot", "voice-cloning", "fastapi", "rabbitmq", "worker", "microservice"]
+keywords = ["TTS", "text-to-speech", "zero-shot", "voice-cloning", "rabbitmq", "worker", "microservice", "vox"]
 classifiers = [
     "Programming Language :: Python :: 3.10",
     "Operating System :: OS Independent",

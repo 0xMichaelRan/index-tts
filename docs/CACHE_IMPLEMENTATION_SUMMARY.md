@@ -135,9 +135,9 @@ uv run python cache.py inspect --key abc123def456
 
 ### 5. Testing ✅
 
-**Files Created:**
-- `scripts/test_cache_service.py` - Integration tests (6 test suites)
-- `tests/test_cache_service.py` - Unit tests (pytest, 20+ test cases)
+**Test Suites:**
+- `tests/integration/test_db_integration.py` - Database integration tests
+- `tests/unit/test_cache_service.py` - Unit tests (pytest, 20+ test cases)
 
 **Test Coverage:**
 - ✅ Database connection
@@ -153,10 +153,10 @@ uv run python cache.py inspect --key abc123def456
 **Run Tests:**
 ```bash
 # Integration tests
-uv run python scripts/test_cache_service.py
+uv run pytest tests/integration/test_db_integration.py -v
 
 # Unit tests
-uv run pytest tests/test_cache_service.py -v
+uv run pytest tests/unit/test_cache_service.py -v
 ```
 
 ### 6. Documentation ✅
@@ -216,7 +216,7 @@ createdb indextts
 uv run alembic upgrade head
 
 # 5. Verify
-uv run python scripts/test_cache_service.py
+uv run pytest tests/unit/test_cache_service.py
 uv run python cache.py stats
 ```
 
@@ -315,11 +315,11 @@ Total: 6/6 tests passed 🎉
 
 ### Unit Tests
 
-```
-uv run pytest tests/test_cache_service.py -v
+```bash
+uv run pytest tests/unit/test_cache_service.py -v
 
-tests/test_cache_service.py::TestCacheKeyGeneration::test_cache_key_is_deterministic PASSED
-tests/test_cache_service.py::TestCacheKeyGeneration::test_cache_key_is_unique PASSED
+tests/unit/test_cache_service.py::TestCacheKeyGeneration::test_cache_key_is_deterministic PASSED
+tests/unit/test_cache_service.py::TestCacheKeyGeneration::test_cache_key_is_unique PASSED
 tests/test_cache_service.py::TestCacheLookup::test_lookup_miss_returns_none PASSED
 tests/test_cache_service.py::TestCacheLookup::test_lookup_returns_stored_entry PASSED
 tests/test_cache_service.py::TestCacheStore::test_store_creates_entry PASSED
@@ -391,8 +391,8 @@ All tests passed ✅
 
 ### Testing ✅
 
-- [x] Write integration tests (`scripts/test_cache_service.py`)
-- [x] Write unit tests (`tests/test_cache_service.py`)
+- [x] Write integration tests (`tests/integration/test_db_integration.py`)
+- [x] Write unit tests (`tests/unit/test_cache_service.py`)
 - [x] Test cache hit/miss scenarios
 - [x] Test eviction policy
 - [x] Test cache invalidation

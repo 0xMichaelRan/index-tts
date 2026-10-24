@@ -52,7 +52,7 @@ IndexTTS is designed with platform-specific optimizations while maintaining a un
 indextts/
 ├── __init__.py                    Factory function exports
 ├── infer.py                       GPU inference + factory
-├── cli.py                         Command-line interface
+├── macos_tts.py                   macOS AVFoundation native TTS
 ├── BigVGAN/                       Vocoder implementation
 │   ├── bigvgan.py
 │   ├── models.py
@@ -91,7 +91,6 @@ services/                          Worker services (domain subpackages)
 │   ├── synthesis_pipeline.py      Synthesis orchestrator
 │   ├── text_metrics.py            Token / character metrics
 │   ├── text_sanitizer.py          Text pre-processing
-│   ├── tts_api.py                 FastAPI HTTP entrypoint
 │   ├── tts_job_service.py         Job-level TTS service
 │   └── tts_worker.py              Main RabbitMQ worker
 └── vox/                           Vox video rendering domain
@@ -105,6 +104,11 @@ app/                               Database & caching
 ├── cache_service.py               TTS synthesis cache
 ├── database.py                    Database connection
 └── models.py                      SQLAlchemy models
+
+Entry Points:
+├── worker.py                      Main 24/7 worker launcher (TTS + Vox)
+├── monitor.py                     Queue depth & DLQ monitor CLI
+└── cache.py                       Synthesis cache management CLI
 ```
 
 ---
@@ -355,20 +359,18 @@ IS_FP16=true              # Use float16 for faster inference
 DEVICE=cuda:0             # GPU device (cuda:0, mps, cpu)
 USE_CUDA_KERNEL=false     # Use CUDA kernels if available
 
-# API service
-HOST=0.0.0.0
-PORT=8848
-WORKERS=4
-LOG_LEVEL=info
+# RabbitMQ & Database
+RABBITMQ_URL=amqp://guest:guest@localhost:5672/
+DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/indextts
 
-# File storage
-UPLOAD_DIR=outputs/audio_prompt
-OUTPUT_DIR=outputs/tts_output
-MAX_UPLOAD_SIZE=104857600  # 100MB
-
-# Inference defaults
-MAX_TEXT_TOKENS_PER_SENTENCE=120
-SENTENCES_BUCKET_MAX_SIZE=4
+# Worker configuration
+LOG_LEVEL=INFO
+TTS_CACHE_ENABLED=true
+TTS_USE_FAST_INFERENCE=true
+TTS_NORMALIZATION_ENABLED=true
+TTS_NORMALIZATION_TARGET_LUFS=-16.0
+TTS_OUTPUT_DIR=outputs/tts_output
+VOX_RENDER_ENABLED=true
 ```
 
 ### Model Configuration

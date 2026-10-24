@@ -65,7 +65,9 @@ def test_vox_render_consumer_declares_matching_queues():
     from services.messaging.rabbitmq_config import QUEUE_CONFIGS
     from services.vox.vox_render_consumer import VoxRenderConsumer
 
-    with patch("services.vox.vox_render_consumer.pika.BlockingConnection") as mock_conn_cls:
+    with patch(
+        "services.vox.vox_render_consumer.pika.BlockingConnection"
+    ) as mock_conn_cls:
         mock_conn = MagicMock()
         mock_channel = MagicMock()
         mock_conn_cls.return_value = mock_conn
@@ -90,4 +92,3 @@ def test_vox_render_consumer_declares_matching_queues():
             assert q in declared_queues, f"Missing queue {q}"
             assert declared_queues[q]["durable"] == QUEUE_CONFIGS[q]["durable"]
             assert declared_queues[q]["arguments"] == QUEUE_CONFIGS[q]["arguments"]
-

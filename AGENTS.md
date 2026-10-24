@@ -23,8 +23,6 @@ uv pip install -e .           # Install package in editable mode
 uv run python worker.py       # Start main 24/7 IndexTTS & Vox worker
 uv run python monitor.py      # Monitor queue lengths, DLQ, and worker health
 uv run python cache.py stats  # Inspect synthesis cache (stats, top, evict, clear)
-uv run python webui.py        # Run Gradio Web UI (port 7860)
-uv run python api.py          # Run unified FastAPI REST server (port 8848)
 
 # Testing
 uv run pytest tests/unit                              # Run fast unit tests (mocked, ~3s)
@@ -46,7 +44,7 @@ uv run python -m services.messaging.rabbitmq_config   # Idempotently declare DLX
 ```powershell
 conda activate index-tts
 python worker.py
-python -m pytest tests/unit/test_tts_worker_core.py
+python -m pytest tests/unit/test_handle_message.py
 ```
 
 ---

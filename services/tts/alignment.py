@@ -546,7 +546,11 @@ class AlignmentService:
             abs_out = os.path.abspath(output_dir)
             parent = os.path.dirname(abs_out)
             if job_id and os.path.basename(abs_out) == job_id:
-                if parent and parent != os.path.abspath(os.sep) and os.path.isdir(parent):
+                if (
+                    parent
+                    and parent != os.path.abspath(os.sep)
+                    and os.path.isdir(parent)
+                ):
                     scan_dir = parent
 
             retained_suffixes = (
@@ -590,7 +594,9 @@ class AlignmentService:
                     f"files older than {max_age_days} days in {scan_dir}"
                 )
         except Exception as exc:
-            logger.warning(f"[JOB {job_id}] Alignment files auto-eviction failed: {exc}")
+            logger.warning(
+                f"[JOB {job_id}] Alignment files auto-eviction failed: {exc}"
+            )
 
         return purged_count
 

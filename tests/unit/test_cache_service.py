@@ -11,7 +11,7 @@ Tests cover:
 - Voice invalidation
 
 Run:
-    uv run pytest tests/test_cache_service.py -v
+    uv run pytest tests/unit/test_cache_service.py -v
 """
 
 import os
