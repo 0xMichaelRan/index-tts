@@ -64,12 +64,21 @@ class TTSSynthesisCache(Base):
 
     # File locations
     base_audio_local_path = Column(
-        String(1024), nullable=False, comment="Local filesystem path to cached WAV file"
+        String(1024),
+        nullable=True,
+        comment="Local filesystem path (L1 hot cache, optional — may be absent on restored instances)",
     )
     base_audio_s3_path = Column(
         String(1024),
+        nullable=True,  # nullable until migration backfills existing rows; app logic treats None as MISS
+        comment="S3 key in klatu-tts bucket under cache/tts/<prefix>/<key>.wav (canonical, always populated for new entries)",
+    )
+    # Alignment JSON S3 path for the ratio=1.0 base audio — enables skipping
+    # Whisper forced alignment on cache hits (3–8s CPU saving per cached job).
+    base_alignment_s3_path = Column(
+        String(1024),
         nullable=True,
-        comment="[UNUSED] Reserved for future S3 backup (cache is currently local-filesystem based for performance)",
+        comment="S3 key to parsed alignment JSON for base audio (populated on first synthesis, reused on cache hits)",
     )
 
     # Audio metadata
@@ -122,7 +131,6 @@ class TTSSynthesisCache(Base):
     # Constraints
     __table_args__ = (
         CheckConstraint("audio_duration_seconds > 0", name="valid_duration"),
-        CheckConstraint("LENGTH(base_audio_local_path) > 0", name="valid_file_path"),
         CheckConstraint("hit_count >= 0", name="valid_hit_count"),
     )
 
