@@ -157,6 +157,111 @@ class StorageManager:
             except Exception as e:
                 logger.warning(f"Failed to remove {path}: {e!s}")
 
+    def upload_to_cache(self, local_path: str, cache_s3_key: str) -> str:
+        """Upload a local file to a content-addressed S3 cache key in the tts bucket.
+
+        Used by CacheManager.store() to persist base WAV audio and alignment JSON
+        to ``cache/tts/<prefix>/<key>.wav`` / ``cache/tts/<prefix>/<key>_alignment.json``.
+
+        Args:
+            local_path: Local filesystem path to the file to upload.
+            cache_s3_key: Destination S3 key (e.g. ``cache/tts/3a4f/3a4f...wav``).
+
+        Returns:
+            The S3 key after successful upload.
+
+        Raises:
+            S3ConfigError: On upload failure.
+        """
+        logger.info(f"Cache upload: {local_path} → tts:{cache_s3_key}")
+        return self.uploader.upload_with_retry(
+            job_id="cache",
+            local_path=local_path,
+            remote_path=cache_s3_key,
+            bucket_type="tts",
+            verify_integrity=True,
+        )
+
+    def copy_s3_to_s3(self, source_s3_key: str, dest_s3_key: str) -> None:
+        """Server-side copy within the tts bucket (avoids a download+upload round-trip).
+
+        Used to re-key an alignment JSON from its job-specific path
+        (``studio/20261024/<jobid>/...json``) to the canonical cache path
+        (``cache/tts/<prefix>/<key>_alignment.json``).
+
+        Falls back to download→upload if copy_object is unavailable.
+
+        Args:
+            source_s3_key: Source S3 key within the tts bucket.
+            dest_s3_key: Destination S3 key within the tts bucket.
+
+        Raises:
+            S3ConfigError: On copy failure.
+        """
+        logger.info(f"S3 copy: tts:{source_s3_key} → tts:{dest_s3_key}")
+        boto_client, tts_bucket = self.s3_client._resolve("tts")
+        copy_source = {"Bucket": tts_bucket, "Key": source_s3_key}
+        try:
+            boto_client.copy_object(
+                CopySource=copy_source,
+                Bucket=tts_bucket,
+                Key=dest_s3_key,
+            )
+            logger.debug(f"S3 copy complete: {dest_s3_key}")
+        except Exception as exc:
+            # Fallback: download → re-upload (handles providers that don't support copy_object)
+            logger.warning(
+                f"S3 copy_object failed ({exc}), falling back to download+upload"
+            )
+            import tempfile
+
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".tmp") as tmp:
+                tmp_path = tmp.name
+            try:
+                self.s3_client.download_file(
+                    remote_path=source_s3_key,
+                    local_path=tmp_path,
+                    bucket_type="tts",
+                )
+                self.uploader.upload_with_retry(
+                    job_id="cache_copy",
+                    local_path=tmp_path,
+                    remote_path=dest_s3_key,
+                    bucket_type="tts",
+                    verify_integrity=False,
+                )
+            finally:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+
+    def download_s3_to_local(self, s3_key: str, output_dir: str, filename: str) -> str:
+        """Download a file from the tts bucket to a local output path.
+
+        Used on cache hits to pull the base WAV (or alignment JSON) from the
+        content-addressed S3 cache key into the job's working directory.
+
+        Args:
+            s3_key: S3 key within the tts bucket.
+            output_dir: Local directory where the file will be saved.
+            filename: Target filename within ``output_dir``.
+
+        Returns:
+            Absolute local path to the downloaded file.
+
+        Raises:
+            S3ConfigError: On download failure.
+        """
+        os.makedirs(output_dir, exist_ok=True)
+        local_path = os.path.join(output_dir, filename)
+        logger.info(f"S3 download (cache): tts:{s3_key} → {local_path}")
+        self.s3_client.download_file(
+            remote_path=s3_key,
+            local_path=local_path,
+            bucket_type="tts",
+            max_retries=3,
+        )
+        return local_path
+
     def create_output_dir(self, job_id: str) -> str:
         """
         Create output directory for job artifacts.

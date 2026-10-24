@@ -194,6 +194,7 @@ class SynthesisPipeline:
         local_alignment_json = None
         cache_hit = False
         cache_key = None
+        cached_alignment_s3_path = None
 
         # Early S3 output path construction.
         # language and speed_ratio are known from the dispatch payload, and TTS
@@ -234,25 +235,47 @@ class SynthesisPipeline:
             try:
                 # Stage 1: Cache lookup
                 if self.cache_manager and self.cache_manager.enabled:
-                    cache_hit, cached_audio_path, cache_key = self.cache_manager.lookup(
-                        job_id, text, audio_prompt_path, speed_ratio
+                    cache_hit, cached_base_path, cache_key, cached_alignment_s3_path = (
+                        self.cache_manager.lookup(
+                            job_id, text, audio_prompt_path, speed_ratio
+                        )
                     )
-                    if cache_hit and cached_audio_path:
-                        # Cached audio is always ratio=1.0 (base speed).
-                        # Copy to a job-specific working file to avoid mutating
-                        # the cache, then apply time-stretching if needed.
+                    if cache_hit and cached_base_path:
                         output_dir = self.storage_manager.create_output_dir(job_id)
+
+                        # Determine if cached_base_path is an S3 key (L0) or local path (L1)
+                        is_s3_key = (
+                            not os.path.exists(cached_base_path)
+                            and not os.path.isabs(cached_base_path)
+                            or cached_base_path.startswith("cache/tts/")
+                        )
+
+                        if is_s3_key:
+                            # L0: download base WAV from S3 content-addressed cache key
+                            logger.info(
+                                f"[JOB {job_id}] Cache HIT (L0): downloading base audio "
+                                f"from S3 tts:{cached_base_path}"
+                            )
+                            local_base_audio = (
+                                self.storage_manager.download_s3_to_local(
+                                    cached_base_path, output_dir, f"{job_id}_base.wav"
+                                )
+                            )
+                        else:
+                            # L1: copy from local hot cache
+                            local_base_audio = cached_base_path
+
                         if speed_ratio != 1.0:
                             logger.info(
                                 f"[JOB {job_id}] Cache HIT: applying time-stretch "
                                 f"(ratio={speed_ratio}) to cached base audio"
                             )
                             local_output = self.audio_processor.apply_ratio_to_audio(
-                                cached_audio_path, speed_ratio, job_id, output_dir
+                                local_base_audio, speed_ratio, job_id, output_dir
                             )
                         else:
                             local_output = self.audio_processor.copy_audio_file(
-                                cached_audio_path, job_id, output_dir
+                                local_base_audio, job_id, output_dir
                             )
 
                 # Stage 2: Synthesis (if no cache hit)
@@ -266,11 +289,27 @@ class SynthesisPipeline:
                         job_data,
                     )
 
-                # Stage 3: Forced alignment (mandatory)
+                # Stage 3: Forced alignment — skipped on cache hit when alignment is cached
                 output_dir = self.storage_manager.create_output_dir(job_id)
-                _, _, local_alignment_json = self._run_alignment(
-                    job_id, local_output, text, language, output_dir
-                )
+                alignment_duration_seconds: float | None = None
+
+                if cache_hit and cached_alignment_s3_path:
+                    # CACHE HIT with cached alignment: download pre-computed JSON, skip Whisper
+                    logger.info(
+                        f"[JOB {job_id}] Cache HIT: reusing alignment from "
+                        f"tts:{cached_alignment_s3_path} (skipping Whisper)"
+                    )
+                    local_alignment_json = self.storage_manager.download_s3_to_local(
+                        cached_alignment_s3_path, output_dir, f"{job_id}_alignment.json"
+                    )
+                    alignment_duration_seconds = 0.0
+                    # Reuse the cached S3 path directly — no new upload needed
+                    alignment_s3_path = cached_alignment_s3_path
+                else:
+                    # Cache MISS or no cached alignment: run Whisper
+                    _, _, local_alignment_json = self._run_alignment(
+                        job_id, local_output, text, language, output_dir
+                    )
 
                 # Reconcile detected language with the pre-computed S3 path.
                 # Whisper may detect a different ISO-639-1 code (e.g. "zh" from
@@ -300,12 +339,29 @@ class SynthesisPipeline:
                     job_id, local_output, output_s3_path
                 )
 
-                # Stage 6: Upload alignment JSON
-                alignment_s3_path, alignment_duration_seconds = (
-                    self._run_alignment_upload(
-                        job_id, local_alignment_json, output_s3_path
+                # Stage 6: Upload alignment JSON (only when Whisper ran)
+                if cache_hit and cached_alignment_s3_path:
+                    # Alignment was reused from cache — S3 path already known
+                    pass  # alignment_s3_path and alignment_duration_seconds set above
+                else:
+                    alignment_s3_path, alignment_duration_seconds = (
+                        self._run_alignment_upload(
+                            job_id, local_alignment_json, output_s3_path
+                        )
                     )
-                )
+                    # Backfill alignment S3 path into cache (best-effort, non-fatal)
+                    if (
+                        self.cache_manager
+                        and self.cache_manager.enabled
+                        and cache_key
+                        and alignment_s3_path
+                        and not cache_hit
+                    ):
+                        self.cache_manager.update_alignment_s3_path(
+                            job_id, cache_key, alignment_s3_path
+                        )
+                        # Trigger LRU eviction after first store
+                        self.cache_manager.maybe_evict(job_id)
 
                 # Stage 7: Calculate metrics
                 audio_duration = self.audio_processor.get_audio_duration(local_output)
@@ -487,9 +543,7 @@ class SynthesisPipeline:
                 synthesis_duration,
                 language,
             )
-            # Trigger background eviction if cache exceeds threshold.
-            # Runs in a daemon thread — does not block synthesis.
-            self.cache_manager.maybe_evict(job_id)
+            # NOTE: eviction is triggered in process_job after alignment is backfilled.
 
         # Stage 2d: Apply time-stretching if needed
         output_dir = self.storage_manager.create_output_dir(job_id)

@@ -231,10 +231,12 @@ class TTSCacheService:
         self,
         text: str,
         audio_prompt_path: str,
-        base_audio_local_path: str,
+        base_audio_local_path: Optional[str],
         audio_duration_seconds: float,
         synthesis_duration_ms: int,
         language: Optional[str] = None,
+        base_audio_s3_path: Optional[str] = None,
+        base_alignment_s3_path: Optional[str] = None,
     ) -> TTSSynthesisCache:
         """
         Store new synthesis in cache.
@@ -242,10 +244,12 @@ class TTSCacheService:
         Args:
             text: Synthesized text
             audio_prompt_path: S3 path to voice prompt
-            base_audio_local_path: Local path to base audio (ratio=1.0)
+            base_audio_local_path: Local path to base audio (ratio=1.0); nullable post-migration
             audio_duration_seconds: Duration of audio
             synthesis_duration_ms: Time taken to synthesize
             language: Language code (e.g., 'en', 'zh')
+            base_audio_s3_path: S3 key for content-addressed base WAV in klatu-tts
+            base_alignment_s3_path: S3 key for content-addressed alignment JSON in klatu-tts
 
         Returns:
             Created cache entry
@@ -256,31 +260,28 @@ class TTSCacheService:
         Note:
             All cached audio is stored at ratio=1.0 (base speed).
             Time-stretching is applied separately when needed.
-            base_audio_s3_path is intentionally not used. The cache is local-filesystem
-            based for performance (avoid S3 latency on every synthesis lookup). S3 upload
-            is handled separately by the worker/backend if backup is needed.
         """
         cache_key = self.generate_cache_key(text, audio_prompt_path)
         text_hash = self.generate_text_hash(text)
 
-        # Verify file exists
-        if not os.path.exists(base_audio_local_path):
-            raise FileNotFoundError(
-                f"Base audio file not found: {base_audio_local_path}"
-            )
-
-        # Get file size
-        file_size_bytes = os.path.getsize(base_audio_local_path)
+        # Verify local file exists (only when provided — it's optional post-migration 011)
+        file_size_bytes = None
+        relative_path = base_audio_local_path
+        if base_audio_local_path:
+            if not os.path.exists(base_audio_local_path):
+                raise FileNotFoundError(
+                    f"Base audio file not found: {base_audio_local_path}"
+                )
+            file_size_bytes = os.path.getsize(base_audio_local_path)
+            # Phase 3b: store relative path if inside cache_dir.
+            src = Path(base_audio_local_path).resolve()
+            try:
+                relative_path = str(src.relative_to(self.cache_dir.resolve()))
+            except ValueError:
+                relative_path = base_audio_local_path
 
         # Generate semantic filename for easier debugging
         semantic_filename = self.generate_semantic_filename(text, audio_prompt_path)
-
-        # Phase 3b: store relative path if inside cache_dir.
-        src = Path(base_audio_local_path).resolve()
-        try:
-            relative_path = str(src.relative_to(self.cache_dir.resolve()))
-        except ValueError:
-            relative_path = base_audio_local_path
 
         # Phase 3a: upsert — first writer wins, concurrent stores are safe.
         stmt = (
@@ -291,7 +292,8 @@ class TTSCacheService:
                 audio_prompt_path=audio_prompt_path,
                 text_hash=text_hash,
                 base_audio_local_path=relative_path,
-                base_audio_s3_path=None,
+                base_audio_s3_path=base_audio_s3_path,
+                base_alignment_s3_path=base_alignment_s3_path,
                 audio_duration_seconds=audio_duration_seconds,
                 synthesis_duration_ms=synthesis_duration_ms,
                 file_size_bytes=file_size_bytes,
@@ -312,11 +314,15 @@ class TTSCacheService:
             )
         ).scalar_one()
         self.db.expunge(entry)
-        entry.base_audio_local_path = self._resolve_path(entry.base_audio_local_path)
+        if entry.base_audio_local_path:
+            entry.base_audio_local_path = self._resolve_path(
+                entry.base_audio_local_path
+            )
 
+        size_kb = f"{file_size_bytes / 1024:.1f}KB" if file_size_bytes else "(unknown)"
         logger.success(
             f"Cache STORED: {semantic_filename} (duration={audio_duration_seconds:.2f}s, "
-            f"size={file_size_bytes / 1024:.1f}KB)"
+            f"size={size_kb})"
         )
 
         return entry
@@ -710,10 +716,12 @@ class TTSCacheServiceSync:
         self,
         text: str,
         audio_prompt_path: str,
-        base_audio_local_path: str,
+        base_audio_local_path: Optional[str],
         audio_duration_seconds: float,
         synthesis_duration_ms: int,
         language: Optional[str] = None,
+        base_audio_s3_path: Optional[str] = None,
+        base_alignment_s3_path: Optional[str] = None,
     ) -> TTSSynthesisCache:
         """Store new synthesis in cache (synchronous).
 
@@ -725,38 +733,43 @@ class TTSCacheServiceSync:
         Args:
             text: Synthesized text.
             audio_prompt_path: S3 path to voice prompt.
-            base_audio_local_path: Local path to base audio (ratio=1.0).
+            base_audio_local_path: Local path to base audio (ratio=1.0); nullable post-migration.
             audio_duration_seconds: Duration of audio.
             synthesis_duration_ms: Time taken to synthesize.
             language: Language code (e.g. ``'en'``, ``'zh'``).
+            base_audio_s3_path: S3 key for content-addressed base WAV in klatu-tts.
+            base_alignment_s3_path: S3 key for content-addressed alignment JSON in klatu-tts.
 
         Returns:
             Cache entry (existing or newly created).
 
         Raises:
-            FileNotFoundError: If ``base_audio_local_path`` does not exist.
+            FileNotFoundError: If ``base_audio_local_path`` is provided but does not exist.
         """
         cache_key = self.generate_cache_key(text, audio_prompt_path)
         text_hash = self.generate_text_hash(text)
 
-        if not os.path.exists(base_audio_local_path):
-            raise FileNotFoundError(
-                f"Base audio file not found: {base_audio_local_path}"
-            )
+        # base_audio_local_path is nullable post-migration 011 — validate only when provided
+        file_size_bytes = None
+        relative_path = base_audio_local_path
+        if base_audio_local_path:
+            if not os.path.exists(base_audio_local_path):
+                raise FileNotFoundError(
+                    f"Base audio file not found: {base_audio_local_path}"
+                )
+            file_size_bytes = os.path.getsize(base_audio_local_path)
+            # Phase 3b: store only the filename (relative to cache_dir) when the
+            # source file already lives inside cache_dir.  Files supplied from
+            # outside cache_dir (e.g. /tmp during synthesis) are stored with their
+            # absolute path so lookup can still find them.
+            src = Path(base_audio_local_path).resolve()
+            try:
+                relative_path = str(src.relative_to(self.cache_dir.resolve()))
+            except ValueError:
+                # File is outside cache_dir — keep the absolute path.
+                relative_path = base_audio_local_path
 
-        file_size_bytes = os.path.getsize(base_audio_local_path)
         semantic_filename = self.generate_semantic_filename(text, audio_prompt_path)
-
-        # Phase 3b: store only the filename (relative to cache_dir) when the
-        # source file already lives inside cache_dir.  Files supplied from
-        # outside cache_dir (e.g. /tmp during synthesis) are stored with their
-        # absolute path so lookup can still find them.
-        src = Path(base_audio_local_path).resolve()
-        try:
-            relative_path = str(src.relative_to(self.cache_dir.resolve()))
-        except ValueError:
-            # File is outside cache_dir — keep the absolute path.
-            relative_path = base_audio_local_path
 
         # Phase 3a: upsert — first writer wins, concurrent stores are safe.
         stmt = (
@@ -767,7 +780,8 @@ class TTSCacheServiceSync:
                 audio_prompt_path=audio_prompt_path,
                 text_hash=text_hash,
                 base_audio_local_path=relative_path,
-                base_audio_s3_path=None,
+                base_audio_s3_path=base_audio_s3_path,
+                base_alignment_s3_path=base_alignment_s3_path,
                 audio_duration_seconds=audio_duration_seconds,
                 synthesis_duration_ms=synthesis_duration_ms,
                 file_size_bytes=file_size_bytes,
@@ -784,11 +798,15 @@ class TTSCacheServiceSync:
             select(TTSSynthesisCache).where(TTSSynthesisCache.cache_key == cache_key)
         ).scalar_one()
         self.db.expunge(entry)
-        entry.base_audio_local_path = self._resolve_path(entry.base_audio_local_path)
+        if entry.base_audio_local_path:
+            entry.base_audio_local_path = self._resolve_path(
+                entry.base_audio_local_path
+            )
 
+        size_kb = f"{file_size_bytes / 1024:.1f}KB" if file_size_bytes else "(unknown)"
         logger.success(
             f"Cache STORED: {semantic_filename} (duration={audio_duration_seconds:.2f}s, "
-            f"size={file_size_bytes / 1024:.1f}KB)"
+            f"size={size_kb})"
         )
 
         return entry

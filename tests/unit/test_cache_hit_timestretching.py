@@ -1,10 +1,15 @@
 """
 Unit tests for SynthesisPipeline cache-hit time-stretching and eviction triggers.
 
-Tests Phase 1 fixes:
+Updated for Phase 3 4-tuple lookup() return value:
+    (cache_hit, cached_path_or_s3_key, cache_key, cached_alignment_s3_path)
+
+Tests:
 - Fix #1: Time-stretching is applied on cache hit when speed_ratio != 1.0
 - Fix #1: Cached base audio is copied without time-stretching when speed_ratio == 1.0
-- Fix #2: maybe_evict() is invoked after successful cache store
+- Fix #2: maybe_evict() is invoked after alignment is backfilled (not from _run_synthesis)
+- Phase 3: L0 S3 key causes download_s3_to_local instead of direct copy
+- Phase 3: Whisper is skipped when cached_alignment_s3_path is present on cache hit
 """
 
 from unittest.mock import MagicMock, patch
@@ -20,6 +25,9 @@ def mock_pipeline():
     mock_storage_manager = MagicMock()
     mock_storage_manager.create_output_dir.return_value = "/tmp/mock_out"
     mock_storage_manager.build_s3_output_path.return_value = "tts/test/out.wav"
+    mock_storage_manager.download_s3_to_local.return_value = (
+        "/tmp/mock_out/downloaded.wav"
+    )
 
     mock_cache_manager = MagicMock()
     mock_cache_manager.enabled = True
@@ -48,10 +56,16 @@ def mock_pipeline():
 
 
 def test_cache_hit_ratio_1_copies_file(mock_pipeline):
-    """When speed_ratio is 1.0 and cache hits, audio is copied without time-stretching."""
+    """When speed_ratio is 1.0 and cache hits (L1 local), audio is copied without time-stretching."""
     pipeline = mock_pipeline
     cached_path = "/tmp/cache/hello_world.wav"
-    pipeline.cache_manager.lookup.return_value = (True, cached_path, "cache-key-123")
+    # 4-tuple: (hit, path, key, alignment_s3_path)
+    pipeline.cache_manager.lookup.return_value = (
+        True,
+        cached_path,
+        "cache-key-123",
+        None,
+    )
     pipeline.audio_processor.copy_audio_file.return_value = "/tmp/mock_out/test_job.wav"
     pipeline.audio_processor.get_audio_duration.return_value = 2.5
 
@@ -93,7 +107,12 @@ def test_cache_hit_ratio_not_1_applies_timestretch(mock_pipeline):
     """When speed_ratio != 1.0 and cache hits, apply_ratio_to_audio is called on cached base audio."""
     pipeline = mock_pipeline
     cached_path = "/tmp/cache/hello_world.wav"
-    pipeline.cache_manager.lookup.return_value = (True, cached_path, "cache-key-123")
+    pipeline.cache_manager.lookup.return_value = (
+        True,
+        cached_path,
+        "cache-key-123",
+        None,
+    )
     pipeline.audio_processor.apply_ratio_to_audio.return_value = (
         "/tmp/mock_out/test_job_stretched.wav"
     )
@@ -128,10 +147,88 @@ def test_cache_hit_ratio_not_1_applies_timestretch(mock_pipeline):
     assert kwargs["target_ratio"] == 1.25
 
 
-def test_cache_miss_stores_and_calls_maybe_evict(mock_pipeline):
-    """When cache misses, _run_synthesis runs, store() is called, and maybe_evict() is triggered."""
+def test_cache_hit_s3_key_downloads_base_audio(mock_pipeline):
+    """When cache returns an S3 key (L0), download_s3_to_local is called."""
     pipeline = mock_pipeline
-    pipeline.cache_manager.lookup.return_value = (False, None, None)
+    s3_key = "cache/tts/ab12/ab12deadbeef.wav"
+    pipeline.cache_manager.lookup.return_value = (True, s3_key, "cache-key-123", None)
+    pipeline.storage_manager.download_s3_to_local.return_value = (
+        "/tmp/mock_out/job-003_base.wav"
+    )
+    pipeline.audio_processor.copy_audio_file.return_value = "/tmp/mock_out/job-003.wav"
+    pipeline.audio_processor.get_audio_duration.return_value = 2.0
+
+    job_data = {
+        "jobId": "job-003",
+        "job_type": "studio",
+        "text": "S3 cache test",
+        "audioPromptPath": "audio-prompts/voice.wav",
+        "speedRatio": 1.0,
+        "language": "en",
+    }
+
+    result = pipeline.process_job(job_data)
+
+    assert result["status"] == "completed"
+    assert result["cacheHit"] is True
+
+    # S3 download was triggered
+    pipeline.storage_manager.download_s3_to_local.assert_any_call(
+        s3_key, "/tmp/mock_out", "job-003_base.wav"
+    )
+    # copy_audio_file called on the downloaded file (ratio=1.0)
+    pipeline.audio_processor.copy_audio_file.assert_called_once_with(
+        "/tmp/mock_out/job-003_base.wav", "job-003", "/tmp/mock_out"
+    )
+
+
+def test_cache_hit_with_alignment_skips_whisper(mock_pipeline):
+    """When cache hit includes cached_alignment_s3_path, _run_alignment is NOT called."""
+    pipeline = mock_pipeline
+    cached_path = "/tmp/cache/hello_world.wav"
+    cached_alignment = "cache/tts/ab12/ab12deadbeef_alignment.json"
+    pipeline.cache_manager.lookup.return_value = (
+        True,
+        cached_path,
+        "cache-key-123",
+        cached_alignment,
+    )
+    pipeline.audio_processor.copy_audio_file.return_value = "/tmp/mock_out/job-004.wav"
+    pipeline.audio_processor.get_audio_duration.return_value = 2.5
+    pipeline.storage_manager.download_s3_to_local.return_value = (
+        "/tmp/mock_out/job-004_alignment.json"
+    )
+
+    job_data = {
+        "jobId": "job-004",
+        "job_type": "studio",
+        "text": "Alignment cache test",
+        "audioPromptPath": "audio-prompts/voice.wav",
+        "speedRatio": 1.0,
+        "language": "en",
+    }
+
+    result = pipeline.process_job(job_data)
+
+    assert result["status"] == "completed"
+    assert result["cacheHit"] is True
+
+    # Whisper NOT called
+    pipeline._run_alignment.assert_not_called()
+
+    # Alignment downloaded from S3
+    pipeline.storage_manager.download_s3_to_local.assert_any_call(
+        cached_alignment, "/tmp/mock_out", "job-004_alignment.json"
+    )
+
+    # _run_alignment_upload NOT called (reused from cache)
+    pipeline._run_alignment_upload.assert_not_called()
+
+
+def test_cache_miss_stores_and_calls_maybe_evict(mock_pipeline):
+    """When cache misses, _run_synthesis runs and maybe_evict() is triggered after alignment backfill."""
+    pipeline = mock_pipeline
+    pipeline.cache_manager.lookup.return_value = (False, None, None, None)
     pipeline.cache_manager.store.return_value = "new-cache-key-456"
 
     # Mock _run_synthesis
@@ -145,7 +242,7 @@ def test_cache_miss_stores_and_calls_maybe_evict(mock_pipeline):
     pipeline.audio_processor.get_audio_duration.return_value = 3.0
 
     job_data = {
-        "jobId": "job-003",
+        "jobId": "job-005",
         "job_type": "studio",
         "text": "Cache miss test",
         "audioPromptPath": "audio-prompts/voice.wav",
@@ -159,9 +256,16 @@ def test_cache_miss_stores_and_calls_maybe_evict(mock_pipeline):
     assert result["cacheHit"] is False
     pipeline._run_synthesis.assert_called_once()
 
+    # maybe_evict called from process_job (not from _run_synthesis)
+    pipeline.cache_manager.maybe_evict.assert_called_once_with("job-005")
+    # alignment backfilled
+    pipeline.cache_manager.update_alignment_s3_path.assert_called_once_with(
+        "job-005", "new-cache-key-456", "s3://bucket/align.json"
+    )
 
-def test_run_synthesis_calls_store_and_maybe_evict(mock_pipeline):
-    """_run_synthesis stores the base audio in cache and invokes maybe_evict."""
+
+def test_run_synthesis_calls_store_not_evict(mock_pipeline):
+    """_run_synthesis stores the base audio in cache but does NOT call maybe_evict (moved to process_job)."""
     pipeline = mock_pipeline
     pipeline._download_audio_prompt = MagicMock(return_value="/tmp/prompt.wav")
     pipeline._synthesize_audio = MagicMock(return_value="/tmp/mock_out/base.wav")
@@ -172,7 +276,7 @@ def test_run_synthesis_calls_store_and_maybe_evict(mock_pipeline):
     job_data = {"speedRatio": 1.5}
 
     prompt, output, key = pipeline._run_synthesis(
-        job_id="job-004",
+        job_id="job-006",
         text="Store and evict test",
         audio_prompt_path="audio-prompts/voice.wav",
         language="en",
@@ -181,7 +285,7 @@ def test_run_synthesis_calls_store_and_maybe_evict(mock_pipeline):
     )
 
     pipeline.cache_manager.store.assert_called_once_with(
-        "job-004",
+        "job-006",
         "Store and evict test",
         "audio-prompts/voice.wav",
         "/tmp/mock_out/base.wav",
@@ -189,4 +293,5 @@ def test_run_synthesis_calls_store_and_maybe_evict(mock_pipeline):
         pytest.approx(0.0, abs=5.0),
         "en",
     )
-    pipeline.cache_manager.maybe_evict.assert_called_once_with("job-004")
+    # maybe_evict NOT called from _run_synthesis anymore
+    pipeline.cache_manager.maybe_evict.assert_not_called()
