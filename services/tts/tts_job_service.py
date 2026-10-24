@@ -23,8 +23,8 @@ try:
     from sqlalchemy import select
     from sqlalchemy.exc import IntegrityError
 
-    from app.database import DatabaseSession
-    from app.models import TTSJob
+    from services.db.database import DatabaseSession
+    from services.db.models import TTSJob
 
     DB_AVAILABLE = True
 except ImportError as e:

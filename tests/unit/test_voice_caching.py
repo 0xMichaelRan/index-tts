@@ -34,6 +34,7 @@ class TestVoiceCaching:
             storage_manager=mock_storage,
             cache_manager=MagicMock(enabled=False),
             use_fast_inference=True,
+            alignment_service=MagicMock(),
         )
         pipeline.platform = "Linux"
         return pipeline

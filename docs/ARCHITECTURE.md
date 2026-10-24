@@ -93,17 +93,21 @@ services/                          Worker services (domain subpackages)
 │   ├── text_sanitizer.py          Text pre-processing
 │   ├── tts_job_service.py         Job-level TTS service
 │   └── tts_worker.py              Main RabbitMQ worker
-└── vox/                           Vox video rendering domain
-    ├── aligner.py                 ScriptGuidedAligner
-    ├── pipeline.py                VoxRenderPipeline orchestrator
-    ├── subtitles.py               ASS subtitle pipeline
-    ├── video_utils.py             FFmpeg helpers
-    └── vox_render_consumer.py     Vox RabbitMQ consumer
+├── vox/                           Vox video rendering domain
+│   ├── aligner.py                 ScriptGuidedAligner
+│   ├── pipeline.py                VoxRenderPipeline orchestrator
+│   ├── subtitles.py               ASS subtitle pipeline
+│   ├── video_utils.py             FFmpeg helpers
+│   └── vox_render_consumer.py     Vox RabbitMQ consumer
+└── db/                            Database & caching
+    ├── database.py                Database connection & session factory
+    ├── models.py                  SQLAlchemy models (TTSSynthesisCache, TTSJob)
+    └── cache_service.py           Synthesis cache business logic
 
-app/                               Database & caching
-├── cache_service.py               TTS synthesis cache
-├── database.py                    Database connection
-└── models.py                      SQLAlchemy models
+app/                               (Backwards-compatibility shims)
+├── cache_service.py               -> services.db.cache_service
+├── database.py                    -> services.db.database
+└── models.py                      -> services.db.models
 
 Entry Points:
 ├── worker.py                      Main 24/7 worker launcher (TTS + Vox)

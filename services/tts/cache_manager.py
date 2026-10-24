@@ -11,8 +11,8 @@ logger = get_logger(__name__)
 
 # Try to import cache components
 try:
-    from app.database import SyncDatabaseSession
-    from app.cache_service import TTSCacheServiceSync
+    from services.db.database import SyncDatabaseSession
+    from services.db.cache_service import TTSCacheServiceSync
 
     CACHE_AVAILABLE = True
 except ImportError as e:

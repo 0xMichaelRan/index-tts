@@ -236,3 +236,33 @@ class TestRabbitMQWorkerConnection:
             "Another consumer may have picked it up."
         )
         assert received["_correlation_id"] == correlation_id
+
+
+@pytest.mark.skipif(
+    not _RABBITMQ_CONFIGURED,
+    reason="RABBITMQ_URL not set - skipping integration test",
+)
+class TestConfigureQueuesIntegration:
+    """Integration tests for full queue configuration against live RabbitMQ."""
+
+    def test_configure_queues_integration(self):
+        """Test full queue configuration with real RabbitMQ."""
+        from services.messaging.rabbitmq_config import configure_queues, get_queue_info
+
+        rabbitmq_url = os.getenv("RABBITMQ_URL")
+        assert rabbitmq_url is not None
+
+        # Idempotently configure all queues
+        configure_queues(rabbitmq_url)
+
+        # Verify queues exist
+        info = get_queue_info(rabbitmq_url)
+
+        assert "tts_jobs" in info
+        assert "tts_results" in info
+        assert "vox_jobs" in info
+        assert "vox_results" in info
+        assert "tts_jobs_failed" in info
+        assert "tts_results_failed" in info
+        assert "vox_jobs_failed" in info
+        assert "vox_results_failed" in info

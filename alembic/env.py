@@ -13,7 +13,7 @@ load_dotenv()
 config = context.config
 
 # Override sqlalchemy.url from environment (derived from DATABASE_URL)
-from app.database import get_sync_database_url  # noqa: E402
+from services.db.database import get_sync_database_url  # noqa: E402
 
 sync_database_url = get_sync_database_url()
 if sync_database_url:
@@ -26,7 +26,7 @@ if config.config_file_name is not None:
 
 # Import your models here for autogenerate support
 try:
-    from app.models import Base
+    from services.db.models import Base
 
     target_metadata = Base.metadata
 except ImportError:

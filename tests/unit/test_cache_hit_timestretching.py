@@ -33,6 +33,7 @@ def mock_pipeline():
             storage_manager=mock_storage_manager,
             cache_manager=mock_cache_manager,
             job_service=mock_job_service,
+            alignment_service=MagicMock(),
         )
         # Mock run_alignment and uploads so we focus on cache & time-stretching
         pipeline._run_alignment = MagicMock(

@@ -142,10 +142,8 @@ def pipeline_and_files(tmp_path):
         use_fast_inference=False,
         normalization_enabled=False,
         normalization_target_lufs=-16.0,
+        alignment_service=alignment_service_mock,
     )
-
-    # Replace alignment service with mock
-    pipeline.alignment_service = alignment_service_mock
 
     return (
         pipeline,

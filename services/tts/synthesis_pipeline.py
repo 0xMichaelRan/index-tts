@@ -47,6 +47,7 @@ class SynthesisPipeline:
         normalization_enabled: bool = True,
         normalization_target_lufs: float = -16.0,
         job_service: Optional[TTSJobService] = None,
+        alignment_service: Optional[Any] = None,
     ):
         """
         Initialize synthesis pipeline.
@@ -59,6 +60,7 @@ class SynthesisPipeline:
             normalization_enabled: Enable audio loudness normalization
             normalization_target_lufs: Target LUFS for normalization
             job_service: Optional TTSJobService instance for job tracking
+            alignment_service: Optional AlignmentService instance (avoids reloading model in tests)
         """
         self.tts_engine = tts_engine
         self.storage_manager = storage_manager
@@ -73,30 +75,35 @@ class SynthesisPipeline:
         self.platform = platform.system()
 
         # Initialize alignment service (mandatory)
-        alignment_model = os.getenv("TTS_ALIGNMENT_MODEL", "small")
-        alignment_device = os.getenv("TTS_ALIGNMENT_DEVICE", "cpu")
-        alignment_retention_days = int(os.getenv("TTS_ALIGNMENT_RETENTION_DAYS", "16"))
-
-        if ALIGNMENT_AVAILABLE and AlignmentService is not None:
-            self.alignment_service = AlignmentService(
-                model_name=alignment_model,
-                device=alignment_device,
-                retention_days=alignment_retention_days,
-            )
-            try:
-                t_align_load = time.time()
-                self.alignment_service.load_model()
-                logger.success(
-                    f"Alignment: stable-whisper {alignment_model} on {alignment_device} "
-                    f"(mandatory, loaded in {time.time() - t_align_load:.1f}s)"
-                )
-            except Exception as e:
-                logger.failure(f"Alignment model failed to load: {e}")
-                raise
+        if alignment_service is not None:
+            self.alignment_service = alignment_service
         else:
-            self.alignment_service = None
-            logger.failure("AlignmentService unavailable — pipeline cannot start")
-            raise RuntimeError("AlignmentService is required but not available")
+            alignment_model = os.getenv("TTS_ALIGNMENT_MODEL", "small")
+            alignment_device = os.getenv("TTS_ALIGNMENT_DEVICE", "cpu")
+            alignment_retention_days = int(
+                os.getenv("TTS_ALIGNMENT_RETENTION_DAYS", "16")
+            )
+
+            if ALIGNMENT_AVAILABLE and AlignmentService is not None:
+                self.alignment_service = AlignmentService(
+                    model_name=alignment_model,
+                    device=alignment_device,
+                    retention_days=alignment_retention_days,
+                )
+                try:
+                    t_align_load = time.time()
+                    self.alignment_service.load_model()
+                    logger.success(
+                        f"Alignment: stable-whisper {alignment_model} on {alignment_device} "
+                        f"(mandatory, loaded in {time.time() - t_align_load:.1f}s)"
+                    )
+                except Exception as e:
+                    logger.failure(f"Alignment model failed to load: {e}")
+                    raise
+            else:
+                self.alignment_service = None
+                logger.failure("AlignmentService unavailable — pipeline cannot start")
+                raise RuntimeError("AlignmentService is required but not available")
 
         # Initialize circuit breakers
         self.tts_breaker = get_circuit_breaker(

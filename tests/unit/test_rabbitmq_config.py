@@ -4,7 +4,6 @@ Unit tests for RabbitMQ configuration module.
 Tests queue configuration, connection handling, and error scenarios.
 """
 
-import os
 import pytest
 from unittest.mock import Mock, patch
 import pika
@@ -374,30 +373,3 @@ class TestGetQueueInfo:
         """Test error when pika is not installed."""
         with pytest.raises(ImportError, match="pika is required"):
             get_queue_info("amqp://guest:guest@localhost:5672/")
-
-
-@pytest.mark.skipif(
-    os.getenv("RABBITMQ_URL") is None,
-    reason="RABBITMQ_URL not set - skipping integration test",
-)
-class TestIntegration:
-    """Integration tests with real RabbitMQ (requires running instance)."""
-
-    def test_configure_queues_integration(self):
-        """Test full queue configuration with real RabbitMQ."""
-        rabbitmq_url = os.getenv("RABBITMQ_URL")
-
-        # Should not raise any exceptions
-        configure_queues(rabbitmq_url)
-
-        # Verify queues exist
-        info = get_queue_info(rabbitmq_url)
-
-        assert "tts_jobs" in info
-        assert "tts_results" in info
-        assert "vox_jobs" in info
-        assert "vox_results" in info
-        assert "tts_jobs_failed" in info
-        assert "tts_results_failed" in info
-        assert "vox_jobs_failed" in info
-        assert "vox_results_failed" in info

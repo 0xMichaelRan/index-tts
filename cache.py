@@ -26,9 +26,9 @@ from pathlib import Path
 
 from sqlalchemy import select
 
-from app.cache_service import TTSCacheServiceSync
-from app.database import SyncDatabaseSession
-from app.models import TTSSynthesisCache
+from services.db.cache_service import TTSCacheServiceSync
+from services.db.database import SyncDatabaseSession
+from services.db.models import TTSSynthesisCache
 from services.common.logging_config import get_logger
 from services.common.worker_config import WorkerConfig
 
