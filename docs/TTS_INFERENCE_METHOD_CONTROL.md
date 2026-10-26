@@ -172,4 +172,4 @@ To compare performance for your workload:
 
 - **AGENTS.md** - Main worker documentation
 - **indextts/infer.py** - Inference method implementations
-- **docs/CACHE_IMPLEMENTATION_SUMMARY.md** - Synthesis caching details
+- **docs/VOICE_SYNTHESIS_CACHE.md** - Synthesis caching details

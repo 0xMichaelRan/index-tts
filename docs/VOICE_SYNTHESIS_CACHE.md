@@ -166,7 +166,7 @@ uv run pytest tests/unit/test_cache_service.py -v
 ### 6. Documentation ✅
 
 **Files:**
-- `docs/CACHE_IMPLEMENTATION_SUMMARY.md` - This file (architecture, setup, CLI, troubleshooting)
+- `docs/VOICE_SYNTHESIS_CACHE.md` - This file (architecture, setup, CLI, troubleshooting)
 - `AGENTS.md` - Cache system overview and command reference
 
 ## Configuration
@@ -405,7 +405,7 @@ All tests passed ✅
 ### Documentation ✅
 
 - [x] Update `AGENTS.md` with cache system
-- [x] Create `docs/CACHE_IMPLEMENTATION_SUMMARY.md`
+- [x] Create `docs/VOICE_SYNTHESIS_CACHE.md`
 - [x] Document environment variables
 - [x] Create troubleshooting guide
 
@@ -444,7 +444,7 @@ The TTS synthesis cache system is **production-ready** and provides:
 ✅ **65-80% performance improvement** for cache hits  
 ✅ **Automatic cache management** with LRU eviction  
 ✅ **Comprehensive testing** (integration + unit tests)  
-✅ **Complete documentation** (`docs/CACHE_IMPLEMENTATION_SUMMARY.md` + `AGENTS.md`)  
+✅ **Complete documentation** (`docs/VOICE_SYNTHESIS_CACHE.md` + `AGENTS.md`)  
 ✅ **CLI tools** for cache management and analytics  
 ✅ **Zero breaking changes** to existing workflow  
 

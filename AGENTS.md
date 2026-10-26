@@ -127,7 +127,7 @@ Protects against downstream cascades:
 - **Cache Key**: `SHA256(text + audio_prompt_path)`
 - **Storage**: PostgreSQL metadata + local filesystem audio
 - **CLI**: `uv run python cache.py stats|top|evict|clear`
-- See [`docs/CACHE_IMPLEMENTATION_SUMMARY.md`](docs/CACHE_IMPLEMENTATION_SUMMARY.md) for full details.
+- See [`docs/VOICE_SYNTHESIS_CACHE.md`](docs/VOICE_SYNTHESIS_CACHE.md) for full details.
 
 ### 4. Mandatory Forced Alignment
 - **Model**: Whisper `small` (CPU-only: `TTS_ALIGNMENT_DEVICE=cpu`)
@@ -206,6 +206,6 @@ TTS_ALIGNMENT_DEVICE=cpu
 - [`docs/MACOS_SETUP.md`](docs/MACOS_SETUP.md) — macOS development setup (native TTS)
 - [`docs/S3_BUCKET_ARCHITECTURE.md`](docs/S3_BUCKET_ARCHITECTURE.md) — 5-bucket architecture spec
 - [`docs/FORCED_ALIGNMENT.md`](docs/FORCED_ALIGNMENT.md) — Forced alignment engine & schema
-- [`docs/CACHE_IMPLEMENTATION_SUMMARY.md`](docs/CACHE_IMPLEMENTATION_SUMMARY.md) — DB-backed synthesis cache
+- [`docs/VOICE_SYNTHESIS_CACHE.md`](docs/VOICE_SYNTHESIS_CACHE.md) — DB-backed synthesis cache
 - [`docs/MONITORING.md`](docs/MONITORING.md) — Queue depth and DLQ monitoring guide
 - [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) — Comprehensive environment variables

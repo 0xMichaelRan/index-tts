@@ -95,4 +95,4 @@ brew install ffmpeg
 - [`AGENTS.md`](../AGENTS.md) — Comprehensive developer & agent guide, commands, and wire protocol
 - [`docs/WORKER_SETUP.md`](WORKER_SETUP.md) — Windows / Linux GPU production setup guide
 - [`docs/CONFIGURATION.md`](CONFIGURATION.md) — Full `.env` variable reference
-- [`docs/CACHE_IMPLEMENTATION_SUMMARY.md`](CACHE_IMPLEMENTATION_SUMMARY.md) — Optional PostgreSQL synthesis cache setup
+- [`docs/VOICE_SYNTHESIS_CACHE.md`](VOICE_SYNTHESIS_CACHE.md) — Optional PostgreSQL synthesis cache setup
