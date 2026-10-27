@@ -4,12 +4,44 @@ Text sanitization for TTS synthesis input.
 Strips characters that must NOT be spoken aloud: brackets, pipes, slashes,
 and other structural/formatting glyphs that IndexTTS would vocalize literally
 but that carry no spoken meaning.
+
+Context-sensitive characters are handled via a pre-pass replacement table
+before the suppress regex runs:
+  - Range dashes (–, ~, ～) between digits → 至  (WeText standard for ranges)
+  - Em dash (—) in prose → ，
+  - Residual dashes/tildes → stripped via _SUPPRESS_CHARS
 """
 
 from __future__ import annotations
 
 import re
 
+# ---------------------------------------------------------------------------
+# Stage 1 – Context-sensitive replacements (applied in order before stripping)
+# ---------------------------------------------------------------------------
+# Each entry is (compiled_pattern, replacement_string).
+# Patterns run sequentially so earlier rules take priority.
+
+_CONTEXTUAL_REPLACEMENTS: list[tuple[re.Pattern[str], str]] = [
+    # En dash / ASCII tilde / full-width tilde used as a numeric range separator
+    # e.g. "10–20人", "10~20人", "10～20人" → "10至20人"
+    # Requires at least one digit on each side; optional spaces around the dash.
+    (
+        re.compile(r"(\d)\s*[\u2013\u007e\uff5e]\s*(\d)"),
+        r"\1至\2",
+    ),
+    # Em dash used as a prose continuation/parenthetical marker
+    # e.g. "他很快——真的很快——到达了" → "他很快，真的很快，到达了"
+    # Also matches a lone — surrounded by spaces acting as a clause break.
+    (
+        re.compile(r"\s*\u2014+\s*"),
+        "，",
+    ),
+]
+
+# ---------------------------------------------------------------------------
+# Stage 2 – Hard suppression (characters with no spoken form)
+# ---------------------------------------------------------------------------
 # Characters to remove entirely before synthesis.
 # Each entry is documented with the reason it must be suppressed.
 _SUPPRESS_CHARS: str = (
@@ -26,14 +58,15 @@ _SUPPRESS_CHARS: str = (
     "\u3014\u3015"  # CJK tortoise shell brackets 〔 〕
     "\u3016\u3017"  # CJK white lenticular brackets 〖 〗
     "-"  # ASCII hyphen/minus — bullet/range/break vocalized as "hyphen"/"minus"/"减"
-    "\u2014"  # Em dash — — long pause marker vocalized as dash
-    "\u2013"  # En dash – — range/dash marker
+    "\u2013"  # En dash – — any residual after contextual pass (non-numeric context)
     "\u2015"  # Horizontal bar ―
     "\u2010"  # Hyphen ‐
     "\u2011"  # Non-breaking hyphen ‑
     "\u2012"  # Figure dash ‒
-    "\u007e"  # ASCII tilde ~ — wave dash vocalized or causing artifacts
-    "\uff5e"  # Full-width tilde ～
+    "\u007e"  # ASCII tilde ~ — any residual after contextual pass
+    "\uff5e"  # Full-width tilde ～ — any residual after contextual pass
+    # Note: Em dash \u2014 is intentionally omitted here; _CONTEXTUAL_REPLACEMENTS
+    # converts it to ，above. Any stray double-em-dash is also caught there.
 )
 
 # Build a compiled pattern for fast repeated calls.
@@ -46,9 +79,19 @@ _WHITESPACE_RE = re.compile(r"[ \t\u00a0\u3000]+")
 
 def sanitize_tts_text(text: str | None) -> str:
     """
-    Remove characters that should not be included in TTS synthesis audio.
+    Remove or replace characters that should not be included in TTS synthesis audio.
 
-    Characters suppressed:
+    Processing pipeline:
+        1. Context-sensitive replacements (range dashes → 至, prose em dash → ，)
+        2. Hard suppression of structural/formatting glyphs → space
+        3. Whitespace collapse (runs → single space)
+        4. Per-line leading/trailing strip
+
+    Context-sensitive rules (applied first):
+        N–M  N~M  N～M    Numeric range → N至M
+        —                 Em dash (prose) → ，
+
+    Characters hard-suppressed (→ space):
         \u3010 \u3011    CJK square brackets 【 】
         \uff5c           Full-width vertical bar ｜
         /               ASCII slash
@@ -61,10 +104,11 @@ def sanitize_tts_text(text: str | None) -> str:
         \u300e \u300f    CJK white corner brackets 『 』
         \u3014 \u3015    CJK tortoise shell brackets 〔 〕
         \u3016 \u3017    CJK white lenticular brackets 〖 〗
-        -               ASCII hyphen/minus
-        \u2014 \u2013   Em dash —, En dash –
-        \u2015 \u2010   Horizontal bar ―, Hyphen ‐, Non-breaking hyphen ‑, Figure dash ‒
-        ~ \uff5e        ASCII tilde ~, Full-width tilde ～
+        -               ASCII hyphen/minus (bullets, residual ranges)
+        \u2013          En dash – (residual, non-numeric context)
+        \u2015 \u2010   Horizontal bar ―, Hyphen ‐
+        \u2011 \u2012   Non-breaking hyphen ‑, Figure dash ‒
+        ~ \uff5e        ASCII tilde ~, Full-width tilde ～ (residual)
 
     Newlines and other line-break characters are preserved so that the TTS
     engine can use them as sentence boundaries.
@@ -85,19 +129,30 @@ def sanitize_tts_text(text: str | None) -> str:
         '三体 刘慈欣'
         >>> sanitize_tts_text("苹果、香蕉、橙子")
         '苹果 香蕉 橙子'
+        >>> sanitize_tts_text("10~20人")
+        '10至20人'
+        >>> sanitize_tts_text("2020–2025年")
+        '2020至2025年'
+        >>> sanitize_tts_text("他很快——真的很快——到达了")
+        '他很快，真的很快，到达了'
         >>> sanitize_tts_text(None)
         ''
     """
     if not text:
         return ""
 
-    # Step 1: Replace suppressed characters with a space
-    cleaned = _SUPPRESS_RE.sub(" ", text)
+    # Step 1: Context-sensitive replacements (range dashes → 至, em dash → ，)
+    cleaned = text
+    for pattern, replacement in _CONTEXTUAL_REPLACEMENTS:
+        cleaned = pattern.sub(replacement, cleaned)
 
-    # Step 2: Collapse resulting runs of horizontal whitespace
+    # Step 2: Replace suppressed characters with a space
+    cleaned = _SUPPRESS_RE.sub(" ", cleaned)
+
+    # Step 3: Collapse resulting runs of horizontal whitespace
     cleaned = _WHITESPACE_RE.sub(" ", cleaned)
 
-    # Step 3: Strip leading/trailing whitespace per line
+    # Step 4: Strip leading/trailing whitespace per line
     lines = [line.strip() for line in cleaned.splitlines()]
     cleaned = "\n".join(lines)
 
