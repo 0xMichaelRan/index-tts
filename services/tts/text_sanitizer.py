@@ -27,7 +27,11 @@ _CONTEXTUAL_REPLACEMENTS: list[tuple[re.Pattern[str], str]] = [
     # e.g. "10–20人", "10~20人", "10～20人" → "10至20人"
     # Requires at least one digit on each side; optional spaces around the dash.
     (
-        re.compile(r"(\d)\s*[\u2013\u007e\uff5e]\s*(\d)"),
+        # U+2013 en dash, U+007E ASCII tilde, U+FF5E full-width tilde,
+        # U+301C wave dash (★ standard CJK/JA range marker e.g. 10〜20人),
+        # U+FF0D full-width hyphen-minus (CJK range e.g. 2020－2025),
+        # U+2212 minus sign (math range e.g. 10−20)
+        re.compile(r"(\d)\s*[\u2013\u007e\uff5e\u301c\uff0d\u2212]\s*(\d)"),
         r"\1至\2",
     ),
     # Em dash used as a prose continuation/parenthetical marker
@@ -58,13 +62,23 @@ _SUPPRESS_CHARS: str = (
     "\u3014\u3015"  # CJK tortoise shell brackets 〔 〕
     "\u3016\u3017"  # CJK white lenticular brackets 〖 〗
     "-"  # ASCII hyphen/minus — bullet/range/break vocalized as "hyphen"/"minus"/"减"
-    "\u2013"  # En dash – — any residual after contextual pass (non-numeric context)
+    "\u2013"  # En dash – — residual (non-numeric context)
     "\u2015"  # Horizontal bar ―
     "\u2010"  # Hyphen ‐
     "\u2011"  # Non-breaking hyphen ‑
     "\u2012"  # Figure dash ‒
-    "\u007e"  # ASCII tilde ~ — any residual after contextual pass
-    "\uff5e"  # Full-width tilde ～ — any residual after contextual pass
+    "\u007e"  # ASCII tilde ~ — residual (non-numeric context)
+    "\uff5e"  # Full-width tilde ～ — residual (non-numeric context)
+    "\u301c"  # Wave dash 〜 — residual (non-numeric context; numeric handled in Stage 1)
+    "\uff0d"  # Full-width hyphen-minus － — residual (non-numeric context)
+    "\u2212"  # Minus sign − — residual (non-numeric context)
+    "\u2e3a"  # Two-em dash ⸺ — typographic, rare
+    "\u2e3b"  # Three-em dash ⸻ — typographic, rare
+    "\u3030"  # Wavy dash 〰 — decorative
+    "\ufe31"  # Presentation form vertical em dash ︱
+    "\ufe58"  # Small em dash ﹘ (CJK compat)
+    "\ufe63"  # Small hyphen-minus ﹣ (CJK compat)
+    "\u00ad"  # Soft hyphen (invisible control char)
     # Note: Em dash \u2014 is intentionally omitted here; _CONTEXTUAL_REPLACEMENTS
     # converts it to ，above. Any stray double-em-dash is also caught there.
 )
